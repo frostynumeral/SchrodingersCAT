@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SchrodingersCat.Core/SchrodingersCat.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SchrodingersCat.Core.Tests/SchrodingersCat.Core.Tests.csproj" />
+  </Folder>
+</Solution>
