@@ -8,7 +8,7 @@ SchrödingersCAT is an early-stage CAT (computer-assisted translation) tool in C
 
 ## Commands
 
-Solution file is `SchrodingersCat.slnx` (the new XML solution format, which needs SDK 9.0.200+).
+Solution file is `SchrodingersCat.slnx` (the XML solution format).
 
 ```bash
 dotnet build
@@ -16,7 +16,7 @@ dotnet test
 dotnet test --filter "FullyQualifiedName~Xliff20SerializerTests.Read_RejectsXliff12"   # single test
 ```
 
-Projects target `net9.0`. The test project sets `<RollForward>Major</RollForward>` so tests also run on machines that only have a newer runtime, e.g. only .NET 10. Tests use xUnit, and `Xunit` is a global using.
+Projects target `net10.0`. CI (`.github/workflows/ci.yml`) builds and tests in Release on every push to `main` and on PRs. Tests use xUnit, and `Xunit` is a global using.
 
 ## Architecture
 
