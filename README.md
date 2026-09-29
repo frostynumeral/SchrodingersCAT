@@ -1,4 +1,4 @@
-# SchrödingersCAT
+# Schrödinger's CAT tool
 
 A computer-assisted translation (CAT) tool written in C#/.NET.
 
