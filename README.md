@@ -21,7 +21,7 @@ A computer-assisted translation (CAT) tool written in C#/.NET.
 
 ## Building
 
-Requires the .NET SDK 9.0.200 or newer. The solution uses the `.slnx` format.
+Requires the .NET 10 SDK.
 
 ```bash
 dotnet build

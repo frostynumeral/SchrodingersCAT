@@ -1,12 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <!-- Lets the tests run on a newer installed runtime (e.g. only .NET 10 present). -->
-    <RollForward>Major</RollForward>
   </PropertyGroup>
 
   <ItemGroup>
