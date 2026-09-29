@@ -48,3 +48,7 @@ foreach (var segment in document.TranslatableSegments)
 
 await serializer.WriteFileAsync(document, "job.xlf");
 ```
+
+## License
+
+[MIT](LICENSE)
