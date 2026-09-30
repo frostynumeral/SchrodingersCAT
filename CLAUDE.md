@@ -18,6 +18,8 @@ dotnet test --filter "FullyQualifiedName~Xliff20SerializerTests.Read_RejectsXlif
 
 Projects target `net10.0`. CI (`.github/workflows/ci.yml`) builds and tests in Release on every push to `main` and on PRs. Tests use xUnit, and `Xunit` is a global using.
 
+`Directory.Build.props` enables `AnalysisLevel=latest-recommended`, `EnforceCodeStyleInBuild` and `TreatWarningsAsErrors` for all projects, so any warning fails the build. Fix warnings rather than suppressing them; when a rule genuinely doesn't fit, disable it in `.editorconfig` (e.g. CA1707 is off under `tests/` for `Method_Scenario` test names).
+
 ## Architecture
 
 - **`Models/`**: plain POCOs, organised as `TranslationDocument` → `TranslationFile` → `TranslationUnit` → `Segment`, with `Note`s attached at unit level. They mirror XLIFF 2.0 structure closely on purpose, so a round-trip loses nothing. Keep Core free of UI/MVVM dependencies; the UI layer will wrap these types in observable view models.
