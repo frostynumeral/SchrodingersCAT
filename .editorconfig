@@ -1,0 +1,9 @@
+root = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+
+[tests/**.cs]
+# xUnit test names use Method_Scenario underscores by convention.
+dotnet_diagnostic.CA1707.severity = none
