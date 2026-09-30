@@ -28,11 +28,15 @@ dotnet build
 dotnet test
 ```
 
+The build runs the .NET recommended code analyzers and treats every warning as an error, so a build with warnings fails. CI builds and tests every push to `main` and every pull request.
+
 ## Project layout
 
 ```
 src/SchrodingersCat.Core/         Domain model (Models/) and XLIFF serializer (Xliff/)
 tests/SchrodingersCat.Core.Tests/ xUnit tests
+Directory.Build.props             Shared build settings (analyzers, warnings as errors)
+.editorconfig                     Code style and analyzer rule overrides
 ```
 
 ## Usage
