@@ -13,7 +13,8 @@ namespace SchrodingersCat.Core.Xliff;
 /// Current limitations (intentional for the first iteration):
 /// <list type="bullet">
 /// <item>Inline codes (<c>&lt;ph&gt;</c>, <c>&lt;pc&gt;</c>, <c>&lt;mrk&gt;</c>, …) are rejected with an
-/// <see cref="XliffFormatException"/> rather than silently dropped.</item>
+/// <see cref="XliffFormatException"/> rather than silently dropped, and the writer refuses content
+/// that contains them with a <see cref="NotSupportedException"/>.</item>
 /// <item><c>&lt;group&gt;</c> hierarchy is flattened, and modules/extensions (matches, glossary, …) are not
 /// preserved: the writer regenerates the file from the model.</item>
 /// </list>
@@ -157,7 +158,7 @@ public sealed class Xliff20Serializer : IXliffSerializer
         };
     }
 
-    private static string ReadPlainText(XElement element, string unitId)
+    private static InlineContent ReadPlainText(XElement element, string unitId)
     {
         // Fail loudly: flattening inline codes to text would corrupt the file on save.
         var inline = element.Elements().FirstOrDefault();
@@ -165,7 +166,7 @@ public sealed class Xliff20Serializer : IXliffSerializer
             throw new XliffFormatException(
                 $"Unit '{unitId}' contains inline code <{inline.Name.LocalName}>, which is not supported yet.");
 
-        return element.Value;
+        return InlineContent.FromText(element.Value);
     }
 
     private static SegmentState ParseState(string? value, string unitId) => value switch
@@ -231,9 +232,9 @@ public sealed class Xliff20Serializer : IXliffSerializer
         if (!segment.IsIgnorable && segment.SubState is not null)
             element.Add(new XAttribute("subState", segment.SubState));
 
-        element.Add(WriteText(Ns + "source", segment.Source));
+        element.Add(WriteContent(Ns + "source", segment.Source));
         if (segment.Target is not null)
-            element.Add(WriteText(Ns + "target", segment.Target));
+            element.Add(WriteContent(Ns + "target", segment.Target));
 
         return element;
     }
@@ -251,8 +252,13 @@ public sealed class Xliff20Serializer : IXliffSerializer
             }),
             note.Text);
 
-    private static XElement WriteText(XName name, string text)
+    private static XElement WriteContent(XName name, InlineContent content)
     {
+        // Fail loudly: writing only the text would drop the codes from the saved file.
+        if (content.HasTags)
+            throw new NotSupportedException("Writing inline codes and markers is not supported yet.");
+
+        var text = content.ToPlainText();
         var element = new XElement(name, text);
 
         // Tell other tools not to normalize whitespace that is significant for the translation.

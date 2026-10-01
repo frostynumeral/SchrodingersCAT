@@ -48,7 +48,7 @@ var serializer = new Xliff20Serializer();
 var document = await serializer.ReadFileAsync("job.xlf");
 
 foreach (var segment in document.TranslatableSegments)
-    Console.WriteLine($"{segment.State}: {segment.Source} → {segment.Target}");
+    Console.WriteLine($"{segment.State}: {segment.Source.ToPlainText()} → {segment.Target?.ToPlainText()}");
 
 await serializer.WriteFileAsync(document, "job.xlf");
 ```
