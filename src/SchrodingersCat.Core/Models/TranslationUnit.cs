@@ -17,6 +17,12 @@ public sealed class TranslationUnit
 
     public List<Note> Notes { get; } = [];
 
+    /// <summary>
+    /// The native code behind each inline code, keyed by the id its <see cref="InlineCode.DataRef"/> points to
+    /// (XLIFF <c>&lt;originalData&gt;</c>). Characters that are invalid in XML are stored decoded.
+    /// </summary>
+    public Dictionary<string, string> OriginalData { get; } = new(StringComparer.Ordinal);
+
     /// <summary>Full source text of the unit (all segments, including ignorables).</summary>
     public InlineContent Source => new(Segments.SelectMany(s => s.Source));
 
