@@ -9,12 +9,12 @@ A computer-assisted translation (CAT) tool written in C#/.NET.
 - Reads and writes **XLIFF 2.0 / 2.1 / 2.2** (core).
 - Maps files, units, segments, ignorables, notes, and segment states (`initial` / `translated` / `reviewed` / `final`), including tool-specific `subState` values.
 - Preserves significant whitespace on round-trip.
+- Inline codes and annotations (`<ph>`, `<pc>`, `<sc>`/`<ec>`, `<mrk>`, `<sm>`/`<em>`), `<cp>` and `<originalData>` round-trip. Well-formed pairs are saved as `<pc>`/`<mrk>`, which XLIFF treats as equivalent to `<sc>`/`<ec>` and `<sm>`/`<em>`.
 - Saves atomically: a failed save never leaves a half-written file.
 - **Never silently loses data.** Content the model can't represent yet is rejected with a clear error instead of being dropped on save.
 
 ### Not supported yet
 
-- Inline codes (`<ph>`, `<pc>`, `<mrk>`, …): files that contain them can be read, but saving them is refused until writing is implemented.
 - XLIFF 1.2.
 - `<group>` hierarchy: groups are flattened.
 - XLIFF modules/extensions (matches, glossary, …): these are not preserved on save.
