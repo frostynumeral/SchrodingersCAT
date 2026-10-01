@@ -12,9 +12,8 @@ namespace SchrodingersCat.Core.Xliff;
 /// <remarks>
 /// Current limitations (intentional for the first iteration):
 /// <list type="bullet">
-/// <item>Inline codes (<c>&lt;ph&gt;</c>, <c>&lt;pc&gt;</c>, <c>&lt;mrk&gt;</c>, …), <c>&lt;cp&gt;</c> and
-/// <c>&lt;originalData&gt;</c> are read, but the writer does not support them yet and throws a
-/// <see cref="NotSupportedException"/> rather than dropping them.</item>
+/// <item>Well-formed pairs are always written as <c>&lt;pc&gt;</c>/<c>&lt;mrk&gt;</c>, even if the file had
+/// <c>&lt;sc&gt;/&lt;ec&gt;</c> or <c>&lt;sm&gt;/&lt;em&gt;</c>. XLIFF treats the forms as equivalent.</item>
 /// <item><c>&lt;group&gt;</c> hierarchy is flattened, and modules/extensions (matches, glossary, …) are not
 /// preserved: the writer regenerates the file from the model.</item>
 /// </list>
@@ -24,6 +23,14 @@ public sealed class Xliff20Serializer : IXliffSerializer
     public static readonly XNamespace Ns = "urn:oasis:names:tc:xliff:document:2.0";
 
     private static readonly XName XmlSpace = XNamespace.Xml + "space";
+
+    // Conventional prefixes for namespaces whose attributes appear on inline elements.
+    private static readonly Dictionary<string, string> KnownPrefixes = new(StringComparer.Ordinal)
+    {
+        ["urn:oasis:names:tc:xliff:fs:2.0"] = "fs",
+        ["urn:oasis:names:tc:xliff:sizerestriction:2.0"] = "slr",
+        ["http://www.w3.org/2005/11/its"] = "its",
+    };
 
     // ---------------------------------------------------------------- reading
 
@@ -435,6 +442,7 @@ public sealed class Xliff20Serializer : IXliffSerializer
             new XAttribute("srcLang", document.SourceLanguage),
             OptionalAttribute("trgLang", document.TargetLanguage),
             document.Files.Select(WriteFile));
+        DeclareExtensionNamespaces(root);
 
         var xml = new XDocument(new XDeclaration("1.0", "utf-8", null), root);
 
@@ -442,12 +450,30 @@ public sealed class Xliff20Serializer : IXliffSerializer
         {
             Async = true,
             Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            // Safe for our content: XmlWriter stops indenting inside elements that contain text.
+            // Safe for our content: XmlWriter stops indenting inside elements that contain text,
+            // and WriteContent makes sure every content element does.
             Indent = true,
         };
 
         await using var writer = XmlWriter.Create(output, settings);
         await xml.SaveAsync(writer, cancellationToken);
+    }
+
+    // Declared once on the root; otherwise XLinq repeats a generated xmlns:p1 on every element that needs it.
+    private static void DeclareExtensionNamespaces(XElement root)
+    {
+        var namespaces = root.Descendants().Attributes()
+            .Select(a => a.Name.Namespace)
+            .Where(ns => ns != XNamespace.None && ns != XNamespace.Xml)
+            .Distinct()
+            .ToList();
+
+        var generated = 0;
+        foreach (var ns in namespaces)
+        {
+            var prefix = KnownPrefixes.GetValueOrDefault(ns.NamespaceName) ?? $"ns{++generated}";
+            root.Add(new XAttribute(XNamespace.Xmlns + prefix, ns.NamespaceName));
+        }
     }
 
     private static XElement WriteFile(TranslationFile file) =>
@@ -458,14 +484,81 @@ public sealed class Xliff20Serializer : IXliffSerializer
 
     private static XElement WriteUnit(TranslationUnit unit)
     {
-        if (unit.OriginalData.Count > 0)
-            throw new NotSupportedException($"Writing <originalData> (unit '{unit.Id}') is not supported yet.");
+        VerifyInlineStructure(unit);
 
         return new XElement(Ns + "unit",
             new XAttribute("id", unit.Id),
             OptionalAttribute("name", unit.Name),
             unit.Notes.Count == 0 ? null : new XElement(Ns + "notes", unit.Notes.Select(WriteNote)),
+            unit.OriginalData.Count == 0 ? null : new XElement(Ns + "originalData", unit.OriginalData.Select(WriteData)),
             unit.Segments.Select(WriteSegment));
+    }
+
+    private static XElement WriteData(KeyValuePair<string, string> data)
+    {
+        // See WriteContent for the leading empty text.
+        var element = new XElement(Ns + "data", new XAttribute("id", data.Key), new XText(string.Empty));
+        AddText(element, data.Value);
+        if (HasSignificantWhitespace(data.Value))
+            element.Add(new XAttribute(XmlSpace, "preserve"));
+        return element;
+    }
+
+    // The reader rejects duplicate ids, unpaired halves and unknown dataRefs, so the writer must not produce them.
+    private static void VerifyInlineStructure(TranslationUnit unit)
+    {
+        var segmentIds = unit.Segments.Select(s => s.Id).OfType<string>().ToHashSet(StringComparer.Ordinal);
+        VerifyInlineStructure(unit, "source", unit.Segments.Select(s => s.Source), segmentIds);
+        VerifyInlineStructure(unit, "target", unit.Segments.Select(s => s.Target).OfType<InlineContent>(), segmentIds);
+    }
+
+    private static void VerifyInlineStructure(
+        TranslationUnit unit, string side, IEnumerable<InlineContent> contents, HashSet<string> segmentIds)
+    {
+        var ids = new HashSet<string>(segmentIds, StringComparer.Ordinal);
+        var openCodes = new HashSet<string>(StringComparer.Ordinal);
+        var openMarkers = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var element in contents.SelectMany(c => c))
+        {
+            switch (element)
+            {
+                case InlineCode { Kind: InlineCodeKind.Closing, IsIsolated: false } code:
+                    if (!openCodes.Remove(code.Id))
+                        throw Invalid($"the closing half of code '{code.Id}' has no opening half before it. Set IsIsolated if the other half is outside the unit.");
+                    break;
+                case InlineCode code:
+                    DefineId(code.Id);
+                    if (code is { Kind: InlineCodeKind.Opening, IsIsolated: false })
+                        openCodes.Add(code.Id);
+                    break;
+                case InlineMarker { Kind: InlineMarkerKind.Closing } marker:
+                    if (!openMarkers.Remove(marker.Id))
+                        throw Invalid($"the closing half of marker '{marker.Id}' has no opening half before it.");
+                    break;
+                case InlineMarker marker:
+                    DefineId(marker.Id);
+                    openMarkers.Add(marker.Id);
+                    break;
+            }
+
+            if (element is InlineCode { DataRef: { } dataRef } && !unit.OriginalData.ContainsKey(dataRef))
+                throw Invalid($"dataRef '{dataRef}' does not match any key in OriginalData.");
+        }
+
+        if (openCodes.FirstOrDefault() is { } openCode)
+            throw Invalid($"the opening half of code '{openCode}' has no closing half. Set IsIsolated if the other half is outside the unit.");
+        if (openMarkers.FirstOrDefault() is { } openMarker)
+            throw Invalid($"the opening half of marker '{openMarker}' has no closing half.");
+
+        void DefineId(string id)
+        {
+            if (!ids.Add(id))
+                throw Invalid($"the id '{id}' is used more than once (inline ids share one id space with segment ids).");
+        }
+
+        InvalidOperationException Invalid(string message) =>
+            new($"Cannot write unit '{unit.Id}': in its {side}, {message}");
     }
 
     private static XElement WriteSegment(Segment segment)
@@ -500,34 +593,268 @@ public sealed class Xliff20Serializer : IXliffSerializer
 
     private static XElement WriteContent(XName name, InlineContent content)
     {
-        // Fail loudly: writing only the text would drop the codes from the saved file.
-        if (content.HasTags)
-            throw new NotSupportedException("Writing inline codes and markers is not supported yet.");
+        // The leading empty text makes this mixed content, so XmlWriter does not indent inside it. Indenting
+        // content that starts with an element would add whitespace to the translatable text.
+        var element = new XElement(name, new XText(string.Empty));
+        var pairs = FindWellFormedPairs(content);
+        var parents = new Stack<XElement>();
+        var current = element;
 
-        var text = content.ToPlainText();
-        if (!IsValidXml(text))
-            throw new NotSupportedException("Writing characters that are invalid in XML (as <cp>) is not supported yet.");
+        foreach (var item in content)
+        {
+            switch (item)
+            {
+                case InlineText text:
+                    AddText(current, text.Text);
+                    break;
 
-        var element = new XElement(name, text);
+                case InlineCode code when pairs.TryGetValue(code.Id, out var closing):
+                    if (code.Kind == InlineCodeKind.Opening)
+                        Open(WritePairedCode(code, (InlineCode)closing));
+                    else
+                        current = parents.Pop();
+                    break;
+
+                case InlineMarker marker when pairs.ContainsKey(marker.Id):
+                    if (marker.Kind == InlineMarkerKind.Opening)
+                    {
+                        Open(new XElement(Ns + "mrk", MarkerAttributes(marker)));
+                    }
+                    else
+                    {
+                        VerifyNoAttributes(marker);
+                        current = parents.Pop();
+                    }
+
+                    break;
+
+                case InlineCode code:
+                    current.Add(WriteCode(code));
+                    break;
+
+                case InlineMarker marker:
+                    current.Add(WriteMarker(marker));
+                    break;
+            }
+        }
 
         // Tell other tools not to normalize whitespace that is significant for the translation.
-        if (HasSignificantWhitespace(text))
+        // Codes count as characters here, so text next to a code doesn't look like leading/trailing whitespace.
+        var probe = string.Concat(content.Select(e => e is InlineText t ? t.Text : "￼"));
+        if (HasSignificantWhitespace(probe))
             element.Add(new XAttribute(XmlSpace, "preserve"));
 
         return element;
+
+        void Open(XElement child)
+        {
+            current.Add(child);
+            parents.Push(current);
+            current = child;
+        }
     }
 
-    private static bool IsValidXml(string text)
+    /// <summary>
+    /// Finds the pairs to write as <c>&lt;pc&gt;</c>/<c>&lt;mrk&gt;</c>, keyed by id, with their closing half.
+    /// </summary>
+    /// <remarks>
+    /// A pair qualifies if both halves are in this content, it nests properly with the other qualifying pairs,
+    /// and (for codes) <c>&lt;pc&gt;</c> can express both halves' attributes. All other halves are written as
+    /// <c>&lt;sc&gt;</c>/<c>&lt;ec&gt;</c> or <c>&lt;sm&gt;</c>/<c>&lt;em&gt;</c>, which XLIFF treats as equivalent.
+    /// </remarks>
+    private static Dictionary<string, InlineElement> FindWellFormedPairs(InlineContent content)
     {
+        var closings = new Dictionary<string, InlineElement>(StringComparer.Ordinal);
+        foreach (var element in content)
+        {
+            if (element is InlineCode { Kind: InlineCodeKind.Closing, IsIsolated: false } code)
+                closings.Add(code.Id, code);
+            else if (element is InlineMarker { Kind: InlineMarkerKind.Closing } marker)
+                closings.Add(marker.Id, marker);
+        }
+
+        var pairs = new Dictionary<string, InlineElement>(StringComparer.Ordinal);
+        var open = new List<string>();
+        foreach (var element in content)
+        {
+            switch (element)
+            {
+                case InlineCode { Kind: InlineCodeKind.Opening, IsIsolated: false } code
+                    when closings.TryGetValue(code.Id, out var closing) && CanWriteAsPc(code, (InlineCode)closing):
+                    open.Add(code.Id);
+                    break;
+
+                case InlineMarker { Kind: InlineMarkerKind.Opening } marker when closings.ContainsKey(marker.Id):
+                    open.Add(marker.Id);
+                    break;
+
+                case InlineCode { Kind: InlineCodeKind.Closing } or InlineMarker { Kind: InlineMarkerKind.Closing }:
+                    var id = element is InlineCode c ? c.Id : ((InlineMarker)element).Id;
+                    if (open.Count > 0 && open[^1] == id)
+                        pairs.Add(id, closings[id]);
+
+                    // If it wasn't innermost, it overlaps a pair opened after it and falls back to <sc>/<ec>.
+                    open.Remove(id);
+                    break;
+            }
+        }
+
+        return pairs;
+    }
+
+    // <pc> has one set of pair-level attributes, and its dir belongs to the opening half (see the reader).
+    private static bool CanWriteAsPc(InlineCode opening, InlineCode closing) =>
+        closing.Type == opening.Type
+        && closing.SubType == opening.SubType
+        && closing.CopyOf == opening.CopyOf
+        && closing.CanCopy == opening.CanCopy
+        && closing.CanDelete == opening.CanDelete
+        && closing.CanOverlap == opening.CanOverlap
+        && closing.CanReorder == (opening.CanReorder == CanReorder.FirstNo ? CanReorder.No : opening.CanReorder)
+        && closing.Dir is null
+        && closing.ExtensionAttributes.Count == 0;
+
+    private static XElement WritePairedCode(InlineCode opening, InlineCode closing) =>
+        new(Ns + "pc",
+            new XAttribute("id", opening.Id),
+            PairLevelAttributes(opening, canOverlapDefault: false),
+            OptionalAttribute("dir", opening.Dir),
+            OptionalAttribute("dataRefStart", opening.DataRef),
+            OptionalAttribute("dataRefEnd", closing.DataRef),
+            OptionalAttribute("dispStart", opening.Disp),
+            OptionalAttribute("dispEnd", closing.Disp),
+            OptionalAttribute("equivStart", opening.Equiv),
+            OptionalAttribute("equivEnd", closing.Equiv),
+            OptionalAttribute("subFlowsStart", opening.SubFlows),
+            OptionalAttribute("subFlowsEnd", closing.SubFlows),
+            WriteExtensionAttributes(opening.ExtensionAttributes));
+
+    private static XElement WriteCode(InlineCode code)
+    {
+        switch (code.Kind)
+        {
+            case InlineCodeKind.Standalone:
+                if (code.Dir is not null || code.CanOverlap is not null || code.IsIsolated)
+                    throw new NotSupportedException(
+                        $"Standalone code '{code.Id}' has Dir, CanOverlap or IsIsolated set, which <ph> can't carry.");
+                return new XElement(Ns + "ph",
+                    new XAttribute("id", code.Id),
+                    PairLevelAttributes(code, canOverlapDefault: false),
+                    CodeAttributes(code));
+
+            case InlineCodeKind.Opening:
+                return new XElement(Ns + "sc",
+                    new XAttribute("id", code.Id),
+                    code.IsIsolated ? new XAttribute("isolated", "yes") : null,
+                    PairLevelAttributes(code, canOverlapDefault: true),
+                    OptionalAttribute("dir", code.Dir),
+                    CodeAttributes(code));
+
+            default:
+                // A non-isolated <ec> refers to its <sc> instead of having an id, and may not carry dir.
+                if (!code.IsIsolated && code.Dir is not null)
+                    throw new NotSupportedException(
+                        $"Closing code '{code.Id}' has Dir set, which <ec> only allows when it is isolated.");
+                return new XElement(Ns + "ec",
+                    new XAttribute(code.IsIsolated ? "id" : "startRef", code.Id),
+                    code.IsIsolated ? new XAttribute("isolated", "yes") : null,
+                    PairLevelAttributes(code, canOverlapDefault: true),
+                    OptionalAttribute("dir", code.Dir),
+                    CodeAttributes(code));
+        }
+    }
+
+    private static IEnumerable<XAttribute?> PairLevelAttributes(InlineCode code, bool canOverlapDefault) =>
+    [
+        OptionalAttribute("type", code.Type),
+        OptionalAttribute("subType", code.SubType),
+        OptionalAttribute("copyOf", code.CopyOf),
+        code.CanCopy ? null : new XAttribute("canCopy", "no"),
+        code.CanDelete ? null : new XAttribute("canDelete", "no"),
+        OptionalAttribute("canReorder", code.CanReorder switch
+        {
+            CanReorder.Yes => null,
+            CanReorder.FirstNo => "firstNo",
+            CanReorder.No => "no",
+            _ => throw new ArgumentOutOfRangeException(nameof(code), code.CanReorder, null),
+        }),
+        // null means unspecified: write nothing and let the element's default apply.
+        code.CanOverlap is { } canOverlap && canOverlap != canOverlapDefault
+            ? new XAttribute("canOverlap", canOverlap ? "yes" : "no")
+            : null,
+    ];
+
+    // The attributes <ph>, <sc> and <ec> share; <pc> has start/end variants instead.
+    private static IEnumerable<XAttribute?> CodeAttributes(InlineCode code) =>
+    [
+        OptionalAttribute("dataRef", code.DataRef),
+        OptionalAttribute("disp", code.Disp),
+        OptionalAttribute("equiv", code.Equiv),
+        OptionalAttribute("subFlows", code.SubFlows),
+        .. WriteExtensionAttributes(code.ExtensionAttributes),
+    ];
+
+    private static XElement WriteMarker(InlineMarker marker)
+    {
+        if (marker.Kind == InlineMarkerKind.Opening)
+            return new XElement(Ns + "sm", MarkerAttributes(marker));
+
+        VerifyNoAttributes(marker);
+        return new XElement(Ns + "em", new XAttribute("startRef", marker.Id));
+    }
+
+    private static IEnumerable<XAttribute?> MarkerAttributes(InlineMarker marker) =>
+    [
+        new XAttribute("id", marker.Id),
+        marker.Translate is { } translate ? new XAttribute("translate", translate ? "yes" : "no") : null,
+        OptionalAttribute("type", marker.Type),
+        OptionalAttribute("ref", marker.Ref),
+        OptionalAttribute("value", marker.Value),
+        .. WriteExtensionAttributes(marker.ExtensionAttributes),
+    ];
+
+    // </mrk> and <em/> carry no attributes, so there is nowhere to write a closing marker's.
+    private static void VerifyNoAttributes(InlineMarker closing)
+    {
+        if (closing != new InlineMarker(closing.Id, closing.Kind))
+            throw new NotSupportedException(
+                $"The closing half of marker '{closing.Id}' has attributes set; XLIFF only allows them on the opening half.");
+    }
+
+    private static IEnumerable<XAttribute> WriteExtensionAttributes(IEnumerable<ExtensionAttr> attributes) =>
+        attributes.Select(a =>
+        {
+            XNamespace ns = a.Namespace;
+            if (ns == XNamespace.None || ns == Ns || ns == XNamespace.Xml || ns == XNamespace.Xmlns)
+                throw new NotSupportedException(
+                    $"Extension attribute '{a.LocalName}' must be in a namespace other than XLIFF's or XML's own.");
+            return new XAttribute(ns + a.LocalName, a.Value);
+        });
+
+    /// <summary>Adds text, writing characters that are invalid in XML as <c>&lt;cp&gt;</c>.</summary>
+    private static void AddText(XElement parent, string text)
+    {
+        var start = 0;
         for (var i = 0; i < text.Length; i++)
         {
             if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
                 i++;
-            else if (!XmlConvert.IsXmlChar(text[i]))
-                return false;
+                continue;
+            }
+
+            if (XmlConvert.IsXmlChar(text[i]))
+                continue;
+
+            if (i > start)
+                parent.Add(text[start..i]);
+            parent.Add(new XElement(Ns + "cp",
+                new XAttribute("hex", ((int)text[i]).ToString("X4", CultureInfo.InvariantCulture))));
+            start = i + 1;
         }
 
-        return true;
+        if (start < text.Length)
+            parent.Add(text[start..]);
     }
 
     private static bool HasSignificantWhitespace(string text)

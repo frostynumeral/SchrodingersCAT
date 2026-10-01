@@ -127,24 +127,6 @@ public class Xliff20SerializerTests
     }
 
     [Fact]
-    public async Task Write_RejectsInlineCodesInsteadOfLosingThem()
-    {
-        var doc = await ReadAsync(Sample);
-        doc.Units.First().Segments[2].Target = new InlineContent(
-            [new InlineText("Üdvözöljük"), new InlineCode("1", InlineCodeKind.Standalone), new InlineText("!")]);
-
-        await Assert.ThrowsAsync<NotSupportedException>(() => WriteAsync(doc));
-    }
-
-    [Fact]
-    public async Task ReadThenWrite_WithInlineCodes_FailsInsteadOfLosingThem()
-    {
-        var doc = await ReadAsync(Sample.Replace("<source>Welcome!</source>", "<source>Welcome <ph id=\"1\"/>!</source>"));
-
-        await Assert.ThrowsAsync<NotSupportedException>(() => WriteAsync(doc));
-    }
-
-    [Fact]
     public async Task Read_RejectsXliff12()
     {
         const string xml = """

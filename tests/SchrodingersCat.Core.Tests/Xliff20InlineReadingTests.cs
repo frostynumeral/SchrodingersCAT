@@ -178,23 +178,6 @@ public class Xliff20InlineReadingTests
         await Assert.ThrowsAsync<XliffFormatException>(() => ReadUnitAsync(content));
     }
 
-    [Fact]
-    public async Task Write_RejectsOriginalDataInsteadOfDroppingIt()
-    {
-        var doc = await ReadAsync(Wrap("""<originalData><data id="d1">x</data></originalData><segment><source>a</source></segment>"""));
-
-        await Assert.ThrowsAsync<NotSupportedException>(() => _serializer.WriteAsync(doc, Stream.Null));
-    }
-
-    [Fact]
-    public async Task Write_RejectsCharactersInvalidInXmlInsteadOfFailingInXmlWriter()
-    {
-        var doc = await ReadAsync(Wrap("""<segment><source>a<cp hex="1"/></source></segment>"""));
-
-        var ex = await Assert.ThrowsAsync<NotSupportedException>(() => _serializer.WriteAsync(doc, Stream.Null));
-        Assert.Contains("<cp>", ex.Message);
-    }
-
     private static string Wrap(string unitContent) => $"""
         <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" xmlns:fs="{FsNamespace}" version="2.0" srcLang="en" trgLang="hu">
           <file id="f1"><unit id="u1">{unitContent}</unit></file>
