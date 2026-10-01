@@ -13,10 +13,10 @@ public sealed class Segment
     /// <summary>Segment id, unique within its file. Optional in XLIFF 2.0.</summary>
     public string? Id { get; set; }
 
-    public required string Source { get; set; }
+    public required InlineContent Source { get; set; }
 
-    /// <summary><c>null</c> means there is no target yet; an empty string is an intentionally empty translation.</summary>
-    public string? Target { get; set; }
+    /// <summary><c>null</c> means there is no target yet; empty content is an intentionally empty translation.</summary>
+    public InlineContent? Target { get; set; }
 
     public SegmentState State { get; set; } = SegmentState.Initial;
 

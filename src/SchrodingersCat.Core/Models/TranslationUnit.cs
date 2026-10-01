@@ -18,10 +18,10 @@ public sealed class TranslationUnit
     public List<Note> Notes { get; } = [];
 
     /// <summary>Full source text of the unit (all segments, including ignorables).</summary>
-    public string Source => string.Concat(Segments.Select(s => s.Source));
+    public InlineContent Source => new(Segments.SelectMany(s => s.Source));
 
     /// <summary>Full target text; untranslated segments fall back to their source text, as in a preview.</summary>
-    public string Target => string.Concat(Segments.Select(s => s.Target ?? s.Source));
+    public InlineContent Target => new(Segments.SelectMany(s => s.Target ?? s.Source));
 
     /// <summary>The segments the translator actually edits (ignorables excluded).</summary>
     public IEnumerable<Segment> TranslatableSegments => Segments.Where(s => !s.IsIgnorable);

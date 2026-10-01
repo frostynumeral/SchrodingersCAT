@@ -55,8 +55,8 @@ public class Xliff20SerializerTests
         Assert.Equal("Greeting", u1.Name);
         Assert.Equal(3, u1.Segments.Count);
         Assert.Equal(2, u1.TranslatableSegments.Count());
-        Assert.Equal("Hello world. Welcome!", u1.Source);
-        Assert.Equal("Helló világ. Welcome!", u1.Target);
+        Assert.Equal(Text("Hello world. Welcome!"), u1.Source);
+        Assert.Equal(Text("Helló világ. Welcome!"), u1.Target);
 
         var s1 = u1.Segments[0];
         Assert.Equal("s1", s1.Id);
@@ -83,16 +83,16 @@ public class Xliff20SerializerTests
 
         // Simulate the translator's work.
         var segment = doc.Units.First().Segments[2];
-        segment.Target = "Üdvözöljük!";
+        segment.Target = Text("Üdvözöljük!");
         segment.State = SegmentState.Translated;
 
         var reread = await ReadAsync(await WriteAsync(doc));
 
         var unit = reread.Units.First();
-        Assert.Equal("Helló világ. Üdvözöljük!", unit.Target);
+        Assert.Equal(Text("Helló világ. Üdvözöljük!"), unit.Target);
         Assert.Equal(SegmentState.Translated, unit.Segments[2].State);
         Assert.True(unit.Segments[1].IsIgnorable);
-        Assert.Equal(" ", unit.Segments[1].Source);
+        Assert.Equal(Text(" "), unit.Segments[1].Source);
         Assert.Equal("cat:locked", reread.Units.Last().Segments[0].SubState);
         Assert.Equal(NoteAppliesTo.Source, unit.Notes[0].AppliesTo);
     }
@@ -103,7 +103,7 @@ public class Xliff20SerializerTests
         var doc = new TranslationDocument { SourceLanguage = "en" };
         var file = new TranslationFile { Id = "f1" };
         var unit = new TranslationUnit { Id = "u1" };
-        unit.Segments.Add(new Segment { Source = "  indented", Target = "plain text" });
+        unit.Segments.Add(new Segment { Source = Text("  indented"), Target = Text("plain text") });
         file.Units.Add(unit);
         doc.Files.Add(file);
 
@@ -111,7 +111,29 @@ public class Xliff20SerializerTests
 
         Assert.Contains("<source xml:space=\"preserve\">  indented</source>", xml);
         Assert.Contains("<target>plain text</target>", xml);
-        Assert.Equal("  indented", (await ReadAsync(xml)).Units.Single().Segments[0].Source);
+        Assert.Equal(Text("  indented"), (await ReadAsync(xml)).Units.Single().Segments[0].Source);
+    }
+
+    [Fact]
+    public async Task Write_KeepsEmptyTargetDistinctFromMissingTarget()
+    {
+        var doc = await ReadAsync(Sample);
+        doc.Units.First().Segments[0].Target = InlineContent.Empty;
+
+        var unit = (await ReadAsync(await WriteAsync(doc))).Units.First();
+
+        Assert.Equal(InlineContent.Empty, unit.Segments[0].Target);
+        Assert.Null(unit.Segments[2].Target);
+    }
+
+    [Fact]
+    public async Task Write_RejectsInlineCodesInsteadOfLosingThem()
+    {
+        var doc = await ReadAsync(Sample);
+        doc.Units.First().Segments[2].Target = new InlineContent(
+            [new InlineText("Üdvözöljük"), new InlineCode("1", InlineCodeKind.Standalone), new InlineText("!")]);
+
+        await Assert.ThrowsAsync<NotSupportedException>(() => WriteAsync(doc));
     }
 
     [Fact]
@@ -162,6 +184,8 @@ public class Xliff20SerializerTests
             File.Delete(path);
         }
     }
+
+    private static InlineContent Text(string text) => InlineContent.FromText(text);
 
     private async Task<TranslationDocument> ReadAsync(string xml)
     {
