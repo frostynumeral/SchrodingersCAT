@@ -102,10 +102,13 @@ A new `Dictionary<string, string> OriginalData` holds the native code for each `
 ## Reading
 
 - Parse the elements above into the flat list. `<pc>` becomes opening, content, closing; `<mrk>` likewise.
+- XLIFF requires a non-isolated `<ec>` to repeat its `<sc>`'s `canCopy`/`canDelete`/`canOverlap`/`canReorder`, and lets it carry its own `type`/`subType`. So a closing half repeats the pair-level attributes, and the reader copies `<pc>`'s onto both halves. `<sc>`/`<ec>` are read exactly as written. A `<pc>` and an `<sc>`/`<ec>` that carry the same information therefore load identically. When they don't, the model keeps the difference, and the writer falls back to `<sc>`/`<ec>`.
+- `canOverlap` defaults differ (`no` for `<pc>`, `yes` for `<sc>`/`<ec>`), so the reader stores the resolved value and normalising can't silently change it.
 - Validation, which fails loudly with `XliffFormatException`:
-  - inline ids are unique within the unit (XLIFF shares that id space with segments);
+  - inline ids are unique within the unit's sources, and separately within its targets (target codes reuse their source code's id), and don't clash with segment or ignorable ids;
   - every `dataRef` exists in `<originalData>`;
-  - every non-isolated `<sc>`/`<sm>` has its `<ec>`/`<em>` later in the same unit, and vice versa.
+  - every non-isolated `<sc>`/`<sm>` has its `<ec>`/`<em>` later in the same unit, and vice versa;
+  - unknown elements or unqualified attributes in content are rejected; attributes from other namespaces go into `ExtensionAttributes`.
 - The same logic applies to `<ignorable>`, which may contain codes too.
 
 ## Writing

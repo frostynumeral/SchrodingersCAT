@@ -137,12 +137,11 @@ public class Xliff20SerializerTests
     }
 
     [Fact]
-    public async Task Read_RejectsInlineCodesInsteadOfLosingThem()
+    public async Task ReadThenWrite_WithInlineCodes_FailsInsteadOfLosingThem()
     {
-        var xml = Sample.Replace("<source>Welcome!</source>", "<source>Welcome <ph id=\"1\"/>!</source>");
+        var doc = await ReadAsync(Sample.Replace("<source>Welcome!</source>", "<source>Welcome <ph id=\"1\"/>!</source>"));
 
-        var ex = await Assert.ThrowsAsync<XliffFormatException>(() => ReadAsync(xml));
-        Assert.Contains("<ph>", ex.Message);
+        await Assert.ThrowsAsync<NotSupportedException>(() => WriteAsync(doc));
     }
 
     [Fact]

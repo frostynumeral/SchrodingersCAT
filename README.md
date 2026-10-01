@@ -14,7 +14,7 @@ A computer-assisted translation (CAT) tool written in C#/.NET.
 
 ### Not supported yet
 
-- Inline codes (`<ph>`, `<pc>`, `<mrk>`, …): files that contain them are rejected.
+- Inline codes (`<ph>`, `<pc>`, `<mrk>`, …): files that contain them can be read, but saving them is refused until writing is implemented.
 - XLIFF 1.2.
 - `<group>` hierarchy: groups are flattened.
 - XLIFF modules/extensions (matches, glossary, …): these are not preserved on save.

@@ -52,7 +52,8 @@ public enum CanReorder
 /// <remarks>
 /// The opening and closing halves of a pair share the same <see cref="Id"/>. Attributes that XLIFF splits
 /// into start and end variants on <c>&lt;pc&gt;</c> (<c>dataRefStart</c>/<c>dataRefEnd</c>, …) live on the
-/// respective half.
+/// respective half. Like XLIFF's <c>&lt;ec&gt;</c>, a closing half repeats the pair-level attributes
+/// (<c>type</c>, <c>subType</c>, <c>canCopy</c>, …), so a <c>&lt;pc&gt;</c> loads into both halves.
 /// </remarks>
 public sealed record InlineCode : InlineElement
 {
@@ -100,7 +101,10 @@ public sealed record InlineCode : InlineElement
 
     public CanReorder CanReorder { get; init; } = CanReorder.Yes;
 
-    /// <summary><c>null</c> means the XLIFF default for the element.</summary>
+    /// <summary>
+    /// <c>null</c> for standalone codes, where it does not apply. The reader fills in the element's XLIFF default
+    /// (<c>no</c> for <c>&lt;pc&gt;</c>, <c>yes</c> for <c>&lt;sc&gt;</c>/<c>&lt;ec&gt;</c>), so the two forms can't be confused.
+    /// </summary>
     public bool? CanOverlap { get; init; }
 
     /// <summary><c>true</c> if the other half of the pair is outside this unit.</summary>

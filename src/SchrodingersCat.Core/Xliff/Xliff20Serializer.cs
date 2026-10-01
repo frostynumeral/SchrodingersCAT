@@ -12,9 +12,9 @@ namespace SchrodingersCat.Core.Xliff;
 /// <remarks>
 /// Current limitations (intentional for the first iteration):
 /// <list type="bullet">
-/// <item>Inline codes (<c>&lt;ph&gt;</c>, <c>&lt;pc&gt;</c>, <c>&lt;mrk&gt;</c>, …) are rejected with an
-/// <see cref="XliffFormatException"/> rather than silently dropped, and the writer refuses content
-/// that contains them with a <see cref="NotSupportedException"/>.</item>
+/// <item>Inline codes (<c>&lt;ph&gt;</c>, <c>&lt;pc&gt;</c>, <c>&lt;mrk&gt;</c>, …), <c>&lt;cp&gt;</c> and
+/// <c>&lt;originalData&gt;</c> are read, but the writer does not support them yet and throws a
+/// <see cref="NotSupportedException"/> rather than dropping them.</item>
 /// <item><c>&lt;group&gt;</c> hierarchy is flattened, and modules/extensions (matches, glossary, …) are not
 /// preserved: the writer regenerates the file from the model.</item>
 /// </list>
@@ -99,14 +99,25 @@ public sealed class Xliff20Serializer : IXliffSerializer
                 unit.Notes.Add(ReadNote(noteElement));
         }
 
+        var originalDataElement = unitElement.Element(Ns + "originalData");
+        if (originalDataElement is not null)
+            ReadOriginalData(originalDataElement, unit);
+
+        var segmentIds = ReadSegmentIds(unitElement, unit.Id);
+        var source = new InlineSide("source", unit.Id, unit.OriginalData, segmentIds);
+        var target = new InlineSide("target", unit.Id, unit.OriginalData, segmentIds);
+
         // Segments and ignorables are siblings and their order matters (it rebuilds the full text).
         foreach (var child in unitElement.Elements())
         {
             if (child.Name == Ns + "segment")
-                unit.Segments.Add(ReadSegment(child, unit.Id, isIgnorable: false));
+                unit.Segments.Add(ReadSegment(child, source, target, isIgnorable: false));
             else if (child.Name == Ns + "ignorable")
-                unit.Segments.Add(ReadSegment(child, unit.Id, isIgnorable: true));
+                unit.Segments.Add(ReadSegment(child, source, target, isIgnorable: true));
         }
+
+        source.VerifyPairsClosed();
+        target.VerifyPairsClosed();
 
         if (!unit.TranslatableSegments.Any())
             throw new XliffFormatException($"Unit '{unit.Id}' contains no <segment>.");
@@ -114,8 +125,55 @@ public sealed class Xliff20Serializer : IXliffSerializer
         return unit;
     }
 
-    private static Segment ReadSegment(XElement element, string unitId, bool isIgnorable)
+    // Segment, ignorable and inline ids share one id space per unit.
+    private static HashSet<string> ReadSegmentIds(XElement unitElement, string unitId)
     {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var child in unitElement.Elements())
+        {
+            if (child.Name != Ns + "segment" && child.Name != Ns + "ignorable")
+                continue;
+
+            var id = (string?)child.Attribute("id");
+            if (id is not null && !ids.Add(id))
+                throw new XliffFormatException($"Duplicate segment id '{id}' in unit '{unitId}'.");
+        }
+
+        return ids;
+    }
+
+    private static void ReadOriginalData(XElement element, TranslationUnit unit)
+    {
+        foreach (var dataElement in element.Elements())
+        {
+            if (dataElement.Name != Ns + "data")
+                throw new XliffFormatException($"Unit '{unit.Id}' contains <{dataElement.Name.LocalName}> inside <originalData>, which is not allowed.");
+
+            var attributes = new InlineAttributes(dataElement, unit.Id);
+            var id = attributes.Required("id");
+            attributes.Optional(XmlSpace); // the text is read verbatim anyway
+            attributes.VerifyNoneLeft();
+
+            // <data> holds the native code as text, with characters that are invalid in XML as <cp>.
+            var text = new StringBuilder();
+            foreach (var node in dataElement.Nodes())
+            {
+                if (node is XText textNode)
+                    text.Append(textNode.Value);
+                else if (node is XElement child && child.Name == Ns + "cp")
+                    text.Append(ReadCodePoint(child, unit.Id));
+                else if (node is XElement other)
+                    throw new XliffFormatException($"Unit '{unit.Id}' contains <{other.Name.LocalName}> inside <data>, which is not allowed.");
+            }
+
+            if (!unit.OriginalData.TryAdd(id, text.ToString()))
+                throw new XliffFormatException($"Duplicate <data> id '{id}' in unit '{unit.Id}'.");
+        }
+    }
+
+    private static Segment ReadSegment(XElement element, InlineSide source, InlineSide target, bool isIgnorable)
+    {
+        var unitId = source.UnitId;
         var sourceElement = element.Element(Ns + "source")
             ?? throw new XliffFormatException($"A segment in unit '{unitId}' has no <source>.");
         var targetElement = element.Element(Ns + "target");
@@ -123,8 +181,8 @@ public sealed class Xliff20Serializer : IXliffSerializer
         return new Segment
         {
             Id = (string?)element.Attribute("id"),
-            Source = ReadPlainText(sourceElement, unitId),
-            Target = targetElement is null ? null : ReadPlainText(targetElement, unitId),
+            Source = ReadContent(sourceElement, source),
+            Target = targetElement is null ? null : ReadContent(targetElement, target),
             State = isIgnorable ? SegmentState.Initial : ParseState((string?)element.Attribute("state"), unitId),
             SubState = (string?)element.Attribute("subState"),
             IsIgnorable = isIgnorable,
@@ -158,15 +216,198 @@ public sealed class Xliff20Serializer : IXliffSerializer
         };
     }
 
-    private static InlineContent ReadPlainText(XElement element, string unitId)
+    private static InlineContent ReadContent(XElement element, InlineSide side)
     {
-        // Fail loudly: flattening inline codes to text would corrupt the file on save.
-        var inline = element.Elements().FirstOrDefault();
-        if (inline is not null)
-            throw new XliffFormatException(
-                $"Unit '{unitId}' contains inline code <{inline.Name.LocalName}>, which is not supported yet.");
+        var elements = new List<InlineElement>();
+        ReadInline(element, side, elements);
+        return new InlineContent(elements);
+    }
 
-        return InlineContent.FromText(element.Value);
+    // Flattens the inline tree: <pc> and <mrk> become an opening element, their content and a closing element.
+    private static void ReadInline(XElement parent, InlineSide side, List<InlineElement> elements)
+    {
+        foreach (var node in parent.Nodes())
+        {
+            if (node is XText text)
+                elements.Add(new InlineText(text.Value));
+            else if (node is XElement child)
+                ReadInlineElement(child, side, elements);
+        }
+    }
+
+    private static void ReadInlineElement(XElement element, InlineSide side, List<InlineElement> elements)
+    {
+        var name = element.Name.Namespace == Ns ? element.Name.LocalName : null;
+        if (name is not ("ph" or "pc" or "sc" or "ec" or "mrk" or "sm" or "em" or "cp"))
+            throw new XliffFormatException(
+                $"Unit '{side.UnitId}' contains <{element.Name.LocalName}> in its {side.Name}, which is not allowed in content.");
+        if (name is not ("pc" or "mrk"))
+            RequireEmpty(element, side.UnitId);
+
+        var a = new InlineAttributes(element, side.UnitId);
+        switch (name)
+        {
+            case "ph":
+            {
+                var id = side.DefineId(a.Required("id"));
+                elements.Add(ReadPairLevel(new InlineCode(id, InlineCodeKind.Standalone), a) with
+                {
+                    DataRef = side.DataRef(a.Optional("dataRef")),
+                    Disp = a.Optional("disp"),
+                    Equiv = a.Optional("equiv"),
+                    SubFlows = a.Optional("subFlows"),
+                    ExtensionAttributes = a.ExtensionAttributes(),
+                });
+                break;
+            }
+
+            case "pc":
+            {
+                var id = side.DefineId(a.Required("id"));
+                var shared = ReadPairLevel(new InlineCode(id, InlineCodeKind.Opening), a) with
+                {
+                    CanOverlap = a.YesNo("canOverlap") ?? false,
+                };
+                var opening = shared with
+                {
+                    Dir = a.Optional("dir"),
+                    DataRef = side.DataRef(a.Optional("dataRefStart")),
+                    Disp = a.Optional("dispStart"),
+                    Equiv = a.Optional("equivStart"),
+                    SubFlows = a.Optional("subFlowsStart"),
+                };
+                var closing = new InlineCode(id, InlineCodeKind.Closing)
+                {
+                    Type = shared.Type,
+                    SubType = shared.SubType,
+                    CopyOf = shared.CopyOf,
+                    CanCopy = shared.CanCopy,
+                    CanDelete = shared.CanDelete,
+                    CanOverlap = shared.CanOverlap,
+                    // As on <ec>: a pair that starts with firstNo ends with no.
+                    CanReorder = shared.CanReorder == CanReorder.FirstNo ? CanReorder.No : shared.CanReorder,
+                    DataRef = side.DataRef(a.Optional("dataRefEnd")),
+                    Disp = a.Optional("dispEnd"),
+                    Equiv = a.Optional("equivEnd"),
+                    SubFlows = a.Optional("subFlowsEnd"),
+                };
+
+                elements.Add(opening with { ExtensionAttributes = a.ExtensionAttributes() });
+                ReadInline(element, side, elements);
+                elements.Add(closing);
+                break;
+            }
+
+            case "sc":
+            {
+                var id = side.DefineId(a.Required("id"));
+                var isolated = a.YesNo("isolated") ?? false;
+                if (!isolated)
+                    side.OpenCode(id);
+
+                elements.Add(ReadPairLevel(new InlineCode(id, InlineCodeKind.Opening), a) with
+                {
+                    IsIsolated = isolated,
+                    CanOverlap = a.YesNo("canOverlap") ?? true,
+                    Dir = a.Optional("dir"),
+                    DataRef = side.DataRef(a.Optional("dataRef")),
+                    Disp = a.Optional("disp"),
+                    Equiv = a.Optional("equiv"),
+                    SubFlows = a.Optional("subFlows"),
+                    ExtensionAttributes = a.ExtensionAttributes(),
+                });
+                break;
+            }
+
+            case "ec":
+            {
+                // An isolated <ec> has its own id; otherwise startRef points to its <sc>, and dir is not allowed.
+                var isolated = a.YesNo("isolated") ?? false;
+                var id = isolated ? side.DefineId(a.Required("id")) : side.CloseCode(a.Required("startRef"));
+
+                elements.Add(ReadPairLevel(new InlineCode(id, InlineCodeKind.Closing), a) with
+                {
+                    IsIsolated = isolated,
+                    CanOverlap = a.YesNo("canOverlap") ?? true,
+                    Dir = isolated ? a.Optional("dir") : null,
+                    DataRef = side.DataRef(a.Optional("dataRef")),
+                    Disp = a.Optional("disp"),
+                    Equiv = a.Optional("equiv"),
+                    SubFlows = a.Optional("subFlows"),
+                    ExtensionAttributes = a.ExtensionAttributes(),
+                });
+                break;
+            }
+
+            case "mrk":
+            {
+                var id = side.DefineId(a.Required("id"));
+                elements.Add(ReadMarker(new InlineMarker(id, InlineMarkerKind.Opening), a));
+                ReadInline(element, side, elements);
+                elements.Add(new InlineMarker(id, InlineMarkerKind.Closing));
+                break;
+            }
+
+            case "sm":
+            {
+                var id = side.DefineId(a.Required("id"));
+                side.OpenMarker(id);
+                elements.Add(ReadMarker(new InlineMarker(id, InlineMarkerKind.Opening), a));
+                break;
+            }
+
+            case "em":
+            {
+                var id = side.CloseMarker(a.Required("startRef"));
+                a.VerifyNoneLeft();
+                elements.Add(new InlineMarker(id, InlineMarkerKind.Closing));
+                break;
+            }
+
+            default: // cp
+                elements.Add(new InlineText(ReadCodePoint(element, side.UnitId)));
+                break;
+        }
+    }
+
+    private static InlineCode ReadPairLevel(InlineCode code, InlineAttributes a) => code with
+    {
+        Type = a.Optional("type"),
+        SubType = a.Optional("subType"),
+        CopyOf = a.Optional("copyOf"),
+        CanCopy = a.YesNo("canCopy") ?? true,
+        CanDelete = a.YesNo("canDelete") ?? true,
+        CanReorder = a.CanReorder() ?? CanReorder.Yes,
+    };
+
+    private static InlineMarker ReadMarker(InlineMarker marker, InlineAttributes a) => marker with
+    {
+        Translate = a.YesNo("translate"),
+        Type = a.Optional("type"),
+        Ref = a.Optional("ref"),
+        Value = a.Optional("value"),
+        ExtensionAttributes = a.ExtensionAttributes(),
+    };
+
+    private static string ReadCodePoint(XElement element, string unitId)
+    {
+        RequireEmpty(element, unitId);
+        var attributes = new InlineAttributes(element, unitId);
+        var hex = attributes.Required("hex");
+        attributes.VerifyNoneLeft();
+
+        if (!int.TryParse(hex, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var codePoint)
+            || codePoint is < 0 or > 0x10FFFF)
+            throw new XliffFormatException($"Invalid <cp hex=\"{hex}\"> in unit '{unitId}'.");
+
+        // ConvertFromUtf32 rejects surrogates, but <cp> may carry a lone one.
+        return codePoint <= 0xFFFF ? ((char)codePoint).ToString() : char.ConvertFromUtf32(codePoint);
+    }
+
+    private static void RequireEmpty(XElement element, string unitId)
+    {
+        if (element.Nodes().Any(n => n is not XComment))
+            throw new XliffFormatException($"<{element.Name.LocalName}> in unit '{unitId}' must be empty.");
     }
 
     private static SegmentState ParseState(string? value, string unitId) => value switch
@@ -215,12 +456,17 @@ public sealed class Xliff20Serializer : IXliffSerializer
             OptionalAttribute("original", file.Original),
             file.Units.Select(WriteUnit));
 
-    private static XElement WriteUnit(TranslationUnit unit) =>
-        new(Ns + "unit",
+    private static XElement WriteUnit(TranslationUnit unit)
+    {
+        if (unit.OriginalData.Count > 0)
+            throw new NotSupportedException($"Writing <originalData> (unit '{unit.Id}') is not supported yet.");
+
+        return new XElement(Ns + "unit",
             new XAttribute("id", unit.Id),
             OptionalAttribute("name", unit.Name),
             unit.Notes.Count == 0 ? null : new XElement(Ns + "notes", unit.Notes.Select(WriteNote)),
             unit.Segments.Select(WriteSegment));
+    }
 
     private static XElement WriteSegment(Segment segment)
     {
@@ -259,6 +505,9 @@ public sealed class Xliff20Serializer : IXliffSerializer
             throw new NotSupportedException("Writing inline codes and markers is not supported yet.");
 
         var text = content.ToPlainText();
+        if (!IsValidXml(text))
+            throw new NotSupportedException("Writing characters that are invalid in XML (as <cp>) is not supported yet.");
+
         var element = new XElement(name, text);
 
         // Tell other tools not to normalize whitespace that is significant for the translation.
@@ -266,6 +515,19 @@ public sealed class Xliff20Serializer : IXliffSerializer
             element.Add(new XAttribute(XmlSpace, "preserve"));
 
         return element;
+    }
+
+    private static bool IsValidXml(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                i++;
+            else if (!XmlConvert.IsXmlChar(text[i]))
+                return false;
+        }
+
+        return true;
     }
 
     private static bool HasSignificantWhitespace(string text)
@@ -295,4 +557,129 @@ public sealed class Xliff20Serializer : IXliffSerializer
 
     private static XAttribute? OptionalAttribute(XName name, string? value) =>
         value is null ? null : new XAttribute(name, value);
+
+    // ---------------------------------------------------------------- inline reading helpers
+
+    /// <summary>Id and pairing bookkeeping for the sources or the targets of one unit.</summary>
+    /// <remarks>
+    /// Targets reuse the ids of the corresponding source codes, so each side has its own id set.
+    /// Pairs may span segments, so open pairs are tracked across the whole unit.
+    /// </remarks>
+    private sealed class InlineSide(
+        string name, string unitId, IReadOnlyDictionary<string, string> originalData, IReadOnlySet<string> segmentIds)
+    {
+        private readonly HashSet<string> _ids = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _openCodes = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _openMarkers = new(StringComparer.Ordinal);
+
+        public string Name => name;
+
+        public string UnitId => unitId;
+
+        public string DefineId(string id)
+        {
+            if (segmentIds.Contains(id) || !_ids.Add(id))
+                throw new XliffFormatException($"Duplicate id '{id}' in the {name} of unit '{unitId}'.");
+            return id;
+        }
+
+        public void OpenCode(string id) => _openCodes.Add(id);
+
+        public void OpenMarker(string id) => _openMarkers.Add(id);
+
+        public string CloseCode(string startRef) =>
+            _openCodes.Remove(startRef)
+                ? startRef
+                : throw new XliffFormatException(
+                    $"<ec startRef=\"{startRef}\"> in the {name} of unit '{unitId}' has no matching <sc> before it.");
+
+        public string CloseMarker(string startRef) =>
+            _openMarkers.Remove(startRef)
+                ? startRef
+                : throw new XliffFormatException(
+                    $"<em startRef=\"{startRef}\"> in the {name} of unit '{unitId}' has no matching <sm> before it.");
+
+        public string? DataRef(string? id) =>
+            id is null || originalData.ContainsKey(id)
+                ? id
+                : throw new XliffFormatException($"dataRef '{id}' in unit '{unitId}' does not match any <data> in <originalData>.");
+
+        public void VerifyPairsClosed()
+        {
+            foreach (var id in _openCodes)
+                throw new XliffFormatException(
+                    $"<sc id=\"{id}\"> in the {name} of unit '{unitId}' has no matching <ec>. Mark it isolated=\"yes\" if its end is outside the unit.");
+            foreach (var id in _openMarkers)
+                throw new XliffFormatException($"<sm id=\"{id}\"> in the {name} of unit '{unitId}' has no matching <em>.");
+        }
+    }
+
+    /// <summary>
+    /// Reads attributes and keeps track of which ones were used, so unknown XLIFF attributes fail loudly
+    /// and attributes from other namespaces are kept as <see cref="ExtensionAttr"/>s.
+    /// </summary>
+    private sealed class InlineAttributes(XElement element, string unitId)
+    {
+        private readonly HashSet<XName> _read = [];
+
+        public string? Optional(XName name)
+        {
+            _read.Add(name);
+            return (string?)element.Attribute(name);
+        }
+
+        public string Required(XName name) =>
+            Optional(name)
+            ?? throw new XliffFormatException(
+                $"<{element.Name.LocalName}> in unit '{unitId}' is missing the required '{name.LocalName}' attribute.");
+
+        public bool? YesNo(string name) => Optional(name) switch
+        {
+            null => null,
+            "yes" => true,
+            "no" => false,
+            var other => throw Invalid(name, other),
+        };
+
+        public CanReorder? CanReorder() => Optional("canReorder") switch
+        {
+            null => null,
+            "yes" => Models.CanReorder.Yes,
+            "firstNo" => Models.CanReorder.FirstNo,
+            "no" => Models.CanReorder.No,
+            var other => throw Invalid("canReorder", other),
+        };
+
+        /// <summary>Call after reading all supported attributes.</summary>
+        public List<ExtensionAttr> ExtensionAttributes()
+        {
+            var result = new List<ExtensionAttr>();
+            foreach (var attribute in element.Attributes())
+            {
+                if (attribute.IsNamespaceDeclaration || _read.Contains(attribute.Name))
+                    continue;
+
+                var ns = attribute.Name.Namespace;
+                if (ns == XNamespace.None || ns == Ns || ns == XNamespace.Xml)
+                    throw new XliffFormatException(
+                        $"Unsupported attribute '{attribute.Name.LocalName}' on <{element.Name.LocalName}> in unit '{unitId}'.");
+
+                result.Add(new ExtensionAttr(ns.NamespaceName, attribute.Name.LocalName, attribute.Value));
+            }
+
+            return result;
+        }
+
+        /// <summary>For elements that can't carry extension attributes.</summary>
+        public void VerifyNoneLeft()
+        {
+            var extensions = ExtensionAttributes();
+            if (extensions.Count > 0)
+                throw new XliffFormatException(
+                    $"Unsupported attribute '{extensions[0].LocalName}' on <{element.Name.LocalName}> in unit '{unitId}'.");
+        }
+
+        private XliffFormatException Invalid(string name, string value) =>
+            new($"Invalid {name} value '{value}' on <{element.Name.LocalName}> in unit '{unitId}'.");
+    }
 }
