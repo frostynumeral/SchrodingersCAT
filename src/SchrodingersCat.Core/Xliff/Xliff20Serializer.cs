@@ -783,6 +783,8 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
             // Safe for our content: XmlWriter stops indenting inside elements that contain text,
             // and WriteContent makes sure every content element does.
             Indent = true,
+            // XML parsers turn a literal carriage return into a line feed, so it has to be written as &#xD;.
+            NewLineHandling = NewLineHandling.Entitize,
         };
 
         await using var writer = XmlWriter.Create(output, settings);
@@ -1391,7 +1393,8 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
 
             try
             {
-                XmlConvert.VerifyNCName(a.LocalName);
+                // VerifyNCName throws ArgumentException rather than XmlException for an empty name.
+                XmlConvert.VerifyNCName(a.LocalName.Length == 0 ? ":" : a.LocalName);
             }
             catch (XmlException ex)
             {
@@ -1455,6 +1458,12 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
                     break;
                 case XComment comment when comment.Value.Contains("--", StringComparison.Ordinal) || comment.Value.EndsWith('-'):
                     throw Unrepresentable(comment.Parent!, "a comment", "'--' or a trailing '-'");
+                // Text and attributes escape a carriage return as &#xD;, but comments and processing instructions
+                // can't, and XML parsers turn it into a line feed.
+                case XComment comment when comment.Value.Contains('\r', StringComparison.Ordinal):
+                    throw Unrepresentable(comment.Parent!, "a comment", "a carriage return");
+                case XProcessingInstruction instruction when instruction.Data.Contains('\r', StringComparison.Ordinal):
+                    throw Unrepresentable(instruction.Parent!, "a processing instruction", "a carriage return");
                 case XComment comment:
                     Verify(comment.Value, comment.Parent!, "a comment");
                     break;
