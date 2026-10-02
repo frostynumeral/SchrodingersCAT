@@ -38,6 +38,20 @@ internal static class XmlMutator
     private static readonly string[] Snippets =
     [
         "<", ">", "&", "\"", "\u0001", "<x>", "</source>", "&#1;", "&#xD800;", "&bogus;", "]]>", "<![CDATA[x]]>", "<!-- c -->", "<?pi x?>",
+        "&e;", "&xxe;", "&l3;", "%p;",
+    ];
+
+    private static readonly string[] EntityReferences = ["&e;", "&xxe;", "&l3;", ""];
+
+    // Inserted where a DOCTYPE is allowed (after the XML declaration), with entity references in the content.
+    private static readonly string[] Doctypes =
+    [
+        "<!DOCTYPE xliff>",
+        "<!DOCTYPE xliff [<!ENTITY e \"x\">]>",
+        "<!DOCTYPE xliff [<!ENTITY l0 \"lol\"><!ENTITY l1 \"&l0;&l0;&l0;&l0;\"><!ENTITY l2 \"&l1;&l1;&l1;&l1;\"><!ENTITY l3 \"&l2;&l2;&l2;&l2;\">]>",
+        "<!DOCTYPE xliff [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>",
+        "<!DOCTYPE xliff SYSTEM \"http://example.invalid/xliff.dtd\">",
+        "<!DOCTYPE xliff [<!ENTITY % p \"<!ENTITY e 'x'>\"> %p;]>",
     ];
 
     public static byte[] Mutate(string xml, Choices choices)
@@ -45,9 +59,10 @@ internal static class XmlMutator
         var count = 1 + choices.Next(3);
         for (var i = 0; i < count; i++)
         {
-            xml = choices.Next(4) switch
+            xml = choices.Next(5) switch
             {
                 0 => MutateText(xml, choices),
+                1 => AddDoctype(xml, choices),
                 _ => MutateTree(xml, choices),
             };
         }
@@ -56,6 +71,16 @@ internal static class XmlMutator
         if (choices.Next(6) == 0 && bytes.Length > 0)
             bytes[choices.Next(bytes.Length)] = (byte)choices.Next(256);
         return bytes;
+    }
+
+    private static string AddDoctype(string xml, Choices choices)
+    {
+        var declarationEnd = xml.StartsWith("<?xml", StringComparison.Ordinal) ? xml.IndexOf("?>", StringComparison.Ordinal) + 2 : 0;
+        xml = xml.Insert(declarationEnd, choices.Pick(Doctypes));
+
+        // Use an entity the DTD may have declared, where content is allowed.
+        var source = xml.IndexOf("<source>", StringComparison.Ordinal);
+        return source < 0 ? xml : xml.Insert(source + "<source>".Length, choices.Pick(EntityReferences));
     }
 
     private static string MutateText(string xml, Choices choices)

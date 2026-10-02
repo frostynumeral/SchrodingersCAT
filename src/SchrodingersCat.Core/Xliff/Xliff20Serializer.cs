@@ -31,6 +31,19 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
 
     private readonly ILogger _logger = logger ?? NullLogger<Xliff20Serializer>.Instance;
 
+    /// <summary>Files nested deeper than this are rejected while parsing, before the (recursive) reading starts.</summary>
+    /// <remarks>
+    /// Real XLIFF stays well below it. A malicious file nested thousands deep would otherwise overflow the stack and
+    /// crash the process, and building a very deep XML tree is quadratically slow.
+    /// </remarks>
+    public const int MaxElementDepth = 256;
+
+    /// <summary>
+    /// The largest input <see cref="ReadAsync"/> accepts, in bytes (default 256 MiB). Larger input throws
+    /// <see cref="XliffFormatException"/> as soon as the limit is passed, so an endless stream can't exhaust memory.
+    /// </summary>
+    public long MaxInputBytes { get; init; } = 256L * 1024 * 1024;
+
     private static readonly XName XmlSpace = XNamespace.Xml + "space";
 
     // Conventional prefixes for the XLIFF modules and ITS. Other namespaces get generated ns1, ns2, … prefixes.
@@ -70,7 +83,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
 
         try
         {
-            var document = await ReadDocumentAsync(input, cancellationToken);
+            var document = await ReadDocumentAsync(input, MaxInputBytes, cancellationToken);
             if (_logger.IsEnabled(LogLevel.Debug))
             {
                 var unitCount = document.Files.Sum(f => f.Units.Count());
@@ -85,18 +98,37 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         }
     }
 
-    private static async Task<TranslationDocument> ReadDocumentAsync(Stream input, CancellationToken cancellationToken)
+    // XLIFF files come from clients and vendors, so they are untrusted input. XLIFF never uses a DTD, and a DTD is
+    // what makes entity expansion ("billion laughs") and external entities possible, so DTDs are refused outright.
+    private static readonly XmlReaderSettings ReaderSettings = new()
+    {
+        Async = true,
+        DtdProcessing = DtdProcessing.Prohibit,
+        XmlResolver = null,
+        CloseInput = false,
+    };
+
+    private static async Task<TranslationDocument> ReadDocumentAsync(Stream input, long maxInputBytes, CancellationToken cancellationToken)
     {
         XDocument xml;
         try
         {
+            using var reader = new DepthLimitingXmlReader(
+                XmlReader.Create(new LimitedReadStream(input, maxInputBytes), ReaderSettings), MaxElementDepth);
+
             // Whitespace inside <source>/<target> is part of the translatable content.
-            xml = await XDocument.LoadAsync(input, LoadOptions.PreserveWhitespace, cancellationToken);
+            xml = await XDocument.LoadAsync(reader, LoadOptions.PreserveWhitespace, cancellationToken);
+        }
+        catch (XmlException ex) when (ex.Message.Contains("DTD", StringComparison.Ordinal))
+        {
+            throw new XliffFormatException(
+                "The file contains a DTD (<!DOCTYPE>). XLIFF doesn't use DTDs, and they are refused because they can expand entities or reference external files.", ex);
         }
         catch (XmlException ex)
         {
             throw new XliffFormatException($"The file is not well-formed XML: {ex.Message}", ex);
         }
+
 
         var root = xml.Root;
         if (root is null || root.Name.LocalName != "xliff")

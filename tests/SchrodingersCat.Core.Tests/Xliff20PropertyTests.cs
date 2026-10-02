@@ -122,7 +122,7 @@ public class Xliff20PropertyTests : Xliff20SerializerTestBase
         Assert.True(missing.Count == 0, $"No generated document has: {string.Join(", ", missing)}");
 
         var mutations = Mutation.Array[300].Single();
-        var (writerAccepted, writerRejected, readerAccepted, readerRejected) = (0, 0, 0, 0);
+        var (writerAccepted, writerRejected, readerAccepted, readerRejected, doctypesRejected) = (0, 0, 0, 0, 0);
         foreach (var (plan, choices) in mutations)
         {
             var document = DocumentBuilder.Build(plan);
@@ -138,20 +138,23 @@ public class Xliff20PropertyTests : Xliff20SerializerTestBase
             }
 
             var xml = await WriteAsync(DocumentBuilder.Build(plan));
+            var mutated = XmlMutator.Mutate(xml, new Choices(choices));
             try
             {
-                using var stream = new MemoryStream(XmlMutator.Mutate(xml, new Choices(choices)));
+                using var stream = new MemoryStream(mutated);
                 await Serializer.ReadAsync(stream);
                 readerAccepted++;
             }
-            catch (XliffFormatException)
+            catch (XliffFormatException ex)
             {
                 readerRejected++;
+                if (ex.Message.Contains("DTD", StringComparison.Ordinal))
+                    doctypesRejected++;
             }
         }
 
-        Assert.All([writerAccepted, writerRejected, readerAccepted, readerRejected], count => Assert.True(count > 0,
-            $"writer accepted {writerAccepted}, rejected {writerRejected}; reader accepted {readerAccepted}, rejected {readerRejected}"));
+        Assert.All([writerAccepted, writerRejected, readerAccepted, readerRejected, doctypesRejected], count => Assert.True(count > 0,
+            $"writer accepted {writerAccepted}, rejected {writerRejected}; reader accepted {readerAccepted}, rejected {readerRejected} ({doctypesRejected} for a DTD)"));
     }
 
     private static bool SpansSegments(TranslationUnit unit)
