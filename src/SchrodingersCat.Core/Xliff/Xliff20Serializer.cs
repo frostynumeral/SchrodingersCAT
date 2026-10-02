@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SchrodingersCat.Core.Models;
 
 namespace SchrodingersCat.Core.Xliff;
@@ -18,9 +20,11 @@ namespace SchrodingersCat.Core.Xliff;
 /// preserved: the writer regenerates the file from the model.</item>
 /// </list>
 /// </remarks>
-public sealed class Xliff20Serializer : IXliffSerializer
+public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger = null) : IXliffSerializer
 {
     public static readonly XNamespace Ns = "urn:oasis:names:tc:xliff:document:2.0";
+
+    private readonly ILogger _logger = logger ?? NullLogger<Xliff20Serializer>.Instance;
 
     private static readonly XName XmlSpace = XNamespace.Xml + "space";
 
@@ -32,12 +36,45 @@ public sealed class Xliff20Serializer : IXliffSerializer
         ["http://www.w3.org/2005/11/its"] = "its",
     };
 
+    // ---------------------------------------------------------------- logging
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Read XLIFF document with {FileCount} file(s) and {UnitCount} unit(s)")]
+    private partial void LogRead(int fileCount, int unitCount);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Failed to read XLIFF document: {Reason}")]
+    private partial void LogReadFailed(Exception exception, string reason);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Wrote XLIFF document with {FileCount} file(s) and {UnitCount} unit(s)")]
+    private partial void LogWritten(int fileCount, int unitCount);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Failed to write XLIFF document: {Reason}")]
+    private partial void LogWriteFailed(Exception exception, string reason);
+
     // ---------------------------------------------------------------- reading
 
     public async Task<TranslationDocument> ReadAsync(Stream input, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(input);
 
+        try
+        {
+            var document = await ReadDocumentAsync(input, cancellationToken);
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                var unitCount = document.Files.Sum(f => f.Units.Count);
+                LogRead(document.Files.Count, unitCount);
+            }
+            return document;
+        }
+        catch (XliffFormatException ex)
+        {
+            LogReadFailed(ex, ex.Message);
+            throw;
+        }
+    }
+
+    private static async Task<TranslationDocument> ReadDocumentAsync(Stream input, CancellationToken cancellationToken)
+    {
         XDocument xml;
         try
         {
@@ -437,6 +474,24 @@ public sealed class Xliff20Serializer : IXliffSerializer
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(output);
 
+        try
+        {
+            await WriteDocumentAsync(document, output, cancellationToken);
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                var unitCount = document.Files.Sum(f => f.Units.Count);
+                LogWritten(document.Files.Count, unitCount);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+        {
+            LogWriteFailed(ex, ex.Message);
+            throw;
+        }
+    }
+
+    private static async Task WriteDocumentAsync(TranslationDocument document, Stream output, CancellationToken cancellationToken)
+    {
         var root = new XElement(Ns + "xliff",
             new XAttribute("version", "2.0"),
             new XAttribute("srcLang", document.SourceLanguage),
