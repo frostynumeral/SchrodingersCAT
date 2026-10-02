@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xliff version="2.0" srcLang="en" trgLang="hu" xmlns="urn:oasis:names:tc:xliff:document:2.0">
+  <file id="f1" original="Resources/Strings.resx">
+    <notes>
+      <note category="instructions">Use informal address (tegezés) throughout. Keep placeholders like {0} unchanged.</note>
+    </notes>
+    <group id="start" name="Start page">
+      <unit id="welcome.title" name="WelcomeTitle">
+        <segment id="s1" state="translated">
+          <source>Welcome to SchrödingersCAT!</source>
+          <target>Üdv a SchrödingersCATben!</target>
+        </segment>
+      </unit>
+      <unit id="welcome.body" name="WelcomeBody">
+        <notes>
+          <note category="context" appliesTo="source">Shown under the title on the first start.</note>
+        </notes>
+        <segment id="s1" state="translated">
+          <source>Translate faster.</source>
+          <target>Fordíts gyorsabban.</target>
+        </segment>
+        <ignorable>
+          <source xml:space="preserve"> </source>
+        </ignorable>
+        <segment id="s2" state="translated">
+          <source>Your work is saved safely.</source>
+          <target>A munkád biztonságosan van tárolva.</target>
+        </segment>
+      </unit>
+      <unit id="welcome.open" name="OpenButton">
+        <segment id="s1" state="reviewed">
+          <source>Open a file</source>
+          <target>Fájl megnyitása</target>
+        </segment>
+      </unit>
+    </group>
+    <group id="dialogs" name="Dialogs">
+      <unit id="dialog.unsaved" name="UnsavedChanges">
+        <notes>
+          <note category="context">Asked when the user closes a file with unsaved edits.</note>
+        </notes>
+        <segment id="s1" state="translated">
+          <source>Do you want to save your changes?</source>
+          <target>Kívánod menteni a változtatásokat?</target>
+        </segment>
+      </unit>
+      <unit id="dialog.delete" name="DeleteConfirm">
+        <originalData>
+          <data id="d1">&lt;b&gt;</data>
+          <data id="d2">&lt;/b&gt;</data>
+        </originalData>
+        <segment id="s1">
+          <source>This will delete <pc id="1" dataRefStart="d1" dataRefEnd="d2">all files</pc> in the project.</source>
+        </segment>
+      </unit>
+      <unit id="dialog.count" name="FileCount">
+        <originalData>
+          <data id="d1">{0}</data>
+        </originalData>
+        <segment id="s1" state="translated">
+          <source><ph id="1" dataRef="d1" disp="{0}" /> files selected</source>
+          <target><ph id="1" dataRef="d1" disp="{0}" /> fájl kiválasztva</target>
+        </segment>
+      </unit>
+    </group>
+    <unit id="status.ready" name="StatusReady">
+      <segment id="s1" state="final" subState="cat:locked">
+        <source>Ready</source>
+        <target>Kész</target>
+      </segment>
+    </unit>
+    <unit id="status.error" name="StatusError">
+      <segment id="s1" state="translated">
+        <source>Something went wrong. Please try again.</source>
+        <target>Valami nem jó. Kérjük, próbáld újra!</target>
+      </segment>
+    </unit>
+  </file>
+</xliff>
