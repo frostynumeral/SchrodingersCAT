@@ -7,3 +7,7 @@ indent_size = 4
 [tests/**.cs]
 # xUnit test names use Method_Scenario underscores by convention.
 dotnet_diagnostic.CA1707.severity = none
+
+[samples/*.Tests/**.cs]
+# The spike's tests follow the same Method_Scenario naming as tests/.
+dotnet_diagnostic.CA1707.severity = none

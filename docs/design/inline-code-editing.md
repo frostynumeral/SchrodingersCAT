@@ -198,6 +198,64 @@ The spike (implementation step 3) checks, on Windows, Linux and macOS:
 - chips staying atomic under caret, selection, `Backspace` and `Delete`;
 - headless testability.
 
+## Spike (step 3)
+
+`samples/EditorSpike` is a small Avalonia app, kept apart from `SchrodingersCat.App`, that edits one sample segment with AvaloniaEdit on top of `TargetEditModel`.
+- **Encoding:** the document holds one private-use character (`U+E000 + n`) per code or annotation half, and a `VisualLineElementGenerator` draws it as a chip.
+- **Every edit goes through the model:** a read-only section provider stops AvaloniaEdit from editing the document itself. Typing, Backspace/Delete, Ctrl+Z/Y, F9 and Ctrl+Insert are routed to the model, and its result is written back.
+
+### Run it
+
+```bash
+dotnet run --project samples/EditorSpike            # Hungarian target
+dotnet run --project samples/EditorSpike -- --rtl   # Hebrew target, for the right-to-left checks
+```
+
+The window shows the source, the chip editor, the model's status messages (refusals) and what the model holds. Paste is deliberately disabled in the spike; clipboard support is step 7.
+
+### Verified automatically
+
+`samples/EditorSpike.Tests` (headless, runs in CI) checks:
+- **Chips:** every code and annotation half renders as a chip, and the document holds one private-use character per chip.
+- **Atomic chips:** the arrow keys step over a chip in one move, and Shift+arrow selects a whole chip.
+- **Deleting:** Backspace after a chip removes exactly that half through the model, leaving the other half. Delete on a protected chip is refused with the model's explanation.
+- **Model routing:** typing and Ctrl+Z go through the model into the segment.
+- **No direct edits:** AvaloniaEdit can't edit the document itself.
+- **RTL sample:** it loads with the same chips.
+
+### Manual checklist
+
+These need a real desktop, because the headless platform has no input methods or accessibility tree. For each platform you have, run the spike, go through the checks, and note *pass*, *fail* (with what went wrong) or *n/a*.
+
+| # | Check | How |
+|---|---|---|
+| 1 | **IME composition (Japanese)** | Add a Japanese input method: on Windows, Settings → Time & language → Language → add Japanese (switch with Win+Space); on macOS, System Settings → Keyboard → Input Sources → Japanese – Romaji; on Linux, fcitx5 or IBus with Mozc. Type `nihongo`, convert with Space, and confirm with Enter. *Pass:* 日本語 appears at the caret, the candidate window sits next to the caret, chips stay intact, and "What the model holds" shows the text. |
+| 2 | **IME composition (Chinese)** | Same with a Chinese Pinyin input method: type `zhongwen` and pick 中文. *Pass:* as above. |
+| 3 | **IME next to a chip** | Put the caret directly after a chip, then compose as in check 1. *Pass:* the composed text lands after the chip, and nothing is deleted or duplicated. |
+| 4 | **Dead keys and accents** | Switch to a layout with dead keys (US International, or German), type `'` then `e`, and `` ` `` then `a`. *Pass:* é and à appear as single characters. |
+| 5 | **AltGr and Option characters** | Type characters that need AltGr (Windows/Linux, e.g. `@` on a Hungarian layout) or Option (macOS, e.g. `€`). *Pass:* they're typed, not treated as shortcuts. |
+| 6 | **Screen reader reads the text** | Start the screen reader: Narrator (Ctrl+Win+Enter) or NVDA on Windows, VoiceOver (Cmd+F5) on macOS, Orca on Linux. Focus the editor and move with the arrow keys. *Pass:* the text is read as you move, and a chip is announced somehow (even as an unknown character). |
+| 7 | **Screen reader sees edits** | With the screen reader on, type a word and press Backspace. *Pass:* the changes are announced, or at least the text is re-read correctly. |
+| 8 | **Right-to-left text** | Run with `--rtl`. Move through the Hebrew text with the arrow keys, select across a chip, and press Backspace next to a chip. *Pass:* the caret moves in visual order without jumping, the chips stay in place, and Backspace removes what you'd expect. |
+| 9 | **Typing RTL** | Switch to a Hebrew or Arabic layout and type into the Hungarian sample, mixing it with Latin text. *Pass:* the text shapes and orders correctly around the chips. |
+| 10 | **Mouse** | Click before and after a chip, double-click a word, and drag-select across chips. *Pass:* the caret never lands inside a chip, and the selection covers whole chips. |
+| 11 | **Wrapping and resizing** | Make the window narrow so the line wraps at a chip. *Pass:* chips wrap like words and aren't clipped. |
+
+Results:
+
+| Check | Windows | Linux | macOS |
+|---|---|---|---|
+| 1–3 IME | | | |
+| 4–5 Dead keys, AltGr/Option | | | |
+| 6–7 Screen reader | | | |
+| 8–9 Right-to-left | | | |
+| 10–11 Mouse, wrapping | | | |
+
+**Decision rule:**
+- **Keep C (AvaloniaEdit) if:** IME (1–3) and the screen reader (6) work on the platforms that were tested, and nothing in 4–11 is broken in a way the editor control can't work around.
+- **Switch to A (tokenised `TextBox`, same edit model) if:** IME or the screen reader fail.
+- **Record the outcome:** the platforms tested and the outcome go into this section, as the decision note that closes step 3.
+
 ## Out of scope
 
 - Creating brand-new codes (new native markup); see open question 9.
@@ -218,7 +276,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - Unit tests per operation and per refusal.
    - A property test that `InlineContent` → model → `InlineContent` is exact.
    - Not yet wired to the UI.
-3. **Spike: AvaloniaEdit.** A throwaway branch or sample showing one target with chips: rendering, atomic caret, `Backspace` over a chip, and one headless test.
+3. **Spike: AvaloniaEdit.** *(Automated part done 2026-10-02: see [Spike (step 3)](#spike-step-3); waiting for the manual checklist.)* A throwaway branch or sample showing one target with chips: rendering, atomic caret, `Backspace` over a chip, and one headless test.
    - Manual checks for IME, screen reader and RTL on the three desktops.
    - Ends with a decision note in this document: C, or fall back to A.
 4. **Read-only chips** for the source column and inactive targets (`SelectableTextBlock` and `InlineUIContainer`), replacing the `⟨1⟩` placeholder text in the list. Headless tests check the chips' labels, tooltips and states.
