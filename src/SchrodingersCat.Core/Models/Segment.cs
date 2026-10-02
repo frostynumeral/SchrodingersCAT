@@ -32,5 +32,14 @@ public sealed class Segment
     /// </summary>
     public bool IsIgnorable { get; set; }
 
+    /// <summary>XLIFF <c>canResegment</c>; <c>null</c> means inherited. Not allowed on ignorables.</summary>
+    public bool? CanResegment { get; set; }
+
+    /// <summary>
+    /// XLIFF <c>order</c> on the target: its position among the unit's segments when the translation reorders them.
+    /// Requires a <see cref="Target"/>.
+    /// </summary>
+    public int? TargetOrder { get; set; }
+
     public bool HasTarget => Target is not null;
 }

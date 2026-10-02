@@ -46,9 +46,11 @@ public class Xliff20SerializerTests : Xliff20SerializerTestBase
 
         var file = Assert.Single(doc.Files);
         Assert.Equal("strings.resx", file.Original);
-        Assert.Equal(["u1", "u2"], file.Units.Select(u => u.Id)); // group flattened
+        Assert.Equal(["u1", "u2"], file.Units.Select(u => u.Id));
+        var group = Assert.IsType<TranslationGroup>(file.Items[0]);
+        Assert.Equal("g1", group.Id);
 
-        var u1 = file.Units[0];
+        var u1 = Assert.IsType<TranslationUnit>(Assert.Single(group.Items));
         Assert.Equal("Greeting", u1.Name);
         Assert.Equal(3, u1.Segments.Count);
         Assert.Equal(2, u1.TranslatableSegments.Count());
@@ -68,7 +70,7 @@ public class Xliff20SerializerTests : Xliff20SerializerTestBase
         Assert.Equal("context", note.Category);
         Assert.Equal(NoteAppliesTo.Source, note.AppliesTo);
 
-        var u2Segment = Assert.Single(file.Units[1].Segments);
+        var u2Segment = Assert.Single(Assert.IsType<TranslationUnit>(file.Items[1]).Segments);
         Assert.Equal(SegmentState.Final, u2Segment.State);
         Assert.Equal("cat:locked", u2Segment.SubState);
     }
@@ -101,7 +103,7 @@ public class Xliff20SerializerTests : Xliff20SerializerTestBase
         var file = new TranslationFile { Id = "f1" };
         var unit = new TranslationUnit { Id = "u1" };
         unit.Segments.Add(new Segment { Source = Text("  indented"), Target = Text("plain text") });
-        file.Units.Add(unit);
+        file.Items.Add(unit);
         doc.Files.Add(file);
 
         var xml = await WriteAsync(doc);

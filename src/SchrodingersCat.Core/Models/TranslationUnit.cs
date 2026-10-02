@@ -3,19 +3,11 @@ namespace SchrodingersCat.Core.Models;
 /// <summary>
 /// A self-contained piece of translatable content (a string resource, a paragraph, …).
 /// Corresponds to an XLIFF 2.0 <c>&lt;unit&gt;</c>. Its text is split into <see cref="Segments"/>;
-/// comments live at unit level, because that is where they are anchored in XLIFF.
+/// comments live at unit (or group/file) level, because that is where they are anchored in XLIFF.
 /// </summary>
-public sealed class TranslationUnit
+public sealed class TranslationUnit : TranslationItem
 {
-    /// <summary>Unit id, unique within its file. Required.</summary>
-    public required string Id { get; set; }
-
-    /// <summary>Optional human-readable name, e.g. the resource key.</summary>
-    public string? Name { get; set; }
-
     public List<Segment> Segments { get; } = [];
-
-    public List<Note> Notes { get; } = [];
 
     /// <summary>
     /// The native code behind each inline code, keyed by the id its <see cref="InlineCode.DataRef"/> points to
