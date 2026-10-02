@@ -1,6 +1,6 @@
 # Proposal: inline codes
 
-**Status:** accepted (both open questions resolved as recommended, 2026-09-29).
+**Status:** implemented (accepted 2026-09-29, all steps done 2026-10-01).
 
 ## Problem
 

@@ -1,15 +1,10 @@
-using System.Text;
 using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Xliff;
 
 namespace SchrodingersCat.Core.Tests;
 
-public class Xliff20InlineReadingTests
+public class Xliff20InlineReadingTests : Xliff20SerializerTestBase
 {
-    private const string FsNamespace = "urn:oasis:names:tc:xliff:fs:2.0";
-
-    private readonly Xliff20Serializer _serializer = new();
-
     [Fact]
     public async Task Read_MapsCodesMarkersAndOriginalData()
     {
@@ -24,12 +19,11 @@ public class Xliff20InlineReadingTests
             </segment>
             """);
 
-        var bold = new InlineCode("2", InlineCodeKind.Opening) { Type = "fmt", SubType = "xlf:b", CanOverlap = false };
         Assert.Equal(new InlineContent(
         [
             new InlineText("Line"),
             new InlineCode("1", InlineCodeKind.Standalone) { DataRef = "d1", Equiv = " " },
-            bold with { DataRef = "d2" },
+            new InlineCode("2", InlineCodeKind.Opening) { Type = "fmt", SubType = "xlf:b", CanOverlap = false, DataRef = "d2" },
             new InlineText("bold"),
             new InlineCode("2", InlineCodeKind.Closing) { Type = "fmt", SubType = "xlf:b", CanOverlap = false, DataRef = "d3" },
             new InlineText(" "),
@@ -45,28 +39,27 @@ public class Xliff20InlineReadingTests
     [Fact]
     public async Task Read_PcAndScEcWithTheSameAttributesLoadIdentically()
     {
-        var pc = await ReadUnitAsync("""<segment><source><pc id="1" type="fmt" canOverlap="yes">x</pc></source></segment>""");
-        var scEc = await ReadUnitAsync("""<segment><source><sc id="1" type="fmt"/>x<ec startRef="1" type="fmt"/></source></segment>""");
+        var pc = await ReadSourceAsync("""<pc id="1" type="fmt" canOverlap="yes">x</pc>""");
+        var scEc = await ReadSourceAsync("""<sc id="1" type="fmt"/>x<ec startRef="1" type="fmt"/>""");
 
-        Assert.Equal(pc.Segments[0].Source, scEc.Segments[0].Source);
+        Assert.Equal(pc, scEc);
     }
 
     [Fact]
     public async Task Read_ResolvesCanOverlapToTheElementDefault()
     {
-        var pc = await ReadUnitAsync("""<segment><source><pc id="1">x</pc></source></segment>""");
-        var scEc = await ReadUnitAsync("""<segment><source><sc id="1"/>x<ec startRef="1"/></source></segment>""");
+        var pc = await ReadSourceAsync("""<pc id="1">x</pc>""");
+        var scEc = await ReadSourceAsync("""<sc id="1"/>x<ec startRef="1"/>""");
 
-        Assert.All(pc.Segments[0].Source.OfType<InlineCode>(), c => Assert.False(c.CanOverlap));
-        Assert.All(scEc.Segments[0].Source.OfType<InlineCode>(), c => Assert.True(c.CanOverlap));
+        Assert.All(pc.OfType<InlineCode>(), c => Assert.False(c.CanOverlap));
+        Assert.All(scEc.OfType<InlineCode>(), c => Assert.True(c.CanOverlap));
     }
 
     [Fact]
     public async Task Read_PcStartingWithFirstNoEndsWithNo()
     {
-        var unit = await ReadUnitAsync("""<segment><source><pc id="1" canReorder="firstNo">x</pc></source></segment>""");
+        var codes = await ReadCodesAsync("""<pc id="1" canReorder="firstNo">x</pc>""");
 
-        var codes = unit.Segments[0].Source.OfType<InlineCode>().ToList();
         Assert.Equal(CanReorder.FirstNo, codes[0].CanReorder);
         Assert.Equal(CanReorder.No, codes[1].CanReorder);
     }
@@ -99,9 +92,8 @@ public class Xliff20InlineReadingTests
     [Fact]
     public async Task Read_IsolatedCodes()
     {
-        var unit = await ReadUnitAsync("""<segment><source><sc id="1" isolated="yes"/>a<ec id="2" isolated="yes" dir="rtl"/></source></segment>""");
+        var codes = await ReadCodesAsync("""<sc id="1" isolated="yes"/>a<ec id="2" isolated="yes" dir="rtl"/>""");
 
-        var codes = unit.Segments[0].Source.OfType<InlineCode>().ToList();
         Assert.All(codes, c => Assert.True(c.IsIsolated));
         Assert.Equal(["1", "2"], codes.Select(c => c.Id));
         Assert.Equal("rtl", codes[1].Dir);
@@ -146,9 +138,8 @@ public class Xliff20InlineReadingTests
     [Fact]
     public async Task Read_KeepsExtensionAttributes()
     {
-        var unit = await ReadUnitAsync("""<segment><source><ph id="1" fs:fs="br"/><pc id="2" fs:fs="b">x</pc></source></segment>""");
+        var codes = await ReadCodesAsync("""<ph id="1" fs:fs="br"/><pc id="2" fs:fs="b">x</pc>""");
 
-        var codes = unit.Segments[0].Source.OfType<InlineCode>().ToList();
         Assert.Equal([new ExtensionAttr(FsNamespace, "fs", "br")], codes[0].ExtensionAttributes);
         Assert.Equal([new ExtensionAttr(FsNamespace, "fs", "b")], codes[1].ExtensionAttributes);
     }
@@ -158,38 +149,42 @@ public class Xliff20InlineReadingTests
     [InlineData("""<segment id="1"><source><ph id="1"/></source></segment>""")]
     [InlineData("""<segment><source><ph id="1"/></source></segment><ignorable><source><ph id="1"/></source></ignorable>""")]
     [InlineData("""<segment id="s"><source>a</source></segment><segment id="s"><source>b</source></segment>""")]
-    [InlineData("""<segment><source><ph id="1" dataRef="d1"/></source></segment>""")]
     [InlineData("""<originalData><data id="d1">a</data><data id="d1">b</data></originalData><segment><source>x</source></segment>""")]
-    [InlineData("""<segment><source><sc id="1"/></source></segment>""")]
-    [InlineData("""<segment><source><ec startRef="1"/></source></segment>""")]
-    [InlineData("""<segment><source><sc id="1" isolated="yes"/><ec startRef="1"/></source></segment>""")]
-    [InlineData("""<segment><source><sc id="1"/><ec startRef="1" dir="rtl"/></source></segment>""")]
-    [InlineData("""<segment><source><sm id="1"/></source></segment>""")]
-    [InlineData("""<segment><source><em startRef="1"/></source></segment>""")]
-    [InlineData("""<segment><source><ph/></source></segment>""")]
-    [InlineData("""<segment><source><ph id="1">x</ph></source></segment>""")]
-    [InlineData("""<segment><source><ph id="1" foo="x"/></source></segment>""")]
-    [InlineData("""<segment><source><ph id="1" canCopy="maybe"/></source></segment>""")]
-    [InlineData("""<segment><source><b>x</b></source></segment>""")]
-    [InlineData("""<segment><source><cp hex="zz"/></source></segment>""")]
-    [InlineData("""<segment><source><cp hex="110000"/></source></segment>""")]
-    public async Task Read_RejectsInvalidInlineContent(string content)
+    [InlineData("""<segment><source><ph id="1" dataRef="d1"/></source></segment>""")]
+    public async Task Read_RejectsDuplicateOrDanglingIds(string unitContent)
     {
-        await Assert.ThrowsAsync<XliffFormatException>(() => ReadUnitAsync(content));
+        await Assert.ThrowsAsync<XliffFormatException>(() => ReadUnitAsync(unitContent));
     }
 
-    private static string Wrap(string unitContent) => $"""
-        <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" xmlns:fs="{FsNamespace}" version="2.0" srcLang="en" trgLang="hu">
-          <file id="f1"><unit id="u1">{unitContent}</unit></file>
-        </xliff>
-        """;
-
-    private async Task<TranslationUnit> ReadUnitAsync(string unitContent) =>
-        (await ReadAsync(Wrap(unitContent))).Units.Single();
-
-    private async Task<TranslationDocument> ReadAsync(string xml)
+    [Theory]
+    [InlineData("""<sc id="1"/>""")]
+    [InlineData("""<ec startRef="1"/>""")]
+    [InlineData("""<sc id="1" isolated="yes"/><ec startRef="1"/>""")]
+    [InlineData("""<sm id="1"/>""")]
+    [InlineData("""<em startRef="1"/>""")]
+    public async Task Read_RejectsUnmatchedPairs(string sourceContent)
     {
-        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
-        return await _serializer.ReadAsync(stream);
+        await Assert.ThrowsAsync<XliffFormatException>(() => ReadSourceAsync(sourceContent));
     }
+
+    [Theory]
+    [InlineData("""<b>x</b>""")]
+    [InlineData("""<ph/>""")]
+    [InlineData("""<ph id="1">x</ph>""")]
+    [InlineData("""<ph id="1" foo="x"/>""")]
+    [InlineData("""<ph id="1" canCopy="maybe"/>""")]
+    [InlineData("""<sc id="1"/><ec startRef="1" dir="rtl"/>""")]
+    [InlineData("""<cp hex="zz"/>""")]
+    [InlineData("""<cp hex="110000"/>""")]
+    public async Task Read_RejectsInvalidInlineMarkup(string sourceContent)
+    {
+        await Assert.ThrowsAsync<XliffFormatException>(() => ReadSourceAsync(sourceContent));
+    }
+
+    /// <summary>Reads a unit with a single segment and returns that segment's source.</summary>
+    private async Task<InlineContent> ReadSourceAsync(string sourceContent) =>
+        (await ReadUnitAsync($"<segment><source>{sourceContent}</source></segment>")).Segments.Single().Source;
+
+    private async Task<List<InlineCode>> ReadCodesAsync(string sourceContent) =>
+        (await ReadSourceAsync(sourceContent)).OfType<InlineCode>().ToList();
 }

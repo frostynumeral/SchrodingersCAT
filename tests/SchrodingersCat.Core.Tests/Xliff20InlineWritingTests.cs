@@ -1,15 +1,10 @@
-using System.Text;
 using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Xliff;
 
 namespace SchrodingersCat.Core.Tests;
 
-public class Xliff20InlineWritingTests
+public class Xliff20InlineWritingTests : Xliff20SerializerTestBase
 {
-    private const string FsNamespace = "urn:oasis:names:tc:xliff:fs:2.0";
-
-    private readonly Xliff20Serializer _serializer = new();
-
     [Fact]
     public async Task Write_WellFormedPairAndOriginalData()
     {
@@ -191,7 +186,7 @@ public class Xliff20InlineWritingTests
     /// <summary>Reads, writes and reads again; asserts nothing changed and returns the written XML.</summary>
     private async Task<string> RoundTripAsync(string unitContent)
     {
-        var original = await ReadAsync(Wrap(unitContent));
+        var original = await ReadAsync(WrapUnitContent(unitContent));
         var xml = await WriteAsync(original);
         var unit = (await ReadAsync(xml)).Units.Single();
         var expected = original.Units.Single();
@@ -200,35 +195,5 @@ public class Xliff20InlineWritingTests
         Assert.Equal(expected.Segments.Select(s => s.Source), unit.Segments.Select(s => s.Source));
         Assert.Equal(expected.Segments.Select(s => s.Target), unit.Segments.Select(s => s.Target));
         return xml;
-    }
-
-    private static TranslationDocument DocumentWith(params InlineElement[] source)
-    {
-        var unit = new TranslationUnit { Id = "u1" };
-        unit.Segments.Add(new Segment { Id = "s1", Source = new InlineContent(source) });
-        var file = new TranslationFile { Id = "f1" };
-        file.Units.Add(unit);
-        var document = new TranslationDocument { SourceLanguage = "en" };
-        document.Files.Add(file);
-        return document;
-    }
-
-    private static string Wrap(string unitContent) => $"""
-        <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" xmlns:fs="{FsNamespace}" version="2.0" srcLang="en" trgLang="hu">
-          <file id="f1"><unit id="u1">{unitContent}</unit></file>
-        </xliff>
-        """;
-
-    private async Task<TranslationDocument> ReadAsync(string xml)
-    {
-        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
-        return await _serializer.ReadAsync(stream);
-    }
-
-    private async Task<string> WriteAsync(TranslationDocument document)
-    {
-        using var stream = new MemoryStream();
-        await _serializer.WriteAsync(document, stream);
-        return Encoding.UTF8.GetString(stream.ToArray());
     }
 }

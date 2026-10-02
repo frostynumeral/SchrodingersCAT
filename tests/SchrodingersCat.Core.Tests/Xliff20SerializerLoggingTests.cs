@@ -6,7 +6,7 @@ using SchrodingersCat.Core.Xliff;
 
 namespace SchrodingersCat.Core.Tests;
 
-public class Xliff20SerializerLoggingTests
+public class Xliff20SerializerLoggingTests : Xliff20SerializerTestBase
 {
     private const string Sample = """
         <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en-US">
@@ -18,14 +18,12 @@ public class Xliff20SerializerLoggingTests
 
     private readonly FakeLogger<Xliff20Serializer> _logger = new();
 
-    private Xliff20Serializer Serializer => new(_logger);
-
-    private static MemoryStream ToStream(string xml) => new(Encoding.UTF8.GetBytes(xml));
+    protected override Xliff20Serializer Serializer => new(_logger);
 
     [Fact]
     public async Task Read_LogsSummaryAtDebug()
     {
-        await Serializer.ReadAsync(ToStream(Sample));
+        await ReadAsync(Sample);
 
         var record = _logger.LatestRecord;
         Assert.Equal(LogLevel.Debug, record.Level);
@@ -35,8 +33,7 @@ public class Xliff20SerializerLoggingTests
     [Fact]
     public async Task Read_InvalidInput_LogsErrorAndRethrows()
     {
-        var thrown = await Assert.ThrowsAsync<XliffFormatException>(
-            () => Serializer.ReadAsync(ToStream("<notxliff/>")));
+        var thrown = await Assert.ThrowsAsync<XliffFormatException>(() => ReadAsync("<notxliff/>"));
 
         var record = _logger.LatestRecord;
         Assert.Equal(LogLevel.Error, record.Level);
@@ -46,16 +43,10 @@ public class Xliff20SerializerLoggingTests
     [Fact]
     public async Task Write_InvalidModel_LogsErrorAndRethrows()
     {
-        var unit = new TranslationUnit { Id = "u1" };
         // An opening code with no closing half is something the reader would reject.
-        unit.Segments.Add(new Segment { Id = "s1", Source = new InlineContent([new InlineCode("1", InlineCodeKind.Opening)]) });
-        var file = new TranslationFile { Id = "f1" };
-        file.Units.Add(unit);
-        var document = new TranslationDocument { SourceLanguage = "en-US" };
-        document.Files.Add(file);
+        var document = DocumentWith(new InlineCode("1", InlineCodeKind.Opening));
 
-        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => Serializer.WriteAsync(document, new MemoryStream()));
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => WriteAsync(document));
 
         var record = _logger.LatestRecord;
         Assert.Equal(LogLevel.Error, record.Level);
@@ -65,7 +56,8 @@ public class Xliff20SerializerLoggingTests
     [Fact]
     public async Task WithoutLogger_StillWorks()
     {
-        var document = await new Xliff20Serializer().ReadAsync(ToStream(Sample));
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(Sample));
+        var document = await new Xliff20Serializer().ReadAsync(stream);
 
         Assert.Single(document.Files);
     }
