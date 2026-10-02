@@ -14,7 +14,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     public async Task Open_ListsTheTranslatableSegments()
     {
         var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var vm = new MainWindowViewModel(_serializer, new FakeFileDialogs(path));
+        var vm = new MainWindowViewModel(_serializer, new FakeDialogs(path));
 
         await vm.OpenCommand.ExecuteAsync(null);
 
@@ -30,7 +30,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     [Fact]
     public async Task Open_Cancelled_ChangesNothing()
     {
-        var vm = new MainWindowViewModel(_serializer, new FakeFileDialogs(null));
+        var vm = new MainWindowViewModel(_serializer, new FakeDialogs(null));
 
         await vm.OpenCommand.ExecuteAsync(null);
 
@@ -47,11 +47,11 @@ public sealed class MainWindowViewModelTests : IDisposable
     {
         var good = _files.Write("good.xlf", TestFiles.Sample);
         var bad = _files.Write("bad.xlf", content);
-        var dialogs = new FakeFileDialogs(good);
+        var dialogs = new FakeDialogs(good);
         var vm = new MainWindowViewModel(_serializer, dialogs);
         await vm.OpenCommand.ExecuteAsync(null);
 
-        dialogs.Path = bad;
+        dialogs.OpenPath = bad;
         await vm.OpenCommand.ExecuteAsync(null);
 
         Assert.StartsWith("Could not open bad.xlf:", vm.ErrorMessage);
@@ -63,7 +63,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     [Fact]
     public async Task Open_MissingFile_ShowsTheError()
     {
-        var vm = new MainWindowViewModel(_serializer, new FakeFileDialogs(_files.PathOf("missing.xlf")));
+        var vm = new MainWindowViewModel(_serializer, new FakeDialogs(_files.PathOf("missing.xlf")));
 
         await vm.OpenCommand.ExecuteAsync(null);
 
@@ -136,7 +136,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     {
         // XLIFF requires trgLang once there are targets, so the writer refuses this document.
         var path = _files.Write("no-trglang.xlf", TestFiles.Sample.Replace(" trgLang=\"hu\"", "").Replace("<target>Viszlát.</target>", ""));
-        var vm = new MainWindowViewModel(_serializer, new FakeFileDialogs(path));
+        var vm = new MainWindowViewModel(_serializer, new FakeDialogs(path));
         await vm.OpenCommand.ExecuteAsync(null);
         var original = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
         vm.Segments[0].TargetText = "Helló világ.";
@@ -152,7 +152,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     [Fact]
     public async Task DismissError_ClearsTheMessage()
     {
-        var vm = new MainWindowViewModel(_serializer, new FakeFileDialogs(_files.PathOf("missing.xlf")));
+        var vm = new MainWindowViewModel(_serializer, new FakeDialogs(_files.PathOf("missing.xlf")));
         await vm.OpenCommand.ExecuteAsync(null);
 
         vm.DismissErrorCommand.Execute(null);
@@ -162,7 +162,7 @@ public sealed class MainWindowViewModelTests : IDisposable
 
     private async Task<MainWindowViewModel> OpenSampleAsync()
     {
-        var vm = new MainWindowViewModel(_serializer, new FakeFileDialogs(_files.Write("sample.xlf", TestFiles.Sample)));
+        var vm = new MainWindowViewModel(_serializer, new FakeDialogs(_files.Write("sample.xlf", TestFiles.Sample)));
         await vm.OpenCommand.ExecuteAsync(null);
         return vm;
     }

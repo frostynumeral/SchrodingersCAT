@@ -7,7 +7,7 @@ using SchrodingersCat.Core.Xliff;
 
 namespace SchrodingersCat.App.ViewModels;
 
-public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IFileDialogService dialogs) : ObservableObject
+public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDialogService dialogs) : ObservableObject
 {
     private TranslationDocument? _document;
 
@@ -17,6 +17,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IFi
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Title))]
     [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SaveAsCommand))]
     public partial string? FilePath { get; private set; }
 
     [ObservableProperty]
@@ -34,8 +35,31 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IFi
     [RelayCommand]
     private async Task OpenAsync()
     {
+        if (!await ResolveUnsavedChangesAsync())
+            return;
+
         if (await dialogs.PickFileToOpenAsync() is { } path)
             await LoadAsync(path);
+    }
+
+    /// <summary>
+    /// Called when the window is about to close. Returns whether it may: true if there is nothing to lose, or the
+    /// user saved (successfully) or chose not to; false if they cancelled or the save failed.
+    /// </summary>
+    public Task<bool> ConfirmCloseAsync() => ResolveUnsavedChangesAsync();
+
+    // Unsaved edits are never dropped without asking. A failed save counts as Cancel, so nothing is lost either way.
+    private async Task<bool> ResolveUnsavedChangesAsync()
+    {
+        if (!IsDirty)
+            return true;
+
+        return await dialogs.AskToSaveChangesAsync(Path.GetFileName(FilePath!)) switch
+        {
+            UnsavedChangesChoice.Save => await SaveToAsync(FilePath!),
+            UnsavedChangesChoice.DontSave => true,
+            _ => false,
+        };
     }
 
     /// <summary>Opens a file. On failure the error is shown and the current document stays open.</summary>
@@ -68,21 +92,32 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IFi
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
-    private async Task SaveAsync()
+    private async Task SaveAsync() => await SaveToAsync(FilePath!);
+
+    /// <summary>Saves to a new path, which becomes the open file. The original file is left as it was.</summary>
+    [RelayCommand(CanExecute = nameof(CanSave))]
+    private async Task SaveAsAsync()
+    {
+        if (await dialogs.PickFileToSaveAsync(Path.GetFileName(FilePath)) is { } path && await SaveToAsync(path))
+            FilePath = path;
+    }
+
+    private async Task<bool> SaveToAsync(string path)
     {
         try
         {
             // Atomic: writes <path>.tmp and moves it over the file, so a failed save leaves the original intact.
-            await serializer.WriteFileAsync(_document!, FilePath!);
+            await serializer.WriteFileAsync(_document!, path);
         }
         catch (Exception ex) when (IsReportable(ex))
         {
-            ErrorMessage = $"Could not save {Path.GetFileName(FilePath)}: {ex.Message}";
-            return;
+            ErrorMessage = $"Could not save {Path.GetFileName(path)}: {ex.Message}";
+            return false;
         }
 
         IsDirty = false;
         ErrorMessage = null;
+        return true;
     }
 
     private bool CanSave() => _document is not null && FilePath is not null;

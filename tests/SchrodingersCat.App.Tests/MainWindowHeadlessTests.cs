@@ -2,8 +2,10 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.App.Views;
 using SchrodingersCat.Core.Xliff;
@@ -59,9 +61,133 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Empty(TargetBoxes(window));
     }
 
-    private static (MainWindow Window, MainWindowViewModel ViewModel) Show(string path)
+    [AvaloniaTheory]
+    [InlineData(UnsavedChangesChoice.Cancel, false, null)]
+    [InlineData(UnsavedChangesChoice.DontSave, true, null)]
+    [InlineData(UnsavedChangesChoice.Save, true, "Helló világ.")]
+    public async Task ClosingWithUnsavedChanges_AsksFirst(UnsavedChangesChoice choice, bool closes, string? savedTarget)
     {
-        var vm = new MainWindowViewModel(new Xliff20Serializer(), new FakeFileDialogs(path));
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var dialogs = new FakeDialogs(path) { Choice = choice };
+        var (window, vm) = Show(dialogs);
+        await vm.LoadAsync(path);
+        vm.Segments[0].TargetText = "Helló világ.";
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+
+        window.Close();
+        await WaitFor(() => dialogs.Asked.Count > 0);
+        await WaitFor(() => closed == closes);
+
+        Assert.Equal(["save changes to sample.xlf?"], dialogs.Asked);
+        Assert.Equal(closes, closed);
+        var saved = await new Xliff20Serializer().ReadFileAsync(path, TestContext.Current.CancellationToken);
+        Assert.Equal(savedTarget, saved.Units.First().Segments[0].Target?.ToPlainText());
+    }
+
+    [AvaloniaFact]
+    public async Task ClosingWithoutChanges_DoesNotAsk()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var dialogs = new FakeDialogs(path);
+        var (window, vm) = Show(dialogs);
+        await vm.LoadAsync(path);
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+
+        window.Close();
+        await WaitFor(() => closed);
+
+        Assert.Empty(dialogs.Asked);
+    }
+
+    [AvaloniaFact]
+    public async Task CtrlO_WithUnsavedChanges_Cancel_ShowsNoPicker()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var dialogs = new FakeDialogs(path) { Choice = UnsavedChangesChoice.Cancel };
+        var (window, vm) = Show(dialogs);
+        await vm.LoadAsync(path);
+        vm.Segments[0].TargetText = "Helló világ.";
+
+        window.KeyPressQwerty(PhysicalKey.O, RawInputModifiers.Control);
+        await WaitFor(() => dialogs.Asked.Count > 0);
+
+        Assert.Equal(["save changes to sample.xlf?"], dialogs.Asked);
+        Assert.True(vm.IsDirty);
+    }
+
+    [AvaloniaFact]
+    public async Task CtrlShiftS_SavesAs()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var copy = _files.PathOf("copy.xlf");
+        var dialogs = new FakeDialogs(path) { SavePath = copy };
+        var (window, vm) = Show(dialogs);
+        await vm.LoadAsync(path);
+
+        window.KeyPressQwerty(PhysicalKey.S, RawInputModifiers.Control | RawInputModifiers.Shift);
+        await WaitFor(() => vm.FilePath == copy);
+
+        Assert.True(File.Exists(copy));
+        Assert.Equal("copy.xlf — SchrödingersCAT", window.Title);
+    }
+
+    // The real prompt window, through the real dialog service.
+    [AvaloniaTheory]
+    [InlineData("SaveButton", UnsavedChangesChoice.Save)]
+    [InlineData("DontSaveButton", UnsavedChangesChoice.DontSave)]
+    [InlineData("CancelButton", UnsavedChangesChoice.Cancel)]
+    public async Task UnsavedChangesDialog_ReturnsTheClickedChoice(string button, UnsavedChangesChoice expected)
+    {
+        var (owner, prompt, dialog) = ShowPrompt();
+
+        dialog.FindControl<Button>(button)!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitFor(() => prompt.IsCompleted);
+
+        Assert.Equal(expected, await prompt);
+        Assert.Contains("sample.xlf", dialog.FindControl<TextBlock>("Message")!.Text);
+        owner.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task UnsavedChangesDialog_ClosedWithoutAnswer_MeansCancel()
+    {
+        var (owner, prompt, dialog) = ShowPrompt();
+
+        dialog.Close(); // title bar close button
+        await WaitFor(() => prompt.IsCompleted);
+
+        Assert.Equal(UnsavedChangesChoice.Cancel, await prompt);
+        owner.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task UnsavedChangesDialog_Escape_MeansCancel()
+    {
+        var (owner, prompt, dialog) = ShowPrompt();
+
+        dialog.KeyPressQwerty(PhysicalKey.Escape, RawInputModifiers.None);
+        await WaitFor(() => prompt.IsCompleted);
+
+        Assert.Equal(UnsavedChangesChoice.Cancel, await prompt);
+        owner.Close();
+    }
+
+    private static (Window Owner, Task<UnsavedChangesChoice> Prompt, UnsavedChangesDialog Dialog) ShowPrompt()
+    {
+        var owner = new Window();
+        owner.Show();
+        var prompt = new AvaloniaDialogService(owner).AskToSaveChangesAsync("sample.xlf");
+        Dispatcher.UIThread.RunJobs();
+        return (owner, prompt, owner.OwnedWindows.OfType<UnsavedChangesDialog>().Single());
+    }
+
+    private static (MainWindow Window, MainWindowViewModel ViewModel) Show(string path) => Show(new FakeDialogs(path));
+
+    private static (MainWindow Window, MainWindowViewModel ViewModel) Show(FakeDialogs dialogs)
+    {
+        var vm = new MainWindowViewModel(new Xliff20Serializer(), dialogs);
         var window = new MainWindow { DataContext = vm };
         window.Show();
         Dispatcher.UIThread.RunJobs();

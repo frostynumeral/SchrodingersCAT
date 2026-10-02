@@ -18,7 +18,7 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var window = new MainWindow();
-            window.DataContext = new MainWindowViewModel(new Xliff20Serializer(), new StorageFileDialogService(window));
+            window.DataContext = new MainWindowViewModel(new Xliff20Serializer(), new AvaloniaDialogService(window));
             desktop.MainWindow = window;
         }
 

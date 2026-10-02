@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SchrodingersCat.App.Views.UnsavedChangesDialog"
+        Title="Unsaved changes"
+        SizeToContent="WidthAndHeight" CanResize="False" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <StackPanel Margin="20" Spacing="16" MaxWidth="420">
+        <TextBlock x:Name="Message" TextWrapping="Wrap" />
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+            <Button x:Name="SaveButton" Content="Save" Classes="accent" IsDefault="True" Click="OnSave" />
+            <Button x:Name="DontSaveButton" Content="Don't save" Click="OnDontSave" />
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" Click="OnCancel" />
+        </StackPanel>
+    </StackPanel>
+</Window>
