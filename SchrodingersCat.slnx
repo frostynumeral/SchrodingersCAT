@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/SchrodingersCat.App/SchrodingersCat.App.csproj" />
     <Project Path="src/SchrodingersCat.Core/SchrodingersCat.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/SchrodingersCat.App.Tests/SchrodingersCat.App.Tests.csproj" />
     <Project Path="tests/SchrodingersCat.Core.Tests/SchrodingersCat.Core.Tests.csproj" />
   </Folder>
 </Solution>

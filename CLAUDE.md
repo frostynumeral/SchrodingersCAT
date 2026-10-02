@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-SchrödingersCAT is an early-stage CAT (computer-assisted translation) tool in C#/.NET. Right now it is only `SchrodingersCat.Core`: a UI-independent domain model plus an XLIFF 2.x serializer. A future Avalonia UI layer is planned (see the remarks in `Models/Segment.cs`).
+SchrödingersCAT is an early-stage CAT (computer-assisted translation) tool in C#/.NET. It has two parts: `SchrodingersCat.Core`, a UI-independent domain model plus an XLIFF 2.x serializer, and `SchrodingersCat.App`, an Avalonia desktop editor built on it.
 
 ## Commands
 
@@ -14,9 +14,10 @@ Solution file is `SchrodingersCat.slnx` (the XML solution format).
 dotnet build
 dotnet test
 dotnet test --filter "FullyQualifiedName~Xliff20SerializerTests.Read_RejectsXliff12"   # single test
+dotnet run --project src/SchrodingersCat.App                                         # start the editor
 ```
 
-Projects target `net10.0`. CI (`.github/workflows/ci.yml`) builds and tests in Release on every push to `main` and on PRs. Tests use xUnit, and `Xunit` is a global using.
+Projects target `net10.0`. CI (`.github/workflows/ci.yml`) builds and tests the whole solution in Release on every push to `main` and on PRs. Tests use xUnit, and `Xunit` is a global using. `SchrodingersCat.Core.Tests` is on xunit v2. `SchrodingersCat.App.Tests` is on xunit v3, because `Avalonia.Headless.XUnit` 12 requires it; xunit v3 test projects are executables (`OutputType` `Exe`), and its analyzers want `TestContext.Current.CancellationToken` passed to async APIs.
 
 ### Property-based tests
 
@@ -60,5 +61,11 @@ When a property finds a bug, fix it, and also add an example-based regression te
   - Reading tracks which attributes have been read (`AttributeReader`, used for structural and inline elements alike), checks unit and group ids per file (`FileContext`), and keeps per-unit id and pairing state for sources and targets separately (`InlineSide`). `<cp>` is decoded on read and re-encoded for XML-invalid characters on write. Verbatim elements are copied with `Detach`, which also declares the prefixes they use so `DeclareExtensionNamespaces` can declare the same ones on the root.
   - The writer normalises well-formed pairs to `<pc>`/`<mrk>` (`FindWellFormedPairs`). Pairs that span segments, overlap, or whose halves `<pc>` can't express fall back to `<sc>`/`<ec>` and `<sm>`/`<em>`.
   - Output is always `version="2.0"`, UTF-8 without BOM, and indented. `NewLineHandling.Entitize` writes carriage returns as `&#xD;`; otherwise XML parsers would read them back as line feeds. Content elements and verbatim elements start with an empty `XText` so XmlWriter's indentation can't inject whitespace into them.
+- **`SchrodingersCat.App`** (Avalonia 12, CommunityToolkit.Mvvm, compiled bindings): opens an XLIFF file, lists its translatable segments (ignorables are hidden), lets the translator edit targets, and saves back to the same file through `WriteFileAsync` (atomic, so a failed save leaves the file intact).
+  - `ViewModels/`: `MainWindowViewModel` (open/save commands, `FilePath`, `IsDirty`, `ErrorMessage`) and `SegmentViewModel`, which wraps a Core `Segment` and writes edits straight to it. View models use `[ObservableProperty]` partial properties and `[RelayCommand]`. Keep them free of Avalonia types so they stay unit-testable; file dialogs go through `Services/IFileDialogService` (`StorageFileDialogService` is the Avalonia implementation).
+  - Errors: load and save failures are shown in the window's error banner instead of crashing. That covers `XliffFormatException`, `InvalidOperationException`/`NotSupportedException` from the writer, I/O and permission errors, and bad paths (`MainWindowViewModel.IsReportable`). Anything else is a bug and is deliberately not caught. A failed load keeps the current document open.
+  - Editing rules: segments whose source or target contains inline codes or markers are read-only (shown dimmed, codes rendered as `⟨1⟩…⟨/1⟩` by `InlineFormatter`), because editing them as plain text would drop the codes. Clearing a target sets it to `null` (not translated). The first translation moves a segment from `Initial` to `Translated`.
+  - Not handled yet: tag editing, a warning about unsaved changes when opening another file or closing the window, "Save as", and documents that have targets but no `trgLang` (the save fails with the writer's message).
+  - Tests (`tests/SchrodingersCat.App.Tests`): view-model tests with real files in a temp directory and a `FakeFileDialogs`, plus `[AvaloniaFact]` headless tests that drive the real `MainWindow` (typing, Ctrl+O/Ctrl+S, the error banner). `TestAppBuilder` runs the real `App` on the headless platform, so no display is needed in CI.
 - **Logging**: Core depends only on `Microsoft.Extensions.Logging.Abstractions`; the app picks the backend. Classes take an optional `ILogger<T>` in the constructor and fall back to `NullLogger<T>.Instance`, so they work without one. Use `[LoggerMessage]` source-generated methods (the class must be `partial`), because plain `LogError(...)` calls fail the build with CA1848/CA2254. Wrap arguments that cost something to compute in `_logger.IsEnabled(...)` and compute them in a local inside the guard; CA1873 still fires if the expression is passed inline. `Xliff20Serializer` logs at the public `ReadAsync`/`WriteAsync` boundary: Error on failure, attaching the exception and then re-throwing it, and Debug with a summary on success. Tests use `FakeLogger<T>` from `Microsoft.Extensions.Diagnostics.Testing`.
 
