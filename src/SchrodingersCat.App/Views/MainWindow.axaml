@@ -1,0 +1,64 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SchrodingersCat.App.ViewModels"
+        x:Class="SchrodingersCat.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="{Binding Title}"
+        Width="1100" Height="700">
+
+    <Window.Styles>
+        <!-- Segments with inline codes can't be edited yet; make that visible, not just a silent refusal. -->
+        <Style Selector="TextBox.target[IsReadOnly=True]">
+            <Setter Property="Opacity" Value="0.5" />
+        </Style>
+    </Window.Styles>
+
+    <Window.KeyBindings>
+        <KeyBinding Gesture="Ctrl+O" Command="{Binding OpenCommand}" />
+        <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveCommand}" />
+    </Window.KeyBindings>
+
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8">
+            <Button x:Name="OpenButton" Content="Open…" Command="{Binding OpenCommand}" />
+            <Button x:Name="SaveButton" Content="Save" Command="{Binding SaveCommand}" />
+            <TextBlock Text="{Binding FilePath}" VerticalAlignment="Center" Opacity="0.7" />
+        </StackPanel>
+
+        <Border x:Name="ErrorBanner" DockPanel.Dock="Top" Margin="8,0,8,8" Padding="8" CornerRadius="4"
+                Background="#33E53935" BorderBrush="#E53935" BorderThickness="1"
+                IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Dismiss" Command="{Binding DismissErrorCommand}" />
+                <SelectableTextBlock x:Name="ErrorText" Text="{Binding ErrorMessage}" TextWrapping="Wrap" VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+
+        <Panel>
+            <TextBlock Text="Open an XLIFF file to start translating (Ctrl+O)." HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Opacity="0.6" IsVisible="{Binding !Segments.Count}" />
+
+            <DockPanel IsVisible="{Binding !!Segments.Count}">
+            <Grid DockPanel.Dock="Top" ColumnDefinitions="110,*,*,90" ColumnSpacing="8" Margin="12,0,12,4" Opacity="0.6">
+                <TextBlock Grid.Column="0" Text="Unit / segment" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="1" Text="Source" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="2" Text="Target" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="3" Text="State" FontWeight="SemiBold" />
+            </Grid>
+            <ListBox x:Name="SegmentList" ItemsSource="{Binding Segments}">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SegmentViewModel">
+                        <Grid ColumnDefinitions="110,*,*,90" ColumnSpacing="8">
+                            <TextBlock Grid.Column="0" Text="{Binding Label}" Opacity="0.6" TextWrapping="Wrap" />
+                            <SelectableTextBlock Grid.Column="1" Text="{Binding SourceText}" TextWrapping="Wrap" />
+                            <TextBox Grid.Column="2" Classes="target" Text="{Binding TargetText}" TextWrapping="Wrap" AcceptsReturn="True"
+                                     IsReadOnly="{Binding !IsEditable}" ToolTip.Tip="{Binding ReadOnlyReason}" />
+                            <TextBlock Grid.Column="3" Text="{Binding State}" Opacity="0.6" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            </DockPanel>
+        </Panel>
+    </DockPanel>
+</Window>
