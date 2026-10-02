@@ -27,7 +27,7 @@ public abstract class Xliff20SerializerTestBase
         var unit = new TranslationUnit { Id = "u1" };
         unit.Segments.Add(new Segment { Id = "s1", Source = new InlineContent(source) });
         var file = new TranslationFile { Id = "f1" };
-        file.Units.Add(unit);
+        file.Items.Add(unit);
         var document = new TranslationDocument { SourceLanguage = "en" };
         document.Files.Add(file);
         return document;

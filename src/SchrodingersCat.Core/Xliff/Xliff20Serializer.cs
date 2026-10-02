@@ -12,12 +12,17 @@ namespace SchrodingersCat.Core.Xliff;
 /// XLIFF 2.0 / 2.1 / 2.2 core serializer.
 /// </summary>
 /// <remarks>
-/// Current limitations (intentional for the first iteration):
+/// The writer regenerates the file from the model, so the reader keeps everything or rejects it:
 /// <list type="bullet">
+/// <item><c>&lt;group&gt;</c> nesting is kept as <see cref="TranslationGroup"/>s.</item>
+/// <item>Module and extension elements (matches, glossary, metadata, …) and <c>&lt;skeleton&gt;</c> are kept
+/// verbatim as <see cref="XElement"/>s; attributes from other namespaces are kept as <see cref="ExtensionAttr"/>s.
+/// The serializer doesn't interpret either, so it doesn't update them when the content changes.</item>
 /// <item>Well-formed pairs are always written as <c>&lt;pc&gt;</c>/<c>&lt;mrk&gt;</c>, even if the file had
 /// <c>&lt;sc&gt;/&lt;ec&gt;</c> or <c>&lt;sm&gt;/&lt;em&gt;</c>. XLIFF treats the forms as equivalent.</item>
-/// <item><c>&lt;group&gt;</c> hierarchy is flattened, and modules/extensions (matches, glossary, …) are not
-/// preserved: the writer regenerates the file from the model.</item>
+/// <item>Not kept, because they carry no data: namespace prefixes, comments and processing instructions outside
+/// content, <c>xml:space</c> outside content (whitespace is always read verbatim), and <c>xml:lang</c> on
+/// <c>&lt;source&gt;</c>/<c>&lt;target&gt;</c>, which must repeat <c>srcLang</c>/<c>trgLang</c>.</item>
 /// </list>
 /// </remarks>
 public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger = null) : IXliffSerializer
@@ -28,11 +33,18 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
 
     private static readonly XName XmlSpace = XNamespace.Xml + "space";
 
-    // Conventional prefixes for namespaces whose attributes appear on inline elements.
+    // Conventional prefixes for the XLIFF modules and ITS. Other namespaces get generated ns1, ns2, … prefixes.
     private static readonly Dictionary<string, string> KnownPrefixes = new(StringComparer.Ordinal)
     {
+        ["urn:oasis:names:tc:xliff:matches:2.0"] = "mtc",
+        ["urn:oasis:names:tc:xliff:glossary:2.0"] = "gls",
         ["urn:oasis:names:tc:xliff:fs:2.0"] = "fs",
+        ["urn:oasis:names:tc:xliff:metadata:2.0"] = "mda",
+        ["urn:oasis:names:tc:xliff:resourcedata:2.0"] = "res",
+        ["urn:oasis:names:tc:xliff:changetracking:2.0"] = "ctr",
         ["urn:oasis:names:tc:xliff:sizerestriction:2.0"] = "slr",
+        ["urn:oasis:names:tc:xliff:validation:2.0"] = "val",
+        ["urn:oasis:names:tc:xliff:itsm:2.1"] = "itsm",
         ["http://www.w3.org/2005/11/its"] = "its",
     };
 
@@ -61,7 +73,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
             var document = await ReadDocumentAsync(input, cancellationToken);
             if (_logger.IsEnabled(LogLevel.Debug))
             {
-                var unitCount = document.Files.Sum(f => f.Units.Count);
+                var unitCount = document.Files.Sum(f => f.Units.Count());
                 LogRead(document.Files.Count, unitCount);
             }
             return document;
@@ -94,71 +106,197 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         if (root.Name.Namespace != Ns || version is null || !version.StartsWith("2.", StringComparison.Ordinal))
             throw new XliffFormatException($"Unsupported XLIFF version '{version ?? "unknown"}'. Only XLIFF 2.x is supported.");
 
+        var a = new AttributeReader(root, location: null);
+        a.Optional("version");
         var document = new TranslationDocument
         {
-            SourceLanguage = RequiredAttribute(root, "srcLang"),
-            TargetLanguage = (string?)root.Attribute("trgLang"),
+            SourceLanguage = a.Required("srcLang"),
+            TargetLanguage = a.Optional("trgLang"),
         };
+        ReadInheritedSpace(a);
+        document.ExtensionAttributes.AddRange(a.ExtensionAttributes());
 
-        foreach (var fileElement in root.Elements(Ns + "file"))
-            document.Files.Add(ReadFile(fileElement));
+        var fileIds = new HashSet<string>(StringComparer.Ordinal);
+        ReadChildren(root, "<xliff>", child =>
+        {
+            if (child.Name != Ns + "file")
+                return false;
+
+            var file = ReadFile(child, document);
+            if (!fileIds.Add(file.Id))
+                throw new XliffFormatException($"Duplicate file id '{file.Id}'.");
+            document.Files.Add(file);
+            return true;
+        });
 
         return document;
     }
 
-    private static TranslationFile ReadFile(XElement fileElement)
+    private static TranslationFile ReadFile(XElement fileElement, TranslationDocument document)
     {
+        var a = new AttributeReader(fileElement, location: null);
         var file = new TranslationFile
         {
-            Id = RequiredAttribute(fileElement, "id"),
-            Original = (string?)fileElement.Attribute("original"),
+            Id = a.Required("id"),
+            Original = a.Optional("original"),
+            CanResegment = a.YesNo("canResegment"),
+            Translate = a.YesNo("translate"),
+            SourceDir = a.Direction("srcDir"),
+            TargetDir = a.Direction("trgDir"),
         };
+        ReadInheritedSpace(a);
+        file.ExtensionAttributes.AddRange(a.ExtensionAttributes());
 
-        var seenIds = new HashSet<string>(StringComparer.Ordinal);
-
-        // Units may sit inside (nested) <group>s; units themselves never nest, so Descendants is safe.
-        foreach (var unitElement in fileElement.Descendants(Ns + "unit"))
+        var context = new FileContext(document, file.Id);
+        ReadChildren(fileElement, context.Location, child =>
         {
-            var unit = ReadUnit(unitElement);
-            if (!seenIds.Add(unit.Id))
-                throw new XliffFormatException($"Duplicate unit id '{unit.Id}' in file '{file.Id}'.");
-            file.Units.Add(unit);
-        }
+            if (child.Name == Ns + "skeleton")
+            {
+                if (file.Skeleton is not null)
+                    throw new XliffFormatException($"File '{file.Id}' has more than one <skeleton>.");
+                file.Skeleton = ReadSkeleton(child, context.Location);
+            }
+            else if (child.Name == Ns + "notes")
+            {
+                ReadNotes(child, file.Notes, context.Location);
+            }
+            else
+            {
+                return ReadItem(child, file.Items, context);
+            }
+
+            return true;
+        }, file.ExtensionElements);
 
         return file;
     }
 
-    private static TranslationUnit ReadUnit(XElement unitElement)
-    {
-        var unit = new TranslationUnit
-        {
-            Id = RequiredAttribute(unitElement, "id"),
-            Name = (string?)unitElement.Attribute("name"),
-        };
+    // XLIFF reads text verbatim anyway, and the writer marks significant whitespace where it occurs.
+    private static void ReadInheritedSpace(AttributeReader a) => a.Optional(XmlSpace);
 
-        var notesElement = unitElement.Element(Ns + "notes");
-        if (notesElement is not null)
+    /// <summary>
+    /// Reads the children of a structural element. Elements from other namespaces are modules or extensions: they
+    /// are kept in <paramref name="extensionElements"/>, or rejected where XLIFF allows none (null). XLIFF elements
+    /// <paramref name="readCore"/> doesn't accept, and text other than whitespace, are rejected.
+    /// </summary>
+    private static void ReadChildren(
+        XElement parent, string owner, Func<XElement, bool> readCore, List<XElement>? extensionElements = null)
+    {
+        foreach (var node in parent.Nodes())
         {
-            foreach (var noteElement in notesElement.Elements(Ns + "note"))
-                unit.Notes.Add(ReadNote(noteElement));
+            if (node is XText text && !string.IsNullOrWhiteSpace(text.Value))
+                throw new XliffFormatException($"Text is not allowed directly in {owner}.");
+            if (node is not XElement child || readCore(child))
+                continue;
+
+            var ns = child.Name.Namespace;
+            if (extensionElements is null || ns == Ns || ns == XNamespace.None)
+                throw new XliffFormatException($"<{child.Name.LocalName}> is not allowed in {owner}.");
+
+            extensionElements.Add(Detach(child));
+        }
+    }
+
+    /// <summary>
+    /// Copies an element the serializer keeps verbatim. The copy declares the prefixes it uses, which were declared
+    /// on its ancestors, so the writer can declare the same ones again.
+    /// </summary>
+    private static XElement Detach(XElement element)
+    {
+        var copy = new XElement(element);
+        var namespaces = element.DescendantsAndSelf()
+            .SelectMany(e => e.Attributes().Where(a => !a.IsNamespaceDeclaration).Select(a => a.Name.Namespace).Prepend(e.Name.Namespace))
+            .Where(ns => ns != XNamespace.None && ns != XNamespace.Xml && ns != Ns)
+            .Distinct();
+
+        foreach (var ns in namespaces)
+        {
+            if (copy.GetPrefixOfNamespace(ns) is null && element.GetPrefixOfNamespace(ns) is { } prefix
+                && copy.Attribute(XNamespace.Xmlns + prefix) is null)
+                copy.Add(new XAttribute(XNamespace.Xmlns + prefix, ns.NamespaceName));
         }
 
-        var originalDataElement = unitElement.Element(Ns + "originalData");
-        if (originalDataElement is not null)
-            ReadOriginalData(originalDataElement, unit);
+        return copy;
+    }
+
+    private static bool ReadItem(XElement element, List<TranslationItem> items, FileContext context)
+    {
+        if (element.Name == Ns + "unit")
+            items.Add(ReadUnit(element, context));
+        else if (element.Name == Ns + "group")
+            items.Add(ReadGroup(element, context));
+        else
+            return false;
+
+        return true;
+    }
+
+    private static TranslationGroup ReadGroup(XElement groupElement, FileContext context)
+    {
+        var a = new AttributeReader(groupElement, context.Location);
+        var group = new TranslationGroup { Id = a.Required("id") };
+        context.DefineGroup(group.Id);
+        ReadItemAttributes(group, a);
+
+        var owner = $"group '{group.Id}'";
+        ReadChildren(groupElement, owner, child =>
+        {
+            if (child.Name != Ns + "notes")
+                return ReadItem(child, group.Items, context);
+
+            ReadNotes(child, group.Notes, owner);
+            return true;
+        }, group.ExtensionElements);
+
+        return group;
+    }
+
+    private static void ReadItemAttributes(TranslationItem item, AttributeReader a)
+    {
+        item.Name = a.Optional("name");
+        item.Type = a.Optional("type");
+        item.CanResegment = a.YesNo("canResegment");
+        item.Translate = a.YesNo("translate");
+        item.SourceDir = a.Direction("srcDir");
+        item.TargetDir = a.Direction("trgDir");
+        ReadInheritedSpace(a);
+        item.ExtensionAttributes.AddRange(a.ExtensionAttributes());
+    }
+
+    private static TranslationUnit ReadUnit(XElement unitElement, FileContext context)
+    {
+        var a = new AttributeReader(unitElement, context.Location);
+        var unit = new TranslationUnit { Id = a.Required("id") };
+        context.DefineUnit(unit.Id);
+        ReadItemAttributes(unit, a);
+
+        var owner = $"unit '{unit.Id}'";
+
+        // Segments refer to <originalData> and to each other's ids, so read those first.
+        var originalDataElements = unitElement.Elements(Ns + "originalData").ToList();
+        if (originalDataElements.Count > 1)
+            throw new XliffFormatException($"Unit '{unit.Id}' has more than one <originalData>.");
+        if (originalDataElements.Count == 1)
+            ReadOriginalData(originalDataElements[0], unit);
 
         var segmentIds = ReadSegmentIds(unitElement, unit.Id);
         var source = new InlineSide("source", unit.Id, unit.OriginalData, segmentIds);
         var target = new InlineSide("target", unit.Id, unit.OriginalData, segmentIds);
 
         // Segments and ignorables are siblings and their order matters (it rebuilds the full text).
-        foreach (var child in unitElement.Elements())
+        ReadChildren(unitElement, owner, child =>
         {
             if (child.Name == Ns + "segment")
-                unit.Segments.Add(ReadSegment(child, source, target, isIgnorable: false));
+                unit.Segments.Add(ReadSegment(child, source, target, context.Document, isIgnorable: false));
             else if (child.Name == Ns + "ignorable")
-                unit.Segments.Add(ReadSegment(child, source, target, isIgnorable: true));
-        }
+                unit.Segments.Add(ReadSegment(child, source, target, context.Document, isIgnorable: true));
+            else if (child.Name == Ns + "notes")
+                ReadNotes(child, unit.Notes, owner);
+            else if (child.Name != Ns + "originalData") // already read
+                return false;
+
+            return true;
+        }, unit.ExtensionElements);
 
         source.VerifyPairsClosed();
         target.VerifyPairsClosed();
@@ -186,14 +324,51 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         return ids;
     }
 
+    private static XElement ReadSkeleton(XElement element, string owner)
+    {
+        var a = new AttributeReader(element, owner);
+        var href = a.Optional("href");
+        a.VerifyNoneLeft();
+
+        // The content belongs to the extracting tool: text and elements from other namespaces.
+        if (element.Elements().FirstOrDefault(e => e.Name.Namespace == Ns || e.Name.Namespace == XNamespace.None) is { } core)
+            throw new XliffFormatException($"<{core.Name.LocalName}> is not allowed in the <skeleton> of {owner}.");
+        if (href is null && !element.Nodes().Any(n => n is not XComment))
+            throw new XliffFormatException($"The <skeleton> of {owner} has neither content nor an href.");
+
+        return Detach(element);
+    }
+
+    private static void ReadNotes(XElement element, List<Note> notes, string owner)
+    {
+        if (notes.Count > 0)
+            throw new XliffFormatException($"{Capitalize(owner)} has more than one <notes>.");
+
+        new AttributeReader(element, owner).VerifyNoneLeft();
+        ReadChildren(element, $"<notes> in {owner}", child =>
+        {
+            if (child.Name != Ns + "note")
+                return false;
+
+            notes.Add(ReadNote(child, owner));
+            return true;
+        });
+
+        if (notes.Count == 0)
+            throw new XliffFormatException($"<notes> in {owner} contains no <note>.");
+    }
+
     private static void ReadOriginalData(XElement element, TranslationUnit unit)
     {
+        var location = $"unit '{unit.Id}'";
+        new AttributeReader(element, location).VerifyNoneLeft();
+
         foreach (var dataElement in element.Elements())
         {
             if (dataElement.Name != Ns + "data")
                 throw new XliffFormatException($"Unit '{unit.Id}' contains <{dataElement.Name.LocalName}> inside <originalData>, which is not allowed.");
 
-            var attributes = new InlineAttributes(dataElement, unit.Id);
+            var attributes = new AttributeReader(dataElement, location);
             var id = attributes.Required("id");
             attributes.Optional(XmlSpace); // the text is read verbatim anyway
             attributes.VerifyNoneLeft();
@@ -213,29 +388,82 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
             if (!unit.OriginalData.TryAdd(id, text.ToString()))
                 throw new XliffFormatException($"Duplicate <data> id '{id}' in unit '{unit.Id}'.");
         }
+
+        if (unit.OriginalData.Count == 0)
+            throw new XliffFormatException($"<originalData> in unit '{unit.Id}' contains no <data>.");
     }
 
-    private static Segment ReadSegment(XElement element, InlineSide source, InlineSide target, bool isIgnorable)
+    private static Segment ReadSegment(
+        XElement element, InlineSide source, InlineSide target, TranslationDocument document, bool isIgnorable)
     {
         var unitId = source.UnitId;
-        var sourceElement = element.Element(Ns + "source")
-            ?? throw new XliffFormatException($"A segment in unit '{unitId}' has no <source>.");
-        var targetElement = element.Element(Ns + "target");
-
-        return new Segment
+        var location = $"unit '{unitId}'";
+        var a = new AttributeReader(element, location);
+        var segment = new Segment
         {
-            Id = (string?)element.Attribute("id"),
-            Source = ReadContent(sourceElement, source),
-            Target = targetElement is null ? null : ReadContent(targetElement, target),
-            State = isIgnorable ? SegmentState.Initial : ParseState((string?)element.Attribute("state"), unitId),
-            SubState = (string?)element.Attribute("subState"),
+            Id = a.Optional("id"),
+            Source = InlineContent.Empty, // read below, once the attributes are checked
             IsIgnorable = isIgnorable,
         };
+        if (!isIgnorable)
+        {
+            segment.CanResegment = a.YesNo("canResegment");
+            segment.State = ParseState(a.Optional("state"), unitId);
+            segment.SubState = a.Optional("subState");
+        }
+
+        a.VerifyNoneLeft();
+
+        XElement? sourceElement = null;
+        XElement? targetElement = null;
+        ReadChildren(element, $"a <{element.Name.LocalName}> in {location}", child =>
+        {
+            if (child.Name == Ns + "source" && sourceElement is null)
+                sourceElement = child;
+            else if (child.Name == Ns + "target" && sourceElement is not null && targetElement is null)
+                targetElement = child;
+            else
+                return false;
+
+            return true;
+        });
+
+        if (sourceElement is null)
+            throw new XliffFormatException($"A segment in unit '{unitId}' has no <source>.");
+
+        var sourceAttributes = new AttributeReader(sourceElement, location);
+        ReadContentLanguage(sourceAttributes, document.SourceLanguage, "srcLang");
+        sourceAttributes.VerifyNoneLeft();
+        segment.Source = ReadContent(sourceElement, source);
+
+        if (targetElement is not null)
+        {
+            var targetAttributes = new AttributeReader(targetElement, location);
+            ReadContentLanguage(targetAttributes, document.TargetLanguage, "trgLang");
+            segment.TargetOrder = targetAttributes.PositiveInteger("order");
+            targetAttributes.VerifyNoneLeft();
+            segment.Target = ReadContent(targetElement, target);
+        }
+
+        return segment;
     }
 
-    private static Note ReadNote(XElement element)
+    // xml:lang on <source>/<target> must repeat srcLang/trgLang, so the writer can leave it out without losing anything.
+    private static void ReadContentLanguage(AttributeReader a, string? documentLanguage, string documentAttribute)
     {
-        var priorityText = (string?)element.Attribute("priority");
+        ReadInheritedSpace(a);
+        var language = a.Optional(XNamespace.Xml + "lang");
+        if (language is not null && !string.Equals(language, documentLanguage, StringComparison.OrdinalIgnoreCase))
+            throw a.Invalid("xml:lang", language, $"it must match the {documentAttribute} of <xliff>");
+    }
+
+    private static Note ReadNote(XElement element, string owner)
+    {
+        if (element.Elements().FirstOrDefault() is { } child)
+            throw new XliffFormatException($"<note> in {owner} contains <{child.Name.LocalName}>; notes may only contain text.");
+
+        var a = new AttributeReader(element, owner);
+        var priorityText = a.Optional("priority");
         int? priority = null;
         if (priorityText is not null)
         {
@@ -244,13 +472,13 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
             priority = p;
         }
 
-        return new Note
+        var note = new Note
         {
-            Id = (string?)element.Attribute("id"),
+            Id = a.Optional("id"),
             Text = element.Value,
-            Category = (string?)element.Attribute("category"),
+            Category = a.Optional("category"),
             Priority = priority,
-            AppliesTo = (string?)element.Attribute("appliesTo") switch
+            AppliesTo = a.Optional("appliesTo") switch
             {
                 null => null,
                 "source" => NoteAppliesTo.Source,
@@ -258,7 +486,11 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
                 var other => throw new XliffFormatException($"Invalid note appliesTo value '{other}'."),
             },
         };
+        note.ExtensionAttributes.AddRange(a.ExtensionAttributes());
+        return note;
     }
+
+    private static string Capitalize(string text) => char.ToUpperInvariant(text[0]) + text[1..];
 
     private static InlineContent ReadContent(XElement element, InlineSide side)
     {
@@ -288,7 +520,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         if (name is not ("pc" or "mrk"))
             RequireEmpty(element, side.UnitId);
 
-        var a = new InlineAttributes(element, side.UnitId);
+        var a = new AttributeReader(element, $"unit '{side.UnitId}'");
         switch (name)
         {
             case "ph":
@@ -414,7 +646,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         }
     }
 
-    private static InlineCode ReadPairLevel(InlineCode code, InlineAttributes a) => code with
+    private static InlineCode ReadPairLevel(InlineCode code, AttributeReader a) => code with
     {
         Type = a.Optional("type"),
         SubType = a.Optional("subType"),
@@ -424,7 +656,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         CanReorder = a.CanReorder() ?? CanReorder.Yes,
     };
 
-    private static InlineMarker ReadMarker(InlineMarker marker, InlineAttributes a) => marker with
+    private static InlineMarker ReadMarker(InlineMarker marker, AttributeReader a) => marker with
     {
         Translate = a.YesNo("translate"),
         Type = a.Optional("type"),
@@ -436,7 +668,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
     private static string ReadCodePoint(XElement element, string unitId)
     {
         RequireEmpty(element, unitId);
-        var attributes = new InlineAttributes(element, unitId);
+        var attributes = new AttributeReader(element, $"unit '{unitId}'");
         var hex = attributes.Required("hex");
         attributes.VerifyNoneLeft();
 
@@ -463,10 +695,6 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         _ => throw new XliffFormatException($"Invalid segment state '{value}' in unit '{unitId}'."),
     };
 
-    private static string RequiredAttribute(XElement element, string name) =>
-        (string?)element.Attribute(name)
-        ?? throw new XliffFormatException($"<{element.Name.LocalName}> is missing the required '{name}' attribute.");
-
     // ---------------------------------------------------------------- writing
 
     public async Task WriteAsync(TranslationDocument document, Stream output, CancellationToken cancellationToken = default)
@@ -479,7 +707,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
             await WriteDocumentAsync(document, output, cancellationToken);
             if (_logger.IsEnabled(LogLevel.Debug))
             {
-                var unitCount = document.Files.Sum(f => f.Units.Count);
+                var unitCount = document.Files.Sum(f => f.Units.Count());
                 LogWritten(document.Files.Count, unitCount);
             }
         }
@@ -492,10 +720,15 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
 
     private static async Task WriteDocumentAsync(TranslationDocument document, Stream output, CancellationToken cancellationToken)
     {
+        var duplicateFile = document.Files.GroupBy(f => f.Id, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1);
+        if (duplicateFile is not null)
+            throw new InvalidOperationException($"Cannot write the document: the file id '{duplicateFile.Key}' is used more than once.");
+
         var root = new XElement(Ns + "xliff",
             new XAttribute("version", "2.0"),
             new XAttribute("srcLang", document.SourceLanguage),
             OptionalAttribute("trgLang", document.TargetLanguage),
+            WriteExtensionAttributes(document.ExtensionAttributes),
             document.Files.Select(WriteFile));
         DeclareExtensionNamespaces(root);
 
@@ -515,38 +748,144 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
     }
 
     // Declared once on the root; otherwise XLinq repeats a generated xmlns:p1 on every element that needs it.
+    // Prefer the prefixes verbatim elements brought from the original file (see Detach), then the conventional ones.
     private static void DeclareExtensionNamespaces(XElement root)
     {
-        var namespaces = root.Descendants().Attributes()
-            .Select(a => a.Name.Namespace)
-            .Where(ns => ns != XNamespace.None && ns != XNamespace.Xml)
+        var namespaces = root.DescendantsAndSelf()
+            .SelectMany(e => e.Attributes().Where(a => !a.IsNamespaceDeclaration).Select(a => a.Name.Namespace).Prepend(e.Name.Namespace))
+            .Where(ns => ns != XNamespace.None && ns != XNamespace.Xml && ns != Ns)
             .Distinct()
             .ToList();
 
+        var declarations = root.Descendants().Attributes()
+            .Where(a => a.IsNamespaceDeclaration && a.Name.Namespace == XNamespace.Xmlns)
+            .ToList();
+        var original = declarations
+            .GroupBy(a => a.Value, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Select(a => a.Name.LocalName).ToList(), StringComparer.Ordinal);
+
+        var used = new HashSet<string>(StringComparer.Ordinal);
         var generated = 0;
         foreach (var ns in namespaces)
         {
-            var prefix = KnownPrefixes.GetValueOrDefault(ns.NamespaceName) ?? $"ns{++generated}";
+            var candidates = original.GetValueOrDefault(ns.NamespaceName) ?? [];
+            var prefix = candidates.Append(KnownPrefixes.GetValueOrDefault(ns.NamespaceName)).FirstOrDefault(p => p is not null && !used.Contains(p));
+            while (prefix is null || used.Contains(prefix))
+                prefix = $"ns{++generated}";
+
+            used.Add(prefix);
             root.Add(new XAttribute(XNamespace.Xmlns + prefix, ns.NamespaceName));
+        }
+
+        // Declarations that now only repeat the root's are noise.
+        foreach (var declaration in declarations)
+        {
+            if ((string?)root.Attribute(declaration.Name) == declaration.Value)
+                declaration.Remove();
         }
     }
 
-    private static XElement WriteFile(TranslationFile file) =>
-        new(Ns + "file",
+    private static XElement WriteFile(TranslationFile file)
+    {
+        VerifyUniqueItemIds(file);
+
+        if (file.Skeleton is not null && file.Skeleton.Name != Ns + "skeleton")
+            throw new NotSupportedException($"The skeleton of file '{file.Id}' must be a <skeleton> element in the XLIFF namespace.");
+
+        return new XElement(Ns + "file",
             new XAttribute("id", file.Id),
             OptionalAttribute("original", file.Original),
-            file.Units.Select(WriteUnit));
+            YesNoAttribute("canResegment", file.CanResegment),
+            YesNoAttribute("translate", file.Translate),
+            DirectionAttribute("srcDir", file.SourceDir),
+            DirectionAttribute("trgDir", file.TargetDir),
+            WriteExtensionAttributes(file.ExtensionAttributes),
+            file.Skeleton is null ? null : WriteVerbatim(file.Skeleton),
+            file.ExtensionElements.Select(WriteExtensionElement),
+            WriteNotes(file.Notes),
+            file.Items.Select(WriteItem));
+    }
+
+    // The reader rejects duplicate unit and group ids within a file, so the writer must not produce them.
+    private static void VerifyUniqueItemIds(TranslationFile file)
+    {
+        var unitIds = new HashSet<string>(StringComparer.Ordinal);
+        var groupIds = new HashSet<string>(StringComparer.Ordinal);
+        Visit(file.Items);
+
+        void Visit(IEnumerable<TranslationItem> items)
+        {
+            foreach (var item in items)
+            {
+                var (ids, kind) = item is TranslationGroup ? (groupIds, "group") : (unitIds, "unit");
+                if (!ids.Add(item.Id))
+                    throw new InvalidOperationException($"Cannot write file '{file.Id}': the {kind} id '{item.Id}' is used more than once.");
+                if (item is TranslationGroup group)
+                    Visit(group.Items);
+            }
+        }
+    }
+
+    private static XElement WriteItem(TranslationItem item) => item switch
+    {
+        TranslationUnit unit => WriteUnit(unit),
+        TranslationGroup group => WriteGroup(group),
+        _ => throw new NotSupportedException($"Unknown item type {item.GetType()}."),
+    };
+
+    private static XElement WriteGroup(TranslationGroup group) =>
+        new(Ns + "group",
+            ItemAttributes(group),
+            group.ExtensionElements.Select(WriteExtensionElement),
+            WriteNotes(group.Notes),
+            group.Items.Select(WriteItem));
 
     private static XElement WriteUnit(TranslationUnit unit)
     {
         VerifyInlineStructure(unit);
 
         return new XElement(Ns + "unit",
-            new XAttribute("id", unit.Id),
-            OptionalAttribute("name", unit.Name),
-            unit.Notes.Count == 0 ? null : new XElement(Ns + "notes", unit.Notes.Select(WriteNote)),
+            ItemAttributes(unit),
+            unit.ExtensionElements.Select(WriteExtensionElement),
+            WriteNotes(unit.Notes),
             unit.OriginalData.Count == 0 ? null : new XElement(Ns + "originalData", unit.OriginalData.Select(WriteData)),
             unit.Segments.Select(WriteSegment));
+    }
+
+    private static IEnumerable<XAttribute?> ItemAttributes(TranslationItem item) =>
+    [
+        new XAttribute("id", item.Id),
+        OptionalAttribute("name", item.Name),
+        YesNoAttribute("canResegment", item.CanResegment),
+        YesNoAttribute("translate", item.Translate),
+        DirectionAttribute("srcDir", item.SourceDir),
+        DirectionAttribute("trgDir", item.TargetDir),
+        OptionalAttribute("type", item.Type),
+        .. WriteExtensionAttributes(item.ExtensionAttributes),
+    ];
+
+    private static XElement? WriteNotes(List<Note> notes) =>
+        notes.Count == 0 ? null : new XElement(Ns + "notes", notes.Select(WriteNote));
+
+    private static XElement WriteExtensionElement(XElement element)
+    {
+        var ns = element.Name.Namespace;
+        if (ns == Ns || ns == XNamespace.None)
+            throw new NotSupportedException(
+                $"Extension element <{element.Name.LocalName}> must be in a namespace other than XLIFF's own.");
+        return WriteVerbatim(element);
+    }
+
+    /// <summary>Copies an element the serializer doesn't interpret, so the model's instance is not attached to the output.</summary>
+    private static XElement WriteVerbatim(XElement element)
+    {
+        var copy = new XElement(element);
+
+        // As in WriteContent: mixed content stops XmlWriter from indenting, which could change whitespace-sensitive
+        // content (e.g. the <source> of a match) that the serializer knows nothing about.
+        if (copy.Nodes().Any())
+            copy.AddFirst(new XText(string.Empty));
+        return copy;
     }
 
     private static XElement WriteData(KeyValuePair<string, string> data)
@@ -618,17 +957,29 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
 
     private static XElement WriteSegment(Segment segment)
     {
-        var element = new XElement(Ns + (segment.IsIgnorable ? "ignorable" : "segment"),
-            OptionalAttribute("id", segment.Id));
+        if (segment.IsIgnorable && (segment.State != SegmentState.Initial || segment.SubState is not null || segment.CanResegment is not null))
+            throw new NotSupportedException(
+                $"Ignorable '{segment.Id}' has State, SubState or CanResegment set, which <ignorable> can't carry.");
+        if (segment.TargetOrder is not null && segment.Target is null)
+            throw new NotSupportedException($"Segment '{segment.Id}' has a TargetOrder but no Target to write it on.");
+        if (segment.TargetOrder is <= 0)
+            throw new InvalidOperationException($"Cannot write segment '{segment.Id}': TargetOrder must be positive.");
 
-        if (!segment.IsIgnorable && segment.State != SegmentState.Initial)
+        var element = new XElement(Ns + (segment.IsIgnorable ? "ignorable" : "segment"),
+            OptionalAttribute("id", segment.Id),
+            YesNoAttribute("canResegment", segment.CanResegment));
+
+        if (segment.State != SegmentState.Initial)
             element.Add(new XAttribute("state", FormatState(segment.State)));
-        if (!segment.IsIgnorable && segment.SubState is not null)
-            element.Add(new XAttribute("subState", segment.SubState));
+        element.Add(OptionalAttribute("subState", segment.SubState));
 
         element.Add(WriteContent(Ns + "source", segment.Source));
         if (segment.Target is not null)
-            element.Add(WriteContent(Ns + "target", segment.Target));
+        {
+            var target = WriteContent(Ns + "target", segment.Target);
+            target.Add(OptionalAttribute("order", segment.TargetOrder?.ToString(CultureInfo.InvariantCulture)));
+            element.Add(target);
+        }
 
         return element;
     }
@@ -644,6 +995,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
                 NoteAppliesTo.Target => "target",
                 _ => null,
             }),
+            WriteExtensionAttributes(note.ExtensionAttributes),
             note.Text);
 
     private static XElement WriteContent(XName name, InlineContent content)
@@ -940,7 +1292,17 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
     private static XAttribute? OptionalAttribute(XName name, string? value) =>
         value is null ? null : new XAttribute(name, value);
 
-    // ---------------------------------------------------------------- inline reading helpers
+    private static XAttribute? YesNoAttribute(string name, bool? value) =>
+        value is null ? null : new XAttribute(name, value.Value ? "yes" : "no");
+
+    private static XAttribute? DirectionAttribute(string name, string? value) =>
+        value is null || IsDirection(value)
+            ? OptionalAttribute(name, value)
+            : throw new InvalidOperationException($"Cannot write {name} '{value}': it must be ltr, rtl or auto.");
+
+    private static bool IsDirection(string value) => value is "ltr" or "rtl" or "auto";
+
+    // ---------------------------------------------------------------- reading helpers
 
     /// <summary>Id and pairing bookkeeping for the sources or the targets of one unit.</summary>
     /// <remarks>
@@ -996,13 +1358,41 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         }
     }
 
+    /// <summary>The id spaces of one file: unit ids and group ids must each be unique within it.</summary>
+    private sealed class FileContext(TranslationDocument document, string fileId)
+    {
+        private readonly HashSet<string> _unitIds = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _groupIds = new(StringComparer.Ordinal);
+
+        public TranslationDocument Document => document;
+
+        public string Location { get; } = $"file '{fileId}'";
+
+        public void DefineUnit(string id)
+        {
+            if (!_unitIds.Add(id))
+                throw new XliffFormatException($"Duplicate unit id '{id}' in file '{fileId}'.");
+        }
+
+        public void DefineGroup(string id)
+        {
+            if (!_groupIds.Add(id))
+                throw new XliffFormatException($"Duplicate group id '{id}' in file '{fileId}'.");
+        }
+    }
+
     /// <summary>
     /// Reads attributes and keeps track of which ones were used, so unknown XLIFF attributes fail loudly
     /// and attributes from other namespaces are kept as <see cref="ExtensionAttr"/>s.
     /// </summary>
-    private sealed class InlineAttributes(XElement element, string unitId)
+    /// <param name="location">Where the element is, for messages (e.g. <c>unit 'u1'</c>); null for top-level elements.</param>
+    private sealed class AttributeReader(XElement element, string? location)
     {
         private readonly HashSet<XName> _read = [];
+
+        private string Where => location is null
+            ? $"<{element.Name.LocalName}>"
+            : $"<{element.Name.LocalName}> in {location}";
 
         public string? Optional(XName name)
         {
@@ -1012,8 +1402,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
 
         public string Required(XName name) =>
             Optional(name)
-            ?? throw new XliffFormatException(
-                $"<{element.Name.LocalName}> in unit '{unitId}' is missing the required '{name.LocalName}' attribute.");
+            ?? throw new XliffFormatException($"{Where} is missing the required '{name.LocalName}' attribute.");
 
         public bool? YesNo(string name) => Optional(name) switch
         {
@@ -1032,6 +1421,23 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
             var other => throw Invalid("canReorder", other),
         };
 
+        public string? Direction(string name)
+        {
+            var value = Optional(name);
+            return value is null || IsDirection(value) ? value : throw Invalid(name, value);
+        }
+
+        public int? PositiveInteger(string name)
+        {
+            var text = Optional(name);
+            if (text is null)
+                return null;
+
+            return int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value > 0
+                ? value
+                : throw Invalid(name, text);
+        }
+
         /// <summary>Call after reading all supported attributes.</summary>
         public List<ExtensionAttr> ExtensionAttributes()
         {
@@ -1043,8 +1449,7 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
 
                 var ns = attribute.Name.Namespace;
                 if (ns == XNamespace.None || ns == Ns || ns == XNamespace.Xml)
-                    throw new XliffFormatException(
-                        $"Unsupported attribute '{attribute.Name.LocalName}' on <{element.Name.LocalName}> in unit '{unitId}'.");
+                    throw new XliffFormatException($"Unsupported attribute '{attribute.Name.LocalName}' on {Where}.");
 
                 result.Add(new ExtensionAttr(ns.NamespaceName, attribute.Name.LocalName, attribute.Value));
             }
@@ -1057,11 +1462,10 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         {
             var extensions = ExtensionAttributes();
             if (extensions.Count > 0)
-                throw new XliffFormatException(
-                    $"Unsupported attribute '{extensions[0].LocalName}' on <{element.Name.LocalName}> in unit '{unitId}'.");
+                throw new XliffFormatException($"Unsupported attribute '{extensions[0].LocalName}' on {Where}.");
         }
 
-        private XliffFormatException Invalid(string name, string value) =>
-            new($"Invalid {name} value '{value}' on <{element.Name.LocalName}> in unit '{unitId}'.");
+        public XliffFormatException Invalid(string name, string value, string? reason = null) =>
+            new($"Invalid {name} value '{value}' on {Where}{(reason is null ? "" : $": {reason}")}.");
     }
 }

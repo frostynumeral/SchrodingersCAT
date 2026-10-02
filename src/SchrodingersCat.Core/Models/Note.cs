@@ -7,7 +7,7 @@ public enum NoteAppliesTo
     Target,
 }
 
-/// <summary>A comment attached to a <see cref="TranslationUnit"/> (by the developer, translator or reviewer).</summary>
+/// <summary>A comment attached to a file, group or unit (by the developer, translator or reviewer).</summary>
 public sealed class Note
 {
     public string? Id { get; set; }
@@ -22,4 +22,7 @@ public sealed class Note
 
     /// <summary><c>null</c> means the note applies to the whole unit.</summary>
     public NoteAppliesTo? AppliesTo { get; set; }
+
+    /// <summary>Attributes from other namespaces, preserved as-is.</summary>
+    public List<ExtensionAttr> ExtensionAttributes { get; } = [];
 }
