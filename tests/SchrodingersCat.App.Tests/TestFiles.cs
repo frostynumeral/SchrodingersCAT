@@ -34,10 +34,32 @@ internal sealed class TestFiles : IDisposable
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 }
 
-/// <summary>Answers the open dialog with a preset path (null = the user cancelled).</summary>
-internal sealed class FakeFileDialogs(string? path) : IFileDialogService
+/// <summary>Answers the dialogs with preset values (a null path = the user cancelled) and records what was asked.</summary>
+internal sealed class FakeDialogs(string? openPath) : IDialogService
 {
-    public string? Path { get; set; } = path;
+    public string? OpenPath { get; set; } = openPath;
 
-    public Task<string?> PickFileToOpenAsync() => Task.FromResult(Path);
+    public string? SavePath { get; set; }
+
+    public UnsavedChangesChoice Choice { get; set; } = UnsavedChangesChoice.Cancel;
+
+    public List<string> Asked { get; } = [];
+
+    public Task<string?> PickFileToOpenAsync()
+    {
+        Asked.Add("open");
+        return Task.FromResult(OpenPath);
+    }
+
+    public Task<string?> PickFileToSaveAsync(string? suggestedName)
+    {
+        Asked.Add($"save as (suggested {suggestedName})");
+        return Task.FromResult(SavePath);
+    }
+
+    public Task<UnsavedChangesChoice> AskToSaveChangesAsync(string fileName)
+    {
+        Asked.Add($"save changes to {fileName}?");
+        return Task.FromResult(Choice);
+    }
 }
