@@ -64,6 +64,9 @@ public class Xliff20WriterValidationTests : Xliff20SerializerTestBase
         { "control character in an extension attribute", d => Unit(d).ExtensionAttributes.Add(new ExtensionAttr("urn:x", "a", "\u0005")) },
         { "control character in an extension element", d => Unit(d).ExtensionElements.Add(new XElement(XName.Get("e", "urn:x"), "\u0006")) },
         { "invalid extension attribute name", d => Unit(d).ExtensionAttributes.Add(new ExtensionAttr("urn:x", "not a name", "1")) },
+        { "empty extension attribute name", d => Unit(d).ExtensionAttributes.Add(new ExtensionAttr("urn:x", "", "1")) },
+        { "carriage return in a comment", d => Unit(d).ExtensionElements.Add(new XElement(XName.Get("e", "urn:x"), new XComment("a\rb"))) },
+        { "carriage return in a processing instruction", d => Unit(d).ExtensionElements.Add(new XElement(XName.Get("e", "urn:x"), new XProcessingInstruction("p", "a\rb"))) },
         { "XLIFF element in the skeleton", d => d.Files[0].Skeleton = new XElement(Xliff + "skeleton", new XElement(Xliff + "unit")) },
         { "unknown attribute on the skeleton", d => d.Files[0].Skeleton = new XElement(Xliff + "skeleton", new XAttribute("foo", "1"), "x") },
     };
@@ -104,6 +107,29 @@ public class Xliff20WriterValidationTests : Xliff20SerializerTestBase
 
         Assert.Equal([1, 10], reread.Units.Single().Notes.Select(n => n.Priority));
         Assert.Equal("tab\tnewline\n\U0001F600", reread.Units.Single().Notes[0].Text);
+    }
+
+    // Found by the property tests: XmlWriter wrote a bare carriage return, which XML parsers read back as a line feed.
+    [Fact]
+    public async Task RoundTrip_KeepsCarriageReturnsEverywhereXmlCanEscapeThem()
+    {
+        var document = Valid();
+        document.TargetLanguage = "hu";
+        var unit = Unit(document);
+        unit.Segments[0].Source = InlineContent.FromText("a\rb\r\n");
+        unit.Segments[0].Target = new InlineContent([new InlineText("\r"), new InlineCode("c1", InlineCodeKind.Standalone) { Disp = "x\ry", DataRef = "d1" }]);
+        unit.OriginalData["d1"] = "<br>\r";
+        unit.Notes.Add(new Note { Text = "line\rline" });
+        unit.ExtensionElements.Add(new XElement(XName.Get("e", "urn:x"), new XAttribute("a", "\r"), "t\r"));
+
+        var reread = Unit(await ReadAsync(await WriteAsync(document)));
+
+        Assert.Equal(unit.Segments[0].Source, reread.Segments[0].Source);
+        Assert.Equal(unit.Segments[0].Target, reread.Segments[0].Target);
+        Assert.Equal("<br>\r", reread.OriginalData["d1"]);
+        Assert.Equal("line\rline", reread.Notes[0].Text);
+        Assert.Equal("t\r", reread.ExtensionElements[0].Value);
+        Assert.Equal("\r", (string?)reread.ExtensionElements[0].Attribute("a"));
     }
 
     [Theory]
