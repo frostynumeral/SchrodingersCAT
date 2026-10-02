@@ -1,10 +1,13 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
+using Avalonia.LogicalTree;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using SchrodingersCat.App.Controls;
 using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.App.Views;
@@ -31,7 +34,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
         var targets = TargetBoxes(window);
         Assert.Equal(3, targets.Count);
         Assert.Equal("Viszlát.", targets[1].Text);
-        Assert.True(targets[2].IsReadOnly); // inline codes
+        Assert.False(targets[2].IsVisible); // inline codes: shown as chips instead
 
         // Type into the first target like a user would, then save with Ctrl+S.
         targets[0].Focus();
@@ -173,6 +176,69 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal(UnsavedChangesChoice.Cancel, await prompt);
         owner.Close();
     }
+
+    [AvaloniaFact]
+    public async Task InlineCodes_AreShownAsChips()
+    {
+        var path = _files.Write("tagged.xlf", """
+            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+              <file id="f1">
+                <unit id="u1">
+                  <originalData>
+                    <data id="d1">&lt;b class="warn"&gt;</data>
+                    <data id="d2">&lt;/b&gt;</data>
+                  </originalData>
+                  <segment>
+                    <source>Hello <ph id="1" disp="{0}" equiv="Ann" canDelete="no"/>, press <pc id="2" subType="xlf:b" type="fmt" dataRefStart="d1" dataRefEnd="d2">OK</pc>.</source>
+                    <target>Szia <ph id="1" disp="{0}" equiv="Ann" canDelete="no"/>, nyomd meg: <pc id="2" subType="xlf:b" type="fmt" dataRefStart="d1" dataRefEnd="d2">OK</pc>.</target>
+                  </segment>
+                </unit>
+              </file>
+            </xliff>
+            """);
+        var (window, vm) = Show(path);
+
+        window.KeyPressQwerty(PhysicalKey.O, RawInputModifiers.Control);
+        await WaitFor(() => vm.Segments.Count == 1);
+
+        var source = ContentBlock(window, "source");
+        Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], Chips(source).Select(Label));
+        Assert.Equal("Hello {0}, press ⟨bOKb⟩.", string.Concat(source.Inlines!.Select(InlineText)));
+
+        var (placeholder, opening, closing) = (Chips(source)[0], Chips(source)[1], Chips(source)[2]);
+        Assert.Equal(["chip", "standalone", "protected"], placeholder.Classes);
+        Assert.Equal(["chip", "opening"], opening.Classes);
+        Assert.Equal(["chip", "closing"], closing.Classes);
+        Assert.Equal("Code 1\nReads as: Ann\nCan't be deleted.", ToolTip.GetTip(placeholder));
+        Assert.Equal("Start of code 2\n<b class=\"warn\">", ToolTip.GetTip(opening));
+        Assert.Equal("End of code 2\n</b>", ToolTip.GetTip(closing));
+
+        // The target can't be edited as text yet: no text box, but the same chips, read-only.
+        Assert.False(TargetBoxes(window).Single().IsVisible);
+        var target = ContentBlock(window, "target");
+        Assert.True(target.IsEffectivelyVisible);
+        Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], Chips(target).Select(Label));
+        Assert.Equal("Szia {0}, nyomd meg: ⟨bOKb⟩.", string.Concat(target.Inlines!.Select(InlineText)));
+    }
+
+    private static InlineContentBlock ContentBlock(Window window, string role)
+    {
+        Dispatcher.UIThread.RunJobs();
+        return window.GetVisualDescendants().OfType<InlineContentBlock>().Single(b => b.Classes.Contains(role));
+    }
+
+    private static List<Border> Chips(InlineContentBlock block) =>
+        block.Inlines!.OfType<InlineUIContainer>().Select(c => Assert.IsType<Border>(c.Child)).ToList();
+
+    private static string Label(Border chip) =>
+        string.Join(" ", chip.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text));
+
+    private static string InlineText(Inline inline) => inline switch
+    {
+        Run run => run.Text ?? "",
+        InlineUIContainer { Child: Border chip } => chip.GetLogicalDescendants().OfType<TextBlock>().First(t => t.Classes.Contains("label")).Text ?? "",
+        _ => throw new InvalidOperationException($"Unexpected inline {inline.GetType().Name}."),
+    };
 
     private static (Window Owner, Task<UnsavedChangesChoice> Prompt, UnsavedChangesDialog Dialog) ShowPrompt()
     {
