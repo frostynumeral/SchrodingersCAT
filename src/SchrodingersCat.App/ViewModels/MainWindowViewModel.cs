@@ -13,6 +13,10 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
 
     public ObservableCollection<SegmentViewModel> Segments { get; } = [];
 
+    /// <summary>The segment being worked on: its target is shown in the editor, the others read-only.</summary>
+    [ObservableProperty]
+    public partial SegmentViewModel? SelectedSegment { get; set; }
+
     /// <summary>The open file; saving writes back to it.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Title))]
@@ -27,6 +31,12 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     /// <summary>The last load or save failure, shown to the user until dismissed or the next success.</summary>
     [ObservableProperty]
     public partial string? ErrorMessage { get; private set; }
+
+    partial void OnSelectedSegmentChanged(SegmentViewModel? oldValue, SegmentViewModel? newValue)
+    {
+        oldValue?.IsActive = false;
+        newValue?.IsActive = true;
+    }
 
     public string Title => FilePath is null
         ? "SchrödingersCAT"
@@ -79,6 +89,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         }
 
         _document = document;
+        SelectedSegment = null;
         Segments.Clear();
         foreach (var unit in document.Units)
         {

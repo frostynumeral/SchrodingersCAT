@@ -30,12 +30,31 @@
             <Setter Property="FontSize" Value="11" />
         </Style>
 
-        <!-- Segments with inline codes can't be edited yet; make that visible, not just a silent refusal. -->
-        <Style Selector="Border.readOnlyTarget">
+        <!-- Annotation halves in the editor: very small brackets (design section 1). -->
+        <Style Selector="Border.marker">
+            <Setter Property="Margin" Value="1,0" />
+        </Style>
+        <Style Selector="Border.marker TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Opacity" Value="0.6" />
+        </Style>
+
+        <!-- Targets: the active segment's in the editor, the others as read-only chips in the same frame. -->
+        <Style Selector="Border.targetFrame">
             <Setter Property="Padding" Value="10,6" />
             <Setter Property="CornerRadius" Value="4" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="BorderBrush" Value="#40808080" />
+            <Setter Property="MinHeight" Value="32" />
+        </Style>
+        <Style Selector="Border.targetFrame.editing">
+            <Setter Property="BorderBrush" Value="{DynamicResource SystemAccentColor}" />
+            <Setter Property="BorderThickness" Value="2" />
+            <Setter Property="Padding" Value="9,5" />
+        </Style>
+
+        <!-- Segments with inline codes can't be edited yet; make that visible, not just a silent refusal. -->
+        <Style Selector="Border.targetFrame.readOnly">
             <Setter Property="Opacity" Value="0.7" />
         </Style>
     </Window.Styles>
@@ -74,16 +93,22 @@
                 <TextBlock Grid.Column="2" Text="Target" FontWeight="SemiBold" />
                 <TextBlock Grid.Column="3" Text="State" FontWeight="SemiBold" />
             </Grid>
-            <ListBox x:Name="SegmentList" ItemsSource="{Binding Segments}">
+            <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Margin="12,4" Text="{Binding SelectedSegment.EditStatus, FallbackValue={x:Null}}"
+                       TextWrapping="Wrap" Foreground="#C75000" IsVisible="{Binding $self.Text, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            <ListBox x:Name="SegmentList" ItemsSource="{Binding Segments}" SelectedItem="{Binding SelectedSegment}">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:SegmentViewModel">
                         <Grid ColumnDefinitions="110,*,*,90" ColumnSpacing="8">
                             <TextBlock Grid.Column="0" Text="{Binding Label}" Opacity="0.6" TextWrapping="Wrap" />
                             <controls:InlineContentBlock Grid.Column="1" Classes="source" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
-                            <TextBox Grid.Column="2" Classes="target" Text="{Binding TargetText}" TextWrapping="Wrap" AcceptsReturn="True"
-                                     IsVisible="{Binding IsEditable}" />
-                            <Border Grid.Column="2" Classes="readOnlyTarget" IsVisible="{Binding !IsEditable}" ToolTip.Tip="{Binding ReadOnlyReason}">
-                                <controls:InlineContentBlock Classes="target" Runs="{Binding TargetRuns}" TextWrapping="Wrap" />
+                            <Border Grid.Column="2" Classes="targetFrame" Classes.editing="{Binding IsEditing}" Classes.readOnly="{Binding !IsEditable}"
+                                    ToolTip.Tip="{Binding ReadOnlyReason}">
+                                <Panel>
+                                    <controls:TargetEditor Classes="target" Model="{Binding ActiveEditModel}" Status="{Binding EditStatus}"
+                                                           IsVisible="{Binding IsEditing}" />
+                                    <controls:InlineContentBlock Classes="target" Runs="{Binding TargetRuns}" TextWrapping="Wrap"
+                                                                 IsVisible="{Binding !IsEditing}" />
+                                </Panel>
                             </Border>
                             <TextBlock Grid.Column="3" Text="{Binding State}" Opacity="0.6" />
                         </Grid>
