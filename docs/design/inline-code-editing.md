@@ -256,6 +256,8 @@ Results:
 - **Switch to A (tokenised `TextBox`, same edit model) if:** IME or the screen reader fail.
 - **Record the outcome:** the platforms tested and the outcome go into this section, as the decision note that closes step 3.
 
+**Decision (2026-10-02):** keep C, AvaloniaEdit. The editor control (step 5) is built on AvaloniaEdit, using the spike's private-use encoding and its read-only section provider. Per-platform results weren't recorded in the table above. If a later manual run finds IME or screen-reader failures, the decision rule still applies and A remains the fallback, with the same `TargetEditModel`.
+
 ## Out of scope
 
 - Creating brand-new codes (new native markup); see open question 9.
@@ -276,7 +278,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - Unit tests per operation and per refusal.
    - A property test that `InlineContent` → model → `InlineContent` is exact.
    - Not yet wired to the UI.
-3. **Spike: AvaloniaEdit.** *(Automated part done 2026-10-02: see [Spike (step 3)](#spike-step-3); waiting for the manual checklist.)* A throwaway branch or sample showing one target with chips: rendering, atomic caret, `Backspace` over a chip, and one headless test.
+3. **Spike: AvaloniaEdit.** *(Done 2026-10-02: keep AvaloniaEdit; see [Spike (step 3)](#spike-step-3).)* A throwaway branch or sample showing one target with chips: rendering, atomic caret, `Backspace` over a chip, and one headless test.
    - Manual checks for IME, screen reader and RTL on the three desktops.
    - Ends with a decision note in this document: C, or fall back to A.
 4. **Read-only chips** for the source column and inactive targets (`SelectableTextBlock` and `InlineUIContainer`), replacing the `⟨1⟩` placeholder text in the list. Headless tests check the chips' labels, tooltips and states.
@@ -292,7 +294,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
 ## Open questions
 
 1. **Editor approach.** Accept C behind the spike, with A as the fallback? Or go straight to A for a quicker, plainer first version?
-   **Decision (2026-10-02):** C, AvaloniaEdit, behind the spike in step 3, with A as the fallback if the spike fails.
+   **Decision (2026-10-02):** C, AvaloniaEdit, behind the spike in step 3, with A as the fallback if the spike fails. The spike kept C (see [Spike (step 3)](#spike-step-3)).
 2. **Saving with code errors.**
    - Option (a): block saving until errors are fixed.
    - Option (b): warn ("3 segments have code errors. Save anyway?").
