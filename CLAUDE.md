@@ -31,6 +31,7 @@ Projects target `net10.0`. CI (`.github/workflows/ci.yml`) builds and tests in R
   - Known limitations: `<group>` nesting is flattened, and modules/extensions are not preserved.
   - Whitespace is significant. Reading uses `LoadOptions.PreserveWhitespace`. Writing adds `xml:space="preserve"` when text has leading/trailing whitespace, runs of whitespace, or whitespace other than a plain space.
   - Output is always `version="2.0"`, UTF-8 without BOM, and indented.
+- **Logging**: Core depends only on `Microsoft.Extensions.Logging.Abstractions`; the app picks the backend. Classes take an optional `ILogger<T>` in the constructor and fall back to `NullLogger<T>.Instance`, so they work without one. Use `[LoggerMessage]` source-generated methods (the class must be `partial`), because plain `LogError(...)` calls fail the build with CA1848/CA2254. Wrap arguments that cost something to compute in `_logger.IsEnabled(...)` and compute them in a local inside the guard; CA1873 still fires if the expression is passed inline. `Xliff20Serializer` logs at the public `ReadAsync`/`WriteAsync` boundary: Error on failure, attaching the exception and then re-throwing it, and Debug with a summary on success. Tests use `FakeLogger<T>` from `Microsoft.Extensions.Diagnostics.Testing`.
 
 ## In progress: inline codes
 
