@@ -1,5 +1,6 @@
 using System.Text;
 using System.Xml.Linq;
+using SchrodingersCat.TestSupport;
 
 namespace SchrodingersCat.Core.Tests.Properties;
 

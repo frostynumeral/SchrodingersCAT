@@ -1,13 +1,13 @@
 using System.Xml.Linq;
 using SchrodingersCat.Core.Models;
 
-namespace SchrodingersCat.Core.Tests.Properties;
+namespace SchrodingersCat.TestSupport;
 
 /// <summary>
 /// Turns a <see cref="DocumentPlan"/> into a valid model: unique ids, every pair closed within its unit side,
 /// dataRefs that resolve, and only attribute combinations the reader can produce.
 /// </summary>
-internal static class DocumentBuilder
+public static class DocumentBuilder
 {
     public static TranslationDocument Build(DocumentPlan plan)
     {

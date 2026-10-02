@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SchrodingersCat.App\SchrodingersCat.App.csproj" />
+    <ProjectReference Include="..\SchrodingersCat.TestSupport\SchrodingersCat.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>
