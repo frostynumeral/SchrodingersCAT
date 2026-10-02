@@ -1,10 +1,9 @@
-using System.Text;
 using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Xliff;
 
 namespace SchrodingersCat.Core.Tests;
 
-public class Xliff20SerializerTests
+public class Xliff20SerializerTests : Xliff20SerializerTestBase
 {
     private const string Sample = """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -36,8 +35,6 @@ public class Xliff20SerializerTests
           </file>
         </xliff>
         """;
-
-    private readonly Xliff20Serializer _serializer = new();
 
     [Fact]
     public async Task Read_MapsXliffToModel()
@@ -155,9 +152,9 @@ public class Xliff20SerializerTests
         {
             await File.WriteAllTextAsync(path, "old content");
 
-            await _serializer.WriteFileAsync(await ReadAsync(Sample), path);
+            await Serializer.WriteFileAsync(await ReadAsync(Sample), path);
 
-            Assert.Equal(2, (await _serializer.ReadFileAsync(path)).Units.Count());
+            Assert.Equal(2, (await Serializer.ReadFileAsync(path)).Units.Count());
             Assert.False(File.Exists(path + ".tmp"));
         }
         finally
@@ -167,17 +164,4 @@ public class Xliff20SerializerTests
     }
 
     private static InlineContent Text(string text) => InlineContent.FromText(text);
-
-    private async Task<TranslationDocument> ReadAsync(string xml)
-    {
-        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xml));
-        return await _serializer.ReadAsync(stream);
-    }
-
-    private async Task<string> WriteAsync(TranslationDocument doc)
-    {
-        using var stream = new MemoryStream();
-        await _serializer.WriteAsync(doc, stream);
-        return Encoding.UTF8.GetString(stream.ToArray());
-    }
 }
