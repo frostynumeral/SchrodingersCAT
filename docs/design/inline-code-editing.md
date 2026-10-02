@@ -210,7 +210,7 @@ The spike (implementation step 3) checks, on Windows, Linux and macOS:
 
 Each step ends with passing tests, zero warnings and green CI, and can be merged on its own.
 
-1. **Core: `InlineCodeChecker`.** All issues from section 3, per unit, with segment and code references.
+1. **Core: `InlineCodeChecker`.** *(Done 2026-10-02.)* All issues from section 3, per unit, with segment and code references.
    - Unit tests for every issue type, including pairs spanning segments, copies with `dataRef` versus `copyOf`, and non-reorderable sequences.
    - A property test: a target that equals the source (or is a valid reordering) has no errors.
    - No UI changes.
