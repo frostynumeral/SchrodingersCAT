@@ -99,7 +99,7 @@ public class Xliff20SerializerTests : Xliff20SerializerTestBase
     [Fact]
     public async Task Write_MarksSignificantWhitespaceAsPreserved()
     {
-        var doc = new TranslationDocument { SourceLanguage = "en" };
+        var doc = new TranslationDocument { SourceLanguage = "en", TargetLanguage = "hu" };
         var file = new TranslationFile { Id = "f1" };
         var unit = new TranslationUnit { Id = "u1" };
         unit.Segments.Add(new Segment { Source = Text("  indented"), Target = Text("plain text") });
