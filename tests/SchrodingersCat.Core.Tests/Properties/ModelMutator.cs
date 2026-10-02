@@ -2,6 +2,7 @@ using System.Collections;
 using System.Reflection;
 using System.Xml.Linq;
 using SchrodingersCat.Core.Models;
+using SchrodingersCat.TestSupport;
 
 namespace SchrodingersCat.Core.Tests.Properties;
 

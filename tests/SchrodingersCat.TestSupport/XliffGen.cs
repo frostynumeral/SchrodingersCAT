@@ -2,7 +2,7 @@ using System.Xml.Linq;
 using CsCheck;
 using SchrodingersCat.Core.Models;
 
-namespace SchrodingersCat.Core.Tests.Properties;
+namespace SchrodingersCat.TestSupport;
 
 /// <summary>
 /// CsCheck generators for valid <see cref="TranslationDocument"/>s: models the reader could have produced.
@@ -12,7 +12,7 @@ namespace SchrodingersCat.Core.Tests.Properties;
 /// <see cref="DocumentBuilder"/> turns it into a model, assigning ids and matching or closing pairs. Keeping the
 /// randomness in the plan lets CsCheck shrink a failing document to a small one.
 /// </remarks>
-internal static class XliffGen
+public static class XliffGen
 {
     public const string Xliff = "urn:oasis:names:tc:xliff:document:2.0";
 
@@ -210,52 +210,52 @@ internal static class XliffGen
     public static readonly Gen<TranslationDocument> Document = DocumentPlan.Select(DocumentBuilder.Build);
 }
 
-internal sealed record ExtensionAttrPlan(int Namespace, int Name, string Value);
+public sealed record ExtensionAttrPlan(int Namespace, int Name, string Value);
 
-internal sealed record NotePlan(
+public sealed record NotePlan(
     bool HasId, string Text, string? Category, int? Priority, NoteAppliesTo? AppliesTo, ExtensionAttrPlan[] Attributes);
 
-internal sealed record CodeAttrs(
+public sealed record CodeAttrs(
     string? Type, string? SubType, string? CopyOf, bool CanCopy, bool CanDelete, CanReorder CanReorder, bool CanOverlap,
     string? Dir, int? DataRef, string? Disp, string? Equiv, string? SubFlows, ExtensionAttrPlan[] Attributes);
 
-internal sealed record MarkerAttrs(bool? Translate, string? Type, string? Ref, string? Value, ExtensionAttrPlan[] Attributes);
+public sealed record MarkerAttrs(bool? Translate, string? Type, string? Ref, string? Value, ExtensionAttrPlan[] Attributes);
 
-internal abstract record Token;
+public abstract record Token;
 
-internal sealed record TextToken(string Text) : Token;
+public sealed record TextToken(string Text) : Token;
 
-internal sealed record StandaloneToken(CodeAttrs Code) : Token;
+public sealed record StandaloneToken(CodeAttrs Code) : Token;
 
-internal sealed record OpenToken(CodeAttrs Code) : Token;
+public sealed record OpenToken(CodeAttrs Code) : Token;
 
 /// <summary>Closes one of the open pairs (chosen by <paramref name="Pick"/>); ignored if none is open.</summary>
-internal sealed record CloseToken(CodeAttrs Code, int Pick, bool MatchesOpening) : Token;
+public sealed record CloseToken(CodeAttrs Code, int Pick, bool MatchesOpening) : Token;
 
-internal sealed record IsolatedToken(CodeAttrs Code, bool IsOpening) : Token;
+public sealed record IsolatedToken(CodeAttrs Code, bool IsOpening) : Token;
 
-internal sealed record MarkerOpenToken(MarkerAttrs Marker) : Token;
+public sealed record MarkerOpenToken(MarkerAttrs Marker) : Token;
 
-internal sealed record MarkerCloseToken(int Pick) : Token;
+public sealed record MarkerCloseToken(int Pick) : Token;
 
-internal sealed record SegmentPlan(
+public sealed record SegmentPlan(
     bool Ignorable, bool HasId, SegmentState State, string? SubState, bool? CanResegment,
     Token[] Source, Token[]? Target, int? OrderKey);
 
-internal sealed record ItemAttrs(
+public sealed record ItemAttrs(
     string? Name, string? Type, bool? CanResegment, bool? Translate, string? SourceDir, string? TargetDir,
     ExtensionAttrPlan[] Attributes);
 
-internal abstract record ItemPlan(ItemAttrs Attributes, NotePlan[] Notes, XElement[] Extensions);
+public abstract record ItemPlan(ItemAttrs Attributes, NotePlan[] Notes, XElement[] Extensions);
 
-internal sealed record UnitPlan(ItemAttrs Attributes, NotePlan[] Notes, XElement[] Extensions, SegmentPlan[] Segments, string[] Data)
+public sealed record UnitPlan(ItemAttrs Attributes, NotePlan[] Notes, XElement[] Extensions, SegmentPlan[] Segments, string[] Data)
     : ItemPlan(Attributes, Notes, Extensions);
 
-internal sealed record GroupPlan(ItemAttrs Attributes, NotePlan[] Notes, XElement[] Extensions, ItemPlan[] Items)
+public sealed record GroupPlan(ItemAttrs Attributes, NotePlan[] Notes, XElement[] Extensions, ItemPlan[] Items)
     : ItemPlan(Attributes, Notes, Extensions);
 
-internal sealed record FilePlan(
+public sealed record FilePlan(
     string? Original, bool? CanResegment, bool? Translate, string? SourceDir, string? TargetDir, XElement? Skeleton,
     NotePlan[] Notes, XElement[] Extensions, ExtensionAttrPlan[] Attributes, ItemPlan[] Items);
 
-internal sealed record DocumentPlan(string SourceLanguage, string? TargetLanguage, ExtensionAttrPlan[] Attributes, FilePlan[] Files);
+public sealed record DocumentPlan(string SourceLanguage, string? TargetLanguage, ExtensionAttrPlan[] Attributes, FilePlan[] Files);

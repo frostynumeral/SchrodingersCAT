@@ -11,9 +11,7 @@ namespace SchrodingersCat.Core.Checks;
 /// segments that aren't ignorable are compared with the source: an untranslated segment isn't expected to contain
 /// anything yet, and ignorables are left as extracted. Pairing is checked over the unit's whole target (ignorables
 /// included), as the writer does.</para>
-/// <para>Codes in a non-reorderable sequence (a <c>canReorder="firstNo"</c> code followed by <c>"no"</c> codes, at
-/// least two codes) are treated as non-deletable and non-copyable even if the file doesn't say so: XLIFF requires
-/// it, and the reader doesn't enforce it.</para>
+/// <para>Which codes may be deleted or copied comes from <see cref="InlineCodeHints"/>, which the editor uses too.</para>
 /// </remarks>
 public static class InlineCodeChecker
 {
@@ -22,7 +20,7 @@ public static class InlineCodeChecker
         ArgumentNullException.ThrowIfNull(unit);
 
         var issues = new List<InlineCodeIssue>();
-        var source = SourceCodes(unit);
+        var source = new InlineCodeHints(unit);
         var compared = unit.Segments.Where(s => !s.IsIgnorable && s.Target is not null).ToList();
         var expected = Halves(compared, s => s.Source);
         var actual = Halves(compared, s => s.Target!);
@@ -39,51 +37,6 @@ public static class InlineCodeChecker
 
     private sealed record Half(InlineCode Code, Segment Segment, int Position);
 
-    private sealed class SourceCodeTable
-    {
-        public Dictionary<(string Id, InlineCodeKind Kind), InlineCode> ByIdAndKind { get; } = [];
-
-        /// <summary>Ids of codes in a non-reorderable sequence, with the sequence they belong to (by its first code's id).</summary>
-        public Dictionary<string, string> Sequence { get; } = new(StringComparer.Ordinal);
-
-        public bool ContainsId(string id) =>
-            ByIdAndKind.ContainsKey((id, InlineCodeKind.Standalone))
-            || ByIdAndKind.ContainsKey((id, InlineCodeKind.Opening))
-            || ByIdAndKind.ContainsKey((id, InlineCodeKind.Closing));
-
-        public bool IsProtected(InlineCode code) => !code.CanDelete || Sequence.ContainsKey(code.Id);
-
-        public bool IsCopyable(InlineCode code) => code.CanCopy && !Sequence.ContainsKey(code.Id);
-    }
-
-    private static SourceCodeTable SourceCodes(TranslationUnit unit)
-    {
-        var table = new SourceCodeTable();
-        var codes = unit.Segments.SelectMany(s => s.Source).OfType<InlineCode>().ToList();
-        foreach (var code in codes)
-            table.ByIdAndKind.TryAdd((code.Id, code.Kind), code);
-
-        // A sequence is a firstNo code and the "no" codes right after it. One code alone (both halves of a <pc>
-        // included) is, per the spec, the same as canReorder="yes".
-        for (var i = 0; i < codes.Count; i++)
-        {
-            if (codes[i].CanReorder != CanReorder.FirstNo)
-                continue;
-
-            var members = new List<string> { codes[i].Id };
-            for (var j = i + 1; j < codes.Count && codes[j].CanReorder == CanReorder.No; j++)
-                members.Add(codes[j].Id);
-
-            var distinct = members.Distinct(StringComparer.Ordinal).ToList();
-            if (distinct.Count < 2)
-                continue;
-            foreach (var id in distinct)
-                table.Sequence.TryAdd(id, codes[i].Id);
-        }
-
-        return table;
-    }
-
     private static List<Half> Halves(List<Segment> segments, Func<Segment, InlineContent> content)
     {
         var halves = new List<Half>();
@@ -99,7 +52,7 @@ public static class InlineCodeChecker
     // ---------------------------------------------------------------- checks
 
     // Reported once per code. A code with some of its halves present is a pairing problem, not a missing code.
-    private static void CheckMissing(List<Half> expected, List<Half> actual, SourceCodeTable source, List<InlineCodeIssue> issues)
+    private static void CheckMissing(List<Half> expected, List<Half> actual, InlineCodeHints source, List<InlineCodeIssue> issues)
     {
         var present = actual.Select(h => (h.Code.Id, h.Code.Kind)).ToHashSet();
         foreach (var code in expected.GroupBy(h => h.Code.Id, StringComparer.Ordinal))
@@ -109,7 +62,7 @@ public static class InlineCodeChecker
 
             var first = code.First();
             var label = Describe(first.Code);
-            issues.Add(source.IsProtected(first.Code)
+            issues.Add(source.IsProtected(code.Key)
                 ? new InlineCodeIssue(InlineCodeIssueKind.MissingProtectedCode, IssueSeverity.Error, first.Segment, code.Key,
                     $"{label} is missing from the target, and it may not be deleted.")
                 : new InlineCodeIssue(InlineCodeIssueKind.MissingCode, IssueSeverity.Warning, first.Segment, code.Key,
@@ -117,16 +70,16 @@ public static class InlineCodeChecker
         }
     }
 
-    private static void CheckUnknownAndCopies(List<Half> actual, SourceCodeTable source, List<InlineCodeIssue> issues)
+    private static void CheckUnknownAndCopies(List<Half> actual, InlineCodeHints source, List<InlineCodeIssue> issues)
     {
         var reported = new HashSet<string>(StringComparer.Ordinal);
         foreach (var half in actual)
         {
             var code = half.Code;
-            if (source.ByIdAndKind.ContainsKey((code.Id, code.Kind)) || !reported.Add(code.Id))
+            if (source.SourceCode(code.Id, code.Kind) is not null || !reported.Add(code.Id))
                 continue;
 
-            if (source.ContainsId(code.Id))
+            if (source.IsInSource(code.Id))
             {
                 issues.Add(new InlineCodeIssue(InlineCodeIssueKind.UnknownCode, IssueSeverity.Error, half.Segment, code.Id,
                     $"{Describe(code)} doesn't match the source, where code '{code.Id}' is a different kind of code."));
@@ -135,9 +88,9 @@ public static class InlineCodeChecker
 
             // A copy keeps the base code's original data (same dataRef), or names it with copyOf when it has none.
             var baseCode = code.CopyOf is { } copyOf
-                ? source.ByIdAndKind.GetValueOrDefault((copyOf, code.Kind))
+                ? source.SourceCode(copyOf, code.Kind)
                 : code.DataRef is { } dataRef
-                    ? source.ByIdAndKind.Values.FirstOrDefault(c => c.Kind == code.Kind && c.DataRef == dataRef)
+                    ? source.SourceCodes.FirstOrDefault(c => c.Kind == code.Kind && c.DataRef == dataRef)
                     : null;
 
             if (baseCode is null)
@@ -145,7 +98,7 @@ public static class InlineCodeChecker
                 issues.Add(new InlineCodeIssue(InlineCodeIssueKind.UnknownCode, IssueSeverity.Error, half.Segment, code.Id,
                     $"{Describe(code)} is not in the source and is not a copy of a source code."));
             }
-            else if (!source.IsCopyable(baseCode))
+            else if (!source.IsCopyable(baseCode.Id))
             {
                 issues.Add(new InlineCodeIssue(InlineCodeIssueKind.CopyNotAllowed, IssueSeverity.Error, half.Segment, code.Id,
                     $"{Describe(code)} is a copy of code '{baseCode.Id}', which may not be copied."));
@@ -184,7 +137,7 @@ public static class InlineCodeChecker
         }
     }
 
-    private static void CheckOrder(List<Half> expected, List<Half> actual, SourceCodeTable source, List<InlineCodeIssue> issues)
+    private static void CheckOrder(List<Half> expected, List<Half> actual, InlineCodeHints source, List<InlineCodeIssue> issues)
     {
         // Only codes that are in both, compared by their position in the source.
         var sourcePosition = new Dictionary<(string, InlineCodeKind), Half>();
@@ -196,8 +149,8 @@ public static class InlineCodeChecker
             .ToList();
 
         // Non-reorderable sequences: their codes must keep their relative order.
-        foreach (var sequence in matched.Where(m => source.Sequence.ContainsKey(m.Target.Code.Id))
-                     .GroupBy(m => source.Sequence[m.Target.Code.Id], StringComparer.Ordinal))
+        foreach (var sequence in matched.Where(m => source.SequenceOf(m.Target.Code.Id) is not null)
+                     .GroupBy(m => source.SequenceOf(m.Target.Code.Id)!, StringComparer.Ordinal))
         {
             var positions = sequence.Select(m => m.Source.Position).ToList();
             if (!IsAscending(positions))

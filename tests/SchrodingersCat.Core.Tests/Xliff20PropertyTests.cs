@@ -2,6 +2,7 @@ using CsCheck;
 using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Tests.Properties;
 using SchrodingersCat.Core.Xliff;
+using SchrodingersCat.TestSupport;
 
 namespace SchrodingersCat.Core.Tests;
 

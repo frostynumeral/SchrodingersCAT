@@ -214,7 +214,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - Unit tests for every issue type, including pairs spanning segments, copies with `dataRef` versus `copyOf`, and non-reorderable sequences.
    - A property test: a target that equals the source (or is a valid reordering) has no errors.
    - No UI changes.
-2. **App: `TargetEditModel`.** Tokens, caret and selection, every operation from section 2 with the XLIFF rules, and undo/redo.
+2. **App: `TargetEditModel`.** *(Done 2026-10-02.)* Tokens, caret and selection, every operation from section 2 with the XLIFF rules, and undo/redo.
    - Unit tests per operation and per refusal.
    - A property test that `InlineContent` → model → `InlineContent` is exact.
    - Not yet wired to the UI.

@@ -1,6 +1,7 @@
 using CsCheck;
 using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Tests.Properties;
+using SchrodingersCat.TestSupport;
 
 namespace SchrodingersCat.Core.Tests;
 
