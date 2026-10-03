@@ -597,121 +597,121 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
         switch (name)
         {
             case "ph":
-            {
-                var id = side.DefineId(a.Required("id"));
-                elements.Add(ReadPairLevel(new InlineCode(id, InlineCodeKind.Standalone), a) with
                 {
-                    DataRef = side.DataRef(a.Optional("dataRef")),
-                    Disp = a.Optional("disp"),
-                    Equiv = a.Optional("equiv"),
-                    SubFlows = a.Optional("subFlows"),
-                    ExtensionAttributes = a.ExtensionAttributes(),
-                });
-                break;
-            }
+                    var id = side.DefineId(a.Required("id"));
+                    elements.Add(ReadPairLevel(new InlineCode(id, InlineCodeKind.Standalone), a) with
+                    {
+                        DataRef = side.DataRef(a.Optional("dataRef")),
+                        Disp = a.Optional("disp"),
+                        Equiv = a.Optional("equiv"),
+                        SubFlows = a.Optional("subFlows"),
+                        ExtensionAttributes = a.ExtensionAttributes(),
+                    });
+                    break;
+                }
 
             case "pc":
-            {
-                var id = side.DefineId(a.Required("id"));
-                var shared = ReadPairLevel(new InlineCode(id, InlineCodeKind.Opening), a) with
                 {
-                    CanOverlap = a.YesNo("canOverlap") ?? false,
-                };
-                var opening = shared with
-                {
-                    Dir = a.Optional("dir"),
-                    DataRef = side.DataRef(a.Optional("dataRefStart")),
-                    Disp = a.Optional("dispStart"),
-                    Equiv = a.Optional("equivStart"),
-                    SubFlows = a.Optional("subFlowsStart"),
-                };
-                var closing = new InlineCode(id, InlineCodeKind.Closing)
-                {
-                    Type = shared.Type,
-                    SubType = shared.SubType,
-                    CopyOf = shared.CopyOf,
-                    CanCopy = shared.CanCopy,
-                    CanDelete = shared.CanDelete,
-                    CanOverlap = shared.CanOverlap,
-                    // As on <ec>: a pair that starts with firstNo ends with no.
-                    CanReorder = shared.CanReorder == CanReorder.FirstNo ? CanReorder.No : shared.CanReorder,
-                    DataRef = side.DataRef(a.Optional("dataRefEnd")),
-                    Disp = a.Optional("dispEnd"),
-                    Equiv = a.Optional("equivEnd"),
-                    SubFlows = a.Optional("subFlowsEnd"),
-                };
+                    var id = side.DefineId(a.Required("id"));
+                    var shared = ReadPairLevel(new InlineCode(id, InlineCodeKind.Opening), a) with
+                    {
+                        CanOverlap = a.YesNo("canOverlap") ?? false,
+                    };
+                    var opening = shared with
+                    {
+                        Dir = a.Optional("dir"),
+                        DataRef = side.DataRef(a.Optional("dataRefStart")),
+                        Disp = a.Optional("dispStart"),
+                        Equiv = a.Optional("equivStart"),
+                        SubFlows = a.Optional("subFlowsStart"),
+                    };
+                    var closing = new InlineCode(id, InlineCodeKind.Closing)
+                    {
+                        Type = shared.Type,
+                        SubType = shared.SubType,
+                        CopyOf = shared.CopyOf,
+                        CanCopy = shared.CanCopy,
+                        CanDelete = shared.CanDelete,
+                        CanOverlap = shared.CanOverlap,
+                        // As on <ec>: a pair that starts with firstNo ends with no.
+                        CanReorder = shared.CanReorder == CanReorder.FirstNo ? CanReorder.No : shared.CanReorder,
+                        DataRef = side.DataRef(a.Optional("dataRefEnd")),
+                        Disp = a.Optional("dispEnd"),
+                        Equiv = a.Optional("equivEnd"),
+                        SubFlows = a.Optional("subFlowsEnd"),
+                    };
 
-                elements.Add(opening with { ExtensionAttributes = a.ExtensionAttributes() });
-                ReadInline(element, side, elements);
-                elements.Add(closing);
-                break;
-            }
+                    elements.Add(opening with { ExtensionAttributes = a.ExtensionAttributes() });
+                    ReadInline(element, side, elements);
+                    elements.Add(closing);
+                    break;
+                }
 
             case "sc":
-            {
-                var id = side.DefineId(a.Required("id"));
-                var isolated = a.YesNo("isolated") ?? false;
-                if (!isolated)
-                    side.OpenCode(id);
-
-                elements.Add(ReadPairLevel(new InlineCode(id, InlineCodeKind.Opening), a) with
                 {
-                    IsIsolated = isolated,
-                    CanOverlap = a.YesNo("canOverlap") ?? true,
-                    Dir = a.Optional("dir"),
-                    DataRef = side.DataRef(a.Optional("dataRef")),
-                    Disp = a.Optional("disp"),
-                    Equiv = a.Optional("equiv"),
-                    SubFlows = a.Optional("subFlows"),
-                    ExtensionAttributes = a.ExtensionAttributes(),
-                });
-                break;
-            }
+                    var id = side.DefineId(a.Required("id"));
+                    var isolated = a.YesNo("isolated") ?? false;
+                    if (!isolated)
+                        side.OpenCode(id);
+
+                    elements.Add(ReadPairLevel(new InlineCode(id, InlineCodeKind.Opening), a) with
+                    {
+                        IsIsolated = isolated,
+                        CanOverlap = a.YesNo("canOverlap") ?? true,
+                        Dir = a.Optional("dir"),
+                        DataRef = side.DataRef(a.Optional("dataRef")),
+                        Disp = a.Optional("disp"),
+                        Equiv = a.Optional("equiv"),
+                        SubFlows = a.Optional("subFlows"),
+                        ExtensionAttributes = a.ExtensionAttributes(),
+                    });
+                    break;
+                }
 
             case "ec":
-            {
-                // An isolated <ec> has its own id; otherwise startRef points to its <sc>, and dir is not allowed.
-                var isolated = a.YesNo("isolated") ?? false;
-                var id = isolated ? side.DefineId(a.Required("id")) : side.CloseCode(a.Required("startRef"));
-
-                elements.Add(ReadPairLevel(new InlineCode(id, InlineCodeKind.Closing), a) with
                 {
-                    IsIsolated = isolated,
-                    CanOverlap = a.YesNo("canOverlap") ?? true,
-                    Dir = isolated ? a.Optional("dir") : null,
-                    DataRef = side.DataRef(a.Optional("dataRef")),
-                    Disp = a.Optional("disp"),
-                    Equiv = a.Optional("equiv"),
-                    SubFlows = a.Optional("subFlows"),
-                    ExtensionAttributes = a.ExtensionAttributes(),
-                });
-                break;
-            }
+                    // An isolated <ec> has its own id; otherwise startRef points to its <sc>, and dir is not allowed.
+                    var isolated = a.YesNo("isolated") ?? false;
+                    var id = isolated ? side.DefineId(a.Required("id")) : side.CloseCode(a.Required("startRef"));
+
+                    elements.Add(ReadPairLevel(new InlineCode(id, InlineCodeKind.Closing), a) with
+                    {
+                        IsIsolated = isolated,
+                        CanOverlap = a.YesNo("canOverlap") ?? true,
+                        Dir = isolated ? a.Optional("dir") : null,
+                        DataRef = side.DataRef(a.Optional("dataRef")),
+                        Disp = a.Optional("disp"),
+                        Equiv = a.Optional("equiv"),
+                        SubFlows = a.Optional("subFlows"),
+                        ExtensionAttributes = a.ExtensionAttributes(),
+                    });
+                    break;
+                }
 
             case "mrk":
-            {
-                var id = side.DefineId(a.Required("id"));
-                elements.Add(ReadMarker(new InlineMarker(id, InlineMarkerKind.Opening), a));
-                ReadInline(element, side, elements);
-                elements.Add(new InlineMarker(id, InlineMarkerKind.Closing));
-                break;
-            }
+                {
+                    var id = side.DefineId(a.Required("id"));
+                    elements.Add(ReadMarker(new InlineMarker(id, InlineMarkerKind.Opening), a));
+                    ReadInline(element, side, elements);
+                    elements.Add(new InlineMarker(id, InlineMarkerKind.Closing));
+                    break;
+                }
 
             case "sm":
-            {
-                var id = side.DefineId(a.Required("id"));
-                side.OpenMarker(id);
-                elements.Add(ReadMarker(new InlineMarker(id, InlineMarkerKind.Opening), a));
-                break;
-            }
+                {
+                    var id = side.DefineId(a.Required("id"));
+                    side.OpenMarker(id);
+                    elements.Add(ReadMarker(new InlineMarker(id, InlineMarkerKind.Opening), a));
+                    break;
+                }
 
             case "em":
-            {
-                var id = side.CloseMarker(a.Required("startRef"));
-                a.VerifyNoneLeft();
-                elements.Add(new InlineMarker(id, InlineMarkerKind.Closing));
-                break;
-            }
+                {
+                    var id = side.CloseMarker(a.Required("startRef"));
+                    a.VerifyNoneLeft();
+                    elements.Add(new InlineMarker(id, InlineMarkerKind.Closing));
+                    break;
+                }
 
             default: // cp
                 elements.Add(new InlineText(ReadCodePoint(element, side.UnitId)));

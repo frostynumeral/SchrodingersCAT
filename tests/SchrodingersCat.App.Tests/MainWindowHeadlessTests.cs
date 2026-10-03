@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
 using Avalonia.LogicalTree;
@@ -31,24 +32,77 @@ public sealed class MainWindowHeadlessTests : IDisposable
         window.FindControl<Button>("OpenButton")!.Command!.Execute(null);
         await WaitFor(() => vm.Segments.Count == 3);
 
-        var targets = TargetBoxes(window);
-        Assert.Equal(3, targets.Count);
-        Assert.Equal("Viszlát.", targets[1].Text);
-        Assert.False(targets[2].IsVisible); // inline codes: shown as chips instead
+        // Nothing is selected yet: every target is shown read-only.
+        Assert.Empty(VisibleEditors(window));
+        Assert.Equal(["", "Viszlát.", ""], TargetViews(window).Select(PlainText));
 
-        // Type into the first target like a user would, then save with Ctrl+S.
-        targets[0].Focus();
+        // Click the first target like a user would: the row becomes active and its editor takes the keyboard.
+        Click(window, TargetFrames(window)[0]);
+        Assert.Same(vm.Segments[0], vm.SelectedSegment);
+        var editor = Assert.Single(VisibleEditors(window));
+        Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
+
         window.KeyTextInput("Helló világ.");
         Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Helló világ.", editor.Editor.Document.Text);
         Assert.True(vm.IsDirty);
+        Assert.Equal("Translated", vm.Segments[0].State);
         Assert.Equal("sample.xlf • — SchrödingersCAT", window.Title);
 
+        // Ctrl+S reaches the window from inside the editor.
         window.KeyPressQwerty(PhysicalKey.S, RawInputModifiers.Control);
         await WaitFor(() => !vm.IsDirty);
 
         var saved = await new Xliff20Serializer().ReadFileAsync(path, TestContext.Current.CancellationToken);
         Assert.Equal("Helló világ.", saved.Units.First().Segments[0].Target!.ToPlainText());
         Assert.False(window.FindControl<Border>("ErrorBanner")!.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public async Task SelectingAnotherSegment_MovesTheEditorAndKeepsTheEdit()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        Click(window, TargetFrames(window)[0]);
+        window.KeyTextInput("Szia");
+        Dispatcher.UIThread.RunJobs();
+
+        Click(window, TargetViews(window)[1], onText: true); // on the text itself, not the frame around it
+        var editor = Assert.Single(VisibleEditors(window));
+        Assert.Same(vm.Segments[1].EditModel, editor.Model);
+        Assert.Equal("Szia", PlainText(TargetViews(window)[0]));
+
+        // The caret starts at the end, so typing adds to the target.
+        window.KeyTextInput(" Szia.");
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Viszlát. Szia.", vm.Segments[1].TargetText);
+
+        // Each segment keeps its own undo history.
+        Click(window, TargetFrames(window)[0]);
+        window.KeyPressQwerty(PhysicalKey.Z, RawInputModifiers.Control);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("", vm.Segments[0].TargetText);
+        Assert.Equal("Viszlát. Szia.", vm.Segments[1].TargetText);
+    }
+
+    [AvaloniaFact]
+    public async Task TheStatusLine_ShowsTheActiveSegmentsEditMessage()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        var status = window.FindControl<TextBlock>("StatusText")!;
+        Assert.False(status.IsVisible);
+
+        Click(window, TargetFrames(window)[0]);
+        vm.SelectedSegment!.EditStatus = "Code 1 may not be deleted.";
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(status.IsVisible);
+        Assert.Equal("Code 1 may not be deleted.", status.Text);
+
+        Click(window, TargetFrames(window)[1]);
+        Assert.False(status.IsVisible);
     }
 
     [AvaloniaFact]
@@ -61,7 +115,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
 
         Assert.True(window.FindControl<Border>("ErrorBanner")!.IsVisible);
         Assert.StartsWith("Could not open broken.xlf:", window.FindControl<SelectableTextBlock>("ErrorText")!.Text);
-        Assert.Empty(TargetBoxes(window));
+        Assert.Empty(TargetFrames(window));
     }
 
     [AvaloniaTheory]
@@ -213,8 +267,10 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal("Start of code 2\n<b class=\"warn\">", ToolTip.GetTip(opening));
         Assert.Equal("End of code 2\n</b>", ToolTip.GetTip(closing));
 
-        // The target can't be edited as text yet: no text box, but the same chips, read-only.
-        Assert.False(TargetBoxes(window).Single().IsVisible);
+        // The target can't be edited yet (step 6): even when selected, it shows the same chips, read-only.
+        Click(window, TargetFrames(window)[0]);
+        Assert.Same(vm.Segments[0], vm.SelectedSegment);
+        Assert.Empty(VisibleEditors(window));
         var target = ContentBlock(window, "target");
         Assert.True(target.IsEffectivelyVisible);
         Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], Chips(target).Select(Label));
@@ -260,10 +316,32 @@ public sealed class MainWindowHeadlessTests : IDisposable
         return (window, vm);
     }
 
-    private static List<TextBox> TargetBoxes(Window window)
+    private static List<Border> TargetFrames(Window window)
     {
         Dispatcher.UIThread.RunJobs();
-        return window.GetVisualDescendants().OfType<TextBox>().Where(t => t.Classes.Contains("target")).ToList();
+        return window.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("targetFrame")).ToList();
+    }
+
+    private static List<InlineContentBlock> TargetViews(Window window)
+    {
+        Dispatcher.UIThread.RunJobs();
+        return window.GetVisualDescendants().OfType<InlineContentBlock>().Where(b => b.Classes.Contains("target")).ToList();
+    }
+
+    private static List<TargetEditor> VisibleEditors(Window window)
+    {
+        Dispatcher.UIThread.RunJobs();
+        return window.GetVisualDescendants().OfType<TargetEditor>().Where(e => e.IsEffectivelyVisible).ToList();
+    }
+
+    private static string PlainText(InlineContentBlock block) => string.Concat((block.Inlines ?? []).Select(InlineText));
+
+    private static void Click(Window window, Control control, bool onText = false)
+    {
+        var point = control.TranslatePoint(onText ? new Point(8, control.Bounds.Height / 2) : new Point(4, 4), window)!.Value;
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
     }
 
     // Commands run async file I/O; keep the dispatcher going until the effect is visible.

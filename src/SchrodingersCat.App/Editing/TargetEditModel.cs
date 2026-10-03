@@ -48,6 +48,12 @@ public sealed class TargetEditModel
         _caret = _anchor = _items.Count;
     }
 
+    /// <summary>The unit the segment belongs to.</summary>
+    public TranslationUnit Unit => _unit;
+
+    /// <summary>What the unit's source says about its codes; the rules every edit follows.</summary>
+    public InlineCodeHints Hints => _hints;
+
     /// <summary>Raised after every applied edit, undo and redo.</summary>
     public event EventHandler? Changed;
 

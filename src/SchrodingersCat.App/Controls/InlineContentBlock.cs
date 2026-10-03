@@ -2,18 +2,14 @@ using Avalonia;
 using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
-using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
 using SchrodingersCat.App.ViewModels;
-using SchrodingersCat.Core.Models;
 
 namespace SchrodingersCat.App.Controls;
 
 /// <summary>
-/// Read-only segment content: text, with codes as chips (design section 1). Chips are <c>Border.chip</c> elements
-/// with the classes <c>opening</c>, <c>closing</c> or <c>standalone</c>, and <c>protected</c> for codes that can't be
-/// deleted; their look comes from styles, so states can be added without touching this control.
+/// Read-only segment content: text, with codes as chips (design section 1; see <see cref="Chips"/>).
 /// </summary>
 public sealed class InlineContentBlock : SelectableTextBlock
 {
@@ -49,7 +45,7 @@ public sealed class InlineContentBlock : SelectableTextBlock
             inlines.Add(run switch
             {
                 TextRun text => TextInline(text),
-                ChipRun chip => new InlineUIContainer(Chip(chip)) { BaselineAlignment = BaselineAlignment.Center },
+                ChipRun chip => new InlineUIContainer(Chips.Create(chip)) { BaselineAlignment = BaselineAlignment.Center },
                 _ => throw new InvalidOperationException($"Unknown run {run.GetType().Name}."),
             });
         }
@@ -68,30 +64,4 @@ public sealed class InlineContentBlock : SelectableTextBlock
             run.Background = CommentBackground;
         return run;
     }
-
-    private static Border Chip(ChipRun chip)
-    {
-        var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-        label.Children.Add(new TextBlock { Classes = { "label" }, Text = chip.Text });
-        if (chip.IsProtected)
-            label.Children.Add(new TextBlock { Classes = { "lock" }, Text = "🔒" });
-
-        var border = new Border
-        {
-            Classes = { "chip", KindClass(chip.Kind) },
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = label,
-        };
-        if (chip.IsProtected)
-            border.Classes.Add("protected");
-        ToolTip.SetTip(border, chip.ToolTip);
-        return border;
-    }
-
-    private static string KindClass(InlineCodeKind kind) => kind switch
-    {
-        InlineCodeKind.Opening => "opening",
-        InlineCodeKind.Closing => "closing",
-        _ => "standalone",
-    };
 }

@@ -66,7 +66,7 @@ public static class ContentRuns
                         runs.Add(new TextRun(text.Text, style));
                     break;
                 case InlineCode code:
-                    runs.Add(new ChipRun(code.Id, code.Kind, Label(code), ToolTip(code, unit, hints), hints.IsProtected(code.Id)));
+                    runs.Add(Chip(code, unit, hints));
                     break;
                 case InlineMarker marker:
                     Track(open, marker);
@@ -75,6 +75,16 @@ public static class ContentRuns
         }
 
         return runs;
+    }
+
+    /// <summary>One code half as a chip.</summary>
+    public static ChipRun Chip(InlineCode code, TranslationUnit unit, InlineCodeHints hints)
+    {
+        ArgumentNullException.ThrowIfNull(code);
+        ArgumentNullException.ThrowIfNull(unit);
+        ArgumentNullException.ThrowIfNull(hints);
+
+        return new ChipRun(code.Id, code.Kind, Label(code), ToolTip(code, unit, hints), hints.IsProtected(code.Id));
     }
 
     /// <summary>The annotations still open after <paramref name="elements"/>, e.g. the preceding segments of a unit.</summary>
