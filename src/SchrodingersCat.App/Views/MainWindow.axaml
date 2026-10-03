@@ -1,15 +1,42 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:SchrodingersCat.App.ViewModels"
+        xmlns:controls="using:SchrodingersCat.App.Controls"
         x:Class="SchrodingersCat.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="{Binding Title}"
         Width="1100" Height="700">
 
     <Window.Styles>
+        <!-- Code chips (design section 1). The shape shows pairing: an opening half points right, a closing half left. -->
+        <Style Selector="Border.chip">
+            <Setter Property="Padding" Value="5,0" />
+            <Setter Property="Margin" Value="3,0" />
+            <Setter Property="Background" Value="#335B7FC7" />
+            <Setter Property="BorderBrush" Value="#5B7FC7" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style Selector="Border.chip.opening">
+            <Setter Property="CornerRadius" Value="2,8,8,2" />
+        </Style>
+        <Style Selector="Border.chip.closing">
+            <Setter Property="CornerRadius" Value="8,2,2,8" />
+        </Style>
+        <Style Selector="Border.chip.protected">
+            <Setter Property="BorderBrush" Value="DarkOrange" />
+        </Style>
+        <Style Selector="Border.chip TextBlock">
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+
         <!-- Segments with inline codes can't be edited yet; make that visible, not just a silent refusal. -->
-        <Style Selector="TextBox.target[IsReadOnly=True]">
-            <Setter Property="Opacity" Value="0.5" />
+        <Style Selector="Border.readOnlyTarget">
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="#40808080" />
+            <Setter Property="Opacity" Value="0.7" />
         </Style>
     </Window.Styles>
 
@@ -52,9 +79,12 @@
                     <DataTemplate x:DataType="vm:SegmentViewModel">
                         <Grid ColumnDefinitions="110,*,*,90" ColumnSpacing="8">
                             <TextBlock Grid.Column="0" Text="{Binding Label}" Opacity="0.6" TextWrapping="Wrap" />
-                            <SelectableTextBlock Grid.Column="1" Text="{Binding SourceText}" TextWrapping="Wrap" />
+                            <controls:InlineContentBlock Grid.Column="1" Classes="source" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
                             <TextBox Grid.Column="2" Classes="target" Text="{Binding TargetText}" TextWrapping="Wrap" AcceptsReturn="True"
-                                     IsReadOnly="{Binding !IsEditable}" ToolTip.Tip="{Binding ReadOnlyReason}" />
+                                     IsVisible="{Binding IsEditable}" />
+                            <Border Grid.Column="2" Classes="readOnlyTarget" IsVisible="{Binding !IsEditable}" ToolTip.Tip="{Binding ReadOnlyReason}">
+                                <controls:InlineContentBlock Classes="target" Runs="{Binding TargetRuns}" TextWrapping="Wrap" />
+                            </Border>
                             <TextBlock Grid.Column="3" Text="{Binding State}" Opacity="0.6" />
                         </Grid>
                     </DataTemplate>
