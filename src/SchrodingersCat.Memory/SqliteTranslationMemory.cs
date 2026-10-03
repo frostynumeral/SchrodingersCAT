@@ -215,6 +215,16 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
         return Ranking.Rank(query, previousSource, nextSource, candidates, threshold, maxMatches);
     }
 
+    /// <summary>Every entry, oldest stored first (for export).</summary>
+    public IEnumerable<TmEntry> Entries()
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = "SELECT id, source, target, previous_source, next_source, document, changed, changed_by FROM entries ORDER BY id";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            yield return ReadEntry(reader);
+    }
+
     public void Dispose() => _connection.Dispose();
 
     // ---------------------------------------------------------------- storing

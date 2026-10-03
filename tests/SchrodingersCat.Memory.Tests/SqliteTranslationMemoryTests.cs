@@ -88,6 +88,16 @@ public sealed class SqliteTranslationMemoryTests : IDisposable
         });
 
     [Fact]
+    public void Entries_ListsEverythingInTheOrderStored()
+    {
+        using var tm = SqliteTranslationMemory.Create(PathOf("a.sctm"), "en", "hu");
+        var entries = new[] { Entry("One", "Egy", Monday), Entry("Two", "Kettő", Monday), Entry("Three", "Három", Monday) };
+        tm.AddRange(entries);
+
+        Assert.Equal(entries, tm.Entries());
+    }
+
+    [Fact]
     public void Create_RefusesAnExistingFile()
     {
         var path = PathOf("a.sctm");

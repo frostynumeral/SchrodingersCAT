@@ -2,9 +2,9 @@ namespace SchrodingersCat.Core.Xliff;
 
 /// <summary>
 /// A read-only view of a stream that refuses to read past a byte limit, so an oversized or endless input fails
-/// with <see cref="XliffFormatException"/> instead of exhausting memory.
+/// with <see cref="XliffFormatException"/> (or the exception <c>error</c> makes) instead of exhausting memory.
 /// </summary>
-internal sealed class LimitedReadStream(Stream inner, long maxBytes) : Stream
+internal sealed class LimitedReadStream(Stream inner, long maxBytes, Func<string, Exception>? error = null) : Stream
 {
     private long _read;
 
@@ -51,7 +51,8 @@ internal sealed class LimitedReadStream(Stream inner, long maxBytes) : Stream
     {
         _read += read;
         if (_read > maxBytes)
-            throw new XliffFormatException($"The file is larger than the {maxBytes:N0}-byte limit (Xliff20Serializer.MaxInputBytes).");
+            throw error?.Invoke($"The file is larger than the {maxBytes:N0}-byte limit.")
+                ?? new XliffFormatException($"The file is larger than the {maxBytes:N0}-byte limit (Xliff20Serializer.MaxInputBytes).");
         return read;
     }
 }

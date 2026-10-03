@@ -565,6 +565,20 @@ public sealed partial class Xliff20Serializer(ILogger<Xliff20Serializer>? logger
 
     private static string Capitalize(string text) => char.ToUpperInvariant(text[0]) + text[1..];
 
+    /// <summary>
+    /// Reads inline content that stands on its own, outside a unit's segments (a match's <c>&lt;source&gt;</c> or
+    /// <c>&lt;target&gt;</c> in the matches module), with the same rules as segment content: its pairs must close
+    /// within it, and its <c>dataRef</c>s must be in <paramref name="originalData"/>.
+    /// </summary>
+    /// <exception cref="XliffFormatException">The content breaks the rules.</exception>
+    internal static InlineContent ReadStandaloneContent(XElement element, IReadOnlyDictionary<string, string> originalData, string context)
+    {
+        var side = new InlineSide(element.Name.LocalName, context, originalData, new HashSet<string>(StringComparer.Ordinal));
+        var content = ReadContent(element, side);
+        side.VerifyPairsClosed();
+        return content;
+    }
+
     private static InlineContent ReadContent(XElement element, InlineSide side)
     {
         var elements = new List<InlineElement>();
