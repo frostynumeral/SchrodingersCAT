@@ -226,7 +226,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
 5. **Editor control** *(Done 2026-10-02.)* for the active segment's target, bound to `TargetEditModel`: typing, chips, `Backspace`/`Delete`, refusals shown as status messages, undo. Headless tests type around chips, try to delete a protected code, and undo.
    - The editor replaces the target `TextBox` for the selected segment; the other rows show read-only chips. Tagged segments stay read-only until step 6.
    - Plain-text paste and cut work already; F9, Ctrl+Insert and the chip-preserving clipboard come with step 7.
-6. **Integration.**
+6. **Integration.** *(Done 2026-10-03.)*
    - Remove the read-only rule for tagged segments.
    - Add code check badges and chip outlines.
    - Click a source chip to insert it.

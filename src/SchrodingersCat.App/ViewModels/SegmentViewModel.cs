@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using SchrodingersCat.App.Editing;
 using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Models;
@@ -11,52 +12,67 @@ namespace SchrodingersCat.App.ViewModels;
 /// </summary>
 public sealed partial class SegmentViewModel : ObservableObject
 {
+    private readonly UnitCheck _check;
     private readonly TranslationUnit _unit;
     private readonly Segment _segment;
     private readonly Action _changed;
-    private readonly InlineCodeHints _hints;
     private TargetEditModel? _editModel;
+    private IReadOnlyList<InlineCodeIssue> _issues = [];
 
-    public SegmentViewModel(TranslationUnit unit, Segment segment, Action changed)
+    /// <param name="check">The unit's code check, shared with the unit's other segments.</param>
+    public SegmentViewModel(UnitCheck check, Segment segment, Action changed)
     {
-        _unit = unit ?? throw new ArgumentNullException(nameof(unit));
+        _check = check ?? throw new ArgumentNullException(nameof(check));
         _segment = segment ?? throw new ArgumentNullException(nameof(segment));
         _changed = changed ?? throw new ArgumentNullException(nameof(changed));
+        _unit = check.Unit;
 
-        Label = segment.Id is null ? unit.Id : $"{unit.Id} / {segment.Id}";
+        Label = segment.Id is null ? _unit.Id : $"{_unit.Id} / {segment.Id}";
         SourceText = InlineFormatter.Format(segment.Source);
-        _hints = new InlineCodeHints(unit);
-        SourceRuns = ContentRuns.Build(segment.Source, unit, _hints, OpenMarkersBefore(s => s.Source));
-
-        // Editing content with inline codes as plain text would silently drop the codes.
-        IsEditable = !segment.Source.HasTags && segment.Target is not { HasTags: true };
+        UpdateIssues();
+        _check.Checked += OnUnitChecked;
     }
 
     public string Label { get; }
 
     public string SourceText { get; }
 
-    /// <summary>The source with codes as chips.</summary>
-    public IReadOnlyList<ContentRun> SourceRuns { get; }
+    /// <summary>The source with codes as chips; codes missing from the target are marked as problems.</summary>
+    public IReadOnlyList<ContentRun> SourceRuns =>
+        ContentRuns.MarkProblems(
+            ContentRuns.Build(_segment.Source, _unit, _check.Hints, OpenMarkersBefore(s => s.Source)),
+            ProblemCodes(IsMissing));
 
-    /// <summary>The target with codes as chips, for segments that can't be edited as text; empty when not translated.</summary>
+    /// <summary>The target with codes as chips, for the rows not being edited; empty when not translated.</summary>
     public IReadOnlyList<ContentRun> TargetRuns => _segment.Target is null
         ? []
-        : ContentRuns.Build(_segment.Target, _unit, _hints, OpenMarkersBefore(s => s.Target ?? InlineContent.Empty));
+        : ContentRuns.MarkProblems(
+            ContentRuns.Build(_segment.Target, _unit, _check.Hints, OpenMarkersBefore(s => s.Target ?? InlineContent.Empty)),
+            TargetProblemCodes);
 
-    public bool IsEditable { get; }
+    /// <summary>The ids of the target's codes that the code check reports a problem with, for the chips' outline.</summary>
+    public IReadOnlySet<string> TargetProblemCodes => ProblemCodes(i => !IsMissing(i));
+
+    /// <summary>The code check's issues that show up in this segment.</summary>
+    public IReadOnlyList<InlineCodeIssue> Issues => _issues;
+
+    public bool HasIssues => _issues.Count > 0;
+
+    public bool HasErrors => _issues.Any(i => i.Severity == IssueSeverity.Error);
+
+    public bool HasWarnings => _issues.Any(i => i.Severity == IssueSeverity.Warning);
+
+    /// <summary>The issues in words, one per line, for the badge's tooltip.</summary>
+    public string? IssueSummary => HasIssues ? string.Join("\n", _issues.Select(i => $"{i.Severity}: {i.Message}")) : null;
 
     /// <summary>The selected segment; its target is edited in the editor control.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsEditing))]
     [NotifyPropertyChangedFor(nameof(ActiveEditModel))]
+    [NotifyCanExecuteChangedFor(nameof(InsertCodeCommand))]
     public partial bool IsActive { get; set; }
 
-    /// <summary>The target is shown in the editor control (the segment is active and editable).</summary>
-    public bool IsEditing => IsActive && IsEditable;
-
-    /// <summary>The edit model while <see cref="IsEditing"/>, else null, so inactive rows don't create one.</summary>
-    public TargetEditModel? ActiveEditModel => IsEditing ? EditModel : null;
+    /// <summary>The edit model while <see cref="IsActive"/>, else null, so inactive rows don't create one.</summary>
+    public TargetEditModel? ActiveEditModel => IsActive ? EditModel : null;
 
     /// <summary>
     /// The target's edit model, created on first use and kept while the document is open, so each segment keeps
@@ -80,13 +96,11 @@ public sealed partial class SegmentViewModel : ObservableObject
     [ObservableProperty]
     public partial string? EditStatus { get; set; }
 
-    public string? ReadOnlyReason => IsEditable ? null : "This segment contains inline codes, which can't be edited yet.";
-
     public string State => _segment.State.ToString();
 
     /// <summary>
-    /// The target as text. Setting it replaces the target, through the edit model so it can be undone; an empty text
-    /// means "not translated" (no target).
+    /// The target as text. Setting it replaces the target, through the edit model so it can be undone, as selecting
+    /// everything and typing would: protected codes stay. An empty text means "not translated" (no target).
     /// </summary>
     public string TargetText
     {
@@ -94,7 +108,7 @@ public sealed partial class SegmentViewModel : ObservableObject
         set
         {
             ArgumentNullException.ThrowIfNull(value);
-            if (!IsEditable || value == TargetText)
+            if (value == TargetText)
                 return;
 
             var model = EditModel;
@@ -104,6 +118,14 @@ public sealed partial class SegmentViewModel : ObservableObject
             else
                 model.InsertText(value);
         }
+    }
+
+    /// <summary>Inserts a source code at the editor's caret: what clicking a source chip does (design section 1).</summary>
+    [RelayCommand(CanExecute = nameof(IsActive))]
+    private void InsertCode(ChipRun chip)
+    {
+        ArgumentNullException.ThrowIfNull(chip);
+        EditStatus = EditModel.InsertCode(chip.CodeId).Message;
     }
 
     // The first translation moves the segment from Initial to Translated; nothing moves it back (decision 8).
@@ -116,9 +138,32 @@ public sealed partial class SegmentViewModel : ObservableObject
         }
 
         OnPropertyChanged(nameof(TargetText));
-        OnPropertyChanged(nameof(TargetRuns));
+        _check.Run(); // updates this row's chips and those of the unit's other segments
         _changed();
     }
+
+    private void OnUnitChecked(object? sender, EventArgs e)
+    {
+        UpdateIssues();
+        OnPropertyChanged(nameof(Issues));
+        OnPropertyChanged(nameof(HasIssues));
+        OnPropertyChanged(nameof(HasErrors));
+        OnPropertyChanged(nameof(HasWarnings));
+        OnPropertyChanged(nameof(IssueSummary));
+        OnPropertyChanged(nameof(SourceRuns));
+        OnPropertyChanged(nameof(TargetRuns));
+        OnPropertyChanged(nameof(TargetProblemCodes));
+    }
+
+    private void UpdateIssues() => _issues = [.. _check.Issues.Where(i => ReferenceEquals(i.Segment, _segment))];
+
+    // Missing codes are outlined in the source, where they are; the other problems in the target.
+    private static bool IsMissing(InlineCodeIssue issue) =>
+        issue.Kind is InlineCodeIssueKind.MissingCode or InlineCodeIssueKind.MissingProtectedCode;
+
+    // Info (reordering, a missing annotation) is normal in translation and doesn't outline anything.
+    private HashSet<string> ProblemCodes(Func<InlineCodeIssue, bool> where) =>
+        _issues.Where(i => i.Severity >= IssueSeverity.Warning && where(i)).Select(i => i.CodeId).ToHashSet(StringComparer.Ordinal);
 
     // An annotation can span segments, so text at the start of this one may still be inside one.
     private IReadOnlyList<InlineMarker> OpenMarkersBefore(Func<Segment, InlineContent> side) =>

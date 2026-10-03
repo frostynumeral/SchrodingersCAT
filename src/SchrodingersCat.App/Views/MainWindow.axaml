@@ -26,6 +26,11 @@
         <Style Selector="Border.chip.protected">
             <Setter Property="BorderBrush" Value="DarkOrange" />
         </Style>
+        <!-- A code the code check reports a problem with (design section 3). -->
+        <Style Selector="Border.chip.problem">
+            <Setter Property="BorderBrush" Value="#E53935" />
+            <Setter Property="BorderThickness" Value="2" />
+        </Style>
         <Style Selector="Border.chip TextBlock">
             <Setter Property="FontSize" Value="11" />
         </Style>
@@ -53,9 +58,21 @@
             <Setter Property="Padding" Value="9,5" />
         </Style>
 
-        <!-- Segments with inline codes can't be edited yet; make that visible, not just a silent refusal. -->
-        <Style Selector="Border.targetFrame.readOnly">
-            <Setter Property="Opacity" Value="0.7" />
+        <!-- Code check badge: the number of issues in the segment, coloured by the worst one. -->
+        <Style Selector="Border.issueBadge">
+            <Setter Property="Padding" Value="6,0" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Background" Value="#335B7FC7" />
+        </Style>
+        <Style Selector="Border.issueBadge.warning">
+            <Setter Property="Background" Value="#55FFA000" />
+        </Style>
+        <Style Selector="Border.issueBadge.error">
+            <Setter Property="Background" Value="#E53935" />
+        </Style>
+        <Style Selector="Border.issueBadge.error TextBlock">
+            <Setter Property="Foreground" Value="White" />
         </Style>
     </Window.Styles>
 
@@ -100,17 +117,24 @@
                     <DataTemplate x:DataType="vm:SegmentViewModel">
                         <Grid ColumnDefinitions="110,*,*,90" ColumnSpacing="8">
                             <TextBlock Grid.Column="0" Text="{Binding Label}" Opacity="0.6" TextWrapping="Wrap" />
-                            <controls:InlineContentBlock Grid.Column="1" Classes="source" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
-                            <Border Grid.Column="2" Classes="targetFrame" Classes.editing="{Binding IsEditing}" Classes.readOnly="{Binding !IsEditable}"
-                                    ToolTip.Tip="{Binding ReadOnlyReason}">
+                            <!-- Clicking a source chip inserts the code at the target's caret (active row only). -->
+                            <controls:InlineContentBlock Grid.Column="1" Classes="source" Runs="{Binding SourceRuns}" TextWrapping="Wrap"
+                                                         ChipCommand="{Binding InsertCodeCommand}" />
+                            <Border Grid.Column="2" Classes="targetFrame" Classes.editing="{Binding IsActive}">
                                 <Panel>
                                     <controls:TargetEditor Classes="target" Model="{Binding ActiveEditModel}" Status="{Binding EditStatus}"
-                                                           IsVisible="{Binding IsEditing}" />
+                                                           ProblemCodes="{Binding TargetProblemCodes}" IsVisible="{Binding IsActive}" />
                                     <controls:InlineContentBlock Classes="target" Runs="{Binding TargetRuns}" TextWrapping="Wrap"
-                                                                 IsVisible="{Binding !IsEditing}" />
+                                                                 IsVisible="{Binding !IsActive}" />
                                 </Panel>
                             </Border>
-                            <TextBlock Grid.Column="3" Text="{Binding State}" Opacity="0.6" />
+                            <StackPanel Grid.Column="3" Spacing="4">
+                                <TextBlock Text="{Binding State}" Opacity="0.6" />
+                                <Border Classes="issueBadge" Classes.warning="{Binding HasWarnings}" Classes.error="{Binding HasErrors}"
+                                        IsVisible="{Binding HasIssues}" ToolTip.Tip="{Binding IssueSummary}">
+                                    <TextBlock Text="{Binding Issues.Count}" FontSize="11" />
+                                </Border>
+                            </StackPanel>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
