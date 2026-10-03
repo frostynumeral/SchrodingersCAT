@@ -143,7 +143,8 @@ public sealed class UnsavedChangesTests : IDisposable
     [Fact]
     public async Task Open_WithChanges_SaveFails_AbortsTheOpen()
     {
-        var (vm, dialogs, _) = await OpenEditedSampleAsync(TestFiles.Sample.Replace(" trgLang=\"hu\"", "").Replace("<target>Viszlát.</target>", ""));
+        var (vm, dialogs, path) = await OpenEditedSampleAsync();
+        TestFiles.BlockSaving(path);
         dialogs.Choice = UnsavedChangesChoice.Save;
 
         await vm.OpenCommand.ExecuteAsync(null);
@@ -179,7 +180,8 @@ public sealed class UnsavedChangesTests : IDisposable
     [Fact]
     public async Task ConfirmClose_WithChanges_SaveFails_KeepsTheWindowOpen()
     {
-        var (vm, dialogs, _) = await OpenEditedSampleAsync(TestFiles.Sample.Replace(" trgLang=\"hu\"", "").Replace("<target>Viszlát.</target>", ""));
+        var (vm, dialogs, path) = await OpenEditedSampleAsync();
+        TestFiles.BlockSaving(path);
         dialogs.Choice = UnsavedChangesChoice.Save;
 
         Assert.False(await vm.ConfirmCloseAsync());

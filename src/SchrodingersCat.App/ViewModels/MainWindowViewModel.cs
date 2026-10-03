@@ -38,6 +38,11 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         newValue?.IsActive = true;
     }
 
+    /// <summary>The column headers, with the document's languages.</summary>
+    public string SourceHeader => _document is null ? "Source" : $"Source ({_document.SourceLanguage})";
+
+    public string TargetHeader => _document?.TargetLanguage is { } language ? $"Target ({language})" : "Target";
+
     public string Title => FilePath is null
         ? "SchrödingersCAT"
         : $"{Path.GetFileName(FilePath)}{(IsDirty ? " •" : "")} — SchrödingersCAT";
@@ -66,7 +71,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
 
         return await dialogs.AskToSaveChangesAsync(Path.GetFileName(FilePath!)) switch
         {
-            UnsavedChangesChoice.Save => await ConfirmCodeErrorsAsync() && await SaveToAsync(FilePath!),
+            UnsavedChangesChoice.Save => await ReadyToSaveAsync() && await SaveToAsync(FilePath!),
             UnsavedChangesChoice.DontSave => true,
             _ => false,
         };
@@ -101,12 +106,14 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         FilePath = path;
         IsDirty = false;
         ErrorMessage = null;
+        OnPropertyChanged(nameof(SourceHeader));
+        OnPropertyChanged(nameof(TargetHeader));
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
     private async Task SaveAsync()
     {
-        if (await ConfirmCodeErrorsAsync())
+        if (await ReadyToSaveAsync())
             await SaveToAsync(FilePath!);
     }
 
@@ -114,8 +121,27 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     [RelayCommand(CanExecute = nameof(CanSave))]
     private async Task SaveAsAsync()
     {
-        if (await ConfirmCodeErrorsAsync() && await dialogs.PickFileToSaveAsync(Path.GetFileName(FilePath)) is { } path && await SaveToAsync(path))
+        if (await ReadyToSaveAsync() && await dialogs.PickFileToSaveAsync(Path.GetFileName(FilePath)) is { } path && await SaveToAsync(path))
             FilePath = path;
+    }
+
+    // What a save needs from the translator first; false if they cancelled.
+    private async Task<bool> ReadyToSaveAsync() => await ConfirmCodeErrorsAsync() && await EnsureTargetLanguageAsync();
+
+    // XLIFF requires trgLang once there are targets, and a file may come without one: ask when it's needed.
+    private async Task<bool> EnsureTargetLanguageAsync()
+    {
+        var document = _document!;
+        if (document.TargetLanguage is not null || !document.Units.Any(u => u.Segments.Any(s => s.Target is not null)))
+            return true;
+
+        var tag = await dialogs.AskTargetLanguageAsync(document.SourceLanguage, t => LanguageTag.Problem(t, document.SourceLanguage));
+        if (tag is null || LanguageTag.Problem(tag, document.SourceLanguage) is not null)
+            return false;
+
+        document.TargetLanguage = tag.Trim();
+        OnPropertyChanged(nameof(TargetHeader));
+        return true;
     }
 
     // Decision 2 of docs/design/inline-code-editing.md: warn, and let the translator save unfinished work anyway.

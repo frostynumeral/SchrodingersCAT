@@ -27,6 +27,12 @@ public interface IDialogService
     /// <summary>Asks whether to save the unsaved changes to <paramref name="fileName"/> first.</summary>
     Task<UnsavedChangesChoice> AskToSaveChangesAsync(string fileName);
 
+    /// <summary>
+    /// Asks for the target language of a document that has none. <paramref name="problem"/> says what's wrong with a
+    /// typed tag (null if it's fine); the dialog only accepts a tag without a problem. Null if the user cancelled.
+    /// </summary>
+    Task<string?> AskTargetLanguageAsync(string sourceLanguage, Func<string, string?> problem);
+
     /// <summary>Asks for confirmation; true only if the user chose <paramref name="confirmLabel"/>.</summary>
     Task<bool> ConfirmAsync(string title, string message, string confirmLabel);
 }
