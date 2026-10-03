@@ -527,6 +527,49 @@ public sealed class MainWindowHeadlessTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task TargetLanguageDialog_AcceptsOnlyAValidCode()
+    {
+        var owner = new Window();
+        owner.Show();
+        var answer = new AvaloniaDialogService(owner).AskTargetLanguageAsync("en", t => LanguageTag.Problem(t, "en"));
+        Dispatcher.UIThread.RunJobs();
+        var dialog = owner.OwnedWindows.OfType<TargetLanguageDialog>().Single();
+        var box = dialog.FindControl<TextBox>("LanguageBox")!;
+        var ok = dialog.FindControl<Button>("OkButton")!;
+        Assert.False(ok.IsEnabled);
+        Assert.True(box.IsFocused);
+
+        dialog.KeyTextInput("EN");
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(ok.IsEnabled);
+        Assert.Equal("That's the source language (en).", dialog.FindControl<TextBlock>("Problem")!.Text);
+
+        box.Text = "hu ";
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(ok.IsEnabled);
+        Press(dialog, PhysicalKey.Enter);
+        await WaitFor(() => answer.IsCompleted);
+
+        Assert.Equal("hu", await answer);
+        owner.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task TargetLanguageDialog_Escape_MeansCancel()
+    {
+        var owner = new Window();
+        owner.Show();
+        var answer = new AvaloniaDialogService(owner).AskTargetLanguageAsync("en", t => LanguageTag.Problem(t, "en"));
+        Dispatcher.UIThread.RunJobs();
+
+        Press(owner.OwnedWindows.OfType<TargetLanguageDialog>().Single(), PhysicalKey.Escape);
+        await WaitFor(() => answer.IsCompleted);
+
+        Assert.Null(await answer);
+        owner.Close();
+    }
+
+    [AvaloniaFact]
     public async Task ConfirmDialog_ClosedWithoutAnswer_MeansNo()
     {
         var owner = new Window();

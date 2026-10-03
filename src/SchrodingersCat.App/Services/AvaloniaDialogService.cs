@@ -38,6 +38,9 @@ public sealed class AvaloniaDialogService(Window owner) : IDialogService
     public Task<UnsavedChangesChoice> AskToSaveChangesAsync(string fileName) =>
         new UnsavedChangesDialog(fileName).ShowDialog<UnsavedChangesChoice>(owner);
 
+    public Task<string?> AskTargetLanguageAsync(string sourceLanguage, Func<string, string?> problem) =>
+        new TargetLanguageDialog(sourceLanguage, problem).ShowDialog<string?>(owner);
+
     public Task<bool> ConfirmAsync(string title, string message, string confirmLabel) =>
         new ConfirmDialog(title, message, confirmLabel).ShowDialog<bool>(owner);
 }

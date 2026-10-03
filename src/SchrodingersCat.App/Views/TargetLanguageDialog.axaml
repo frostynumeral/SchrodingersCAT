@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SchrodingersCat.App.Views.TargetLanguageDialog"
+        Title="Target language"
+        SizeToContent="WidthAndHeight" CanResize="False" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <StackPanel Margin="20" Spacing="12" Width="380">
+        <TextBlock x:Name="Message" TextWrapping="Wrap" />
+        <TextBox x:Name="LanguageBox" PlaceholderText="e.g. hu, de-AT" />
+        <TextBlock x:Name="Problem" TextWrapping="Wrap" Foreground="#C62828" FontSize="12" />
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+            <Button x:Name="OkButton" Content="Save" Classes="accent" IsDefault="True" Click="OnOk" />
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" Click="OnCancel" />
+        </StackPanel>
+    </StackPanel>
+</Window>

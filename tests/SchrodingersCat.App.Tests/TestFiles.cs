@@ -31,6 +31,9 @@ internal sealed class TestFiles : IDisposable
 
     public string PathOf(string name) => Path.Combine(_directory, name);
 
+    /// <summary>Makes saving to <paramref name="path"/> fail: the atomic save writes <c>&lt;path&gt;.tmp</c> first, and that's a directory.</summary>
+    public static void BlockSaving(string path) => Directory.CreateDirectory(path + ".tmp");
+
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 }
 
@@ -67,6 +70,15 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
     {
         Asked.Add($"save changes to {fileName}?");
         return Task.FromResult(Choice);
+    }
+
+    /// <summary>The answer to the target language question (null = cancelled).</summary>
+    public string? TargetLanguage { get; set; }
+
+    public Task<string?> AskTargetLanguageAsync(string sourceLanguage, Func<string, string?> problem)
+    {
+        Asked.Add($"target language (source {sourceLanguage})");
+        return Task.FromResult(TargetLanguage);
     }
 
     public Task<bool> ConfirmAsync(string title, string message, string confirmLabel)

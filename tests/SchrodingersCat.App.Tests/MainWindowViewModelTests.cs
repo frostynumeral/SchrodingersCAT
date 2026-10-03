@@ -211,20 +211,97 @@ public sealed class MainWindowViewModelTests : IDisposable
     [Fact]
     public async Task Save_Failure_ShowsTheErrorAndKeepsTheEdits()
     {
-        // XLIFF requires trgLang once there are targets, so the writer refuses this document.
-        var path = _files.Write("no-trglang.xlf", TestFiles.Sample.Replace(" trgLang=\"hu\"", "").Replace("<target>Viszlát.</target>", ""));
+        var path = _files.Write("blocked.xlf", TestFiles.Sample);
         var vm = new MainWindowViewModel(_serializer, new FakeDialogs(path));
         await vm.OpenCommand.ExecuteAsync(null);
         var original = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
         vm.Segments[0].TargetText = "Helló világ.";
+        TestFiles.BlockSaving(path);
 
         await vm.SaveCommand.ExecuteAsync(null);
 
-        Assert.StartsWith("Could not save no-trglang.xlf:", vm.ErrorMessage);
-        Assert.Contains("trgLang", vm.ErrorMessage);
+        Assert.StartsWith("Could not save blocked.xlf:", vm.ErrorMessage);
         Assert.True(vm.IsDirty);
         Assert.Equal(original, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)); // the atomic save left the file alone
     }
+
+    // ---------------------------------------------------------------- target language
+
+    private const string NoTargetLanguage = """
+        <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en">
+          <file id="f1"><unit id="u1"><segment><source>Hello.</source></segment></unit></file>
+        </xliff>
+        """;
+
+    [Fact]
+    public async Task Save_WithoutATargetLanguage_AsksForIt_AndSaves()
+    {
+        var path = _files.Write("no-trglang.xlf", NoTargetLanguage);
+        var dialogs = new FakeDialogs(path) { TargetLanguage = " hu " };
+        var vm = new MainWindowViewModel(_serializer, dialogs);
+        await vm.OpenCommand.ExecuteAsync(null);
+        Assert.Equal("Target", vm.TargetHeader);
+        vm.Segments[0].TargetText = "Szia.";
+        dialogs.Asked.Clear();
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(["target language (source en)"], dialogs.Asked);
+        Assert.False(vm.IsDirty);
+        Assert.Equal("Target (hu)", vm.TargetHeader);
+        var saved = await _serializer.ReadFileAsync(path, TestContext.Current.CancellationToken);
+        Assert.Equal("hu", saved.TargetLanguage);
+        Assert.Equal("Szia.", saved.Units.Single().Segments[0].Target!.ToPlainText());
+
+        // Asked once: the document has a target language now.
+        vm.Segments[0].TargetText = "Helló.";
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Single(dialogs.Asked);
+    }
+
+    [Fact]
+    public async Task Save_WithoutATargetLanguage_Cancelled_SavesNothing()
+    {
+        var path = _files.Write("no-trglang.xlf", NoTargetLanguage);
+        var dialogs = new FakeDialogs(path) { TargetLanguage = null };
+        var vm = new MainWindowViewModel(_serializer, dialogs);
+        await vm.OpenCommand.ExecuteAsync(null);
+        vm.Segments[0].TargetText = "Szia.";
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(vm.IsDirty);
+        Assert.Null(vm.ErrorMessage);
+        Assert.Equal(NoTargetLanguage, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Save_WithoutATargetLanguage_OrTargets_DoesNotAsk()
+    {
+        var path = _files.Write("no-trglang.xlf", NoTargetLanguage);
+        var dialogs = new FakeDialogs(path);
+        var vm = new MainWindowViewModel(_serializer, dialogs);
+        await vm.OpenCommand.ExecuteAsync(null);
+        vm.Segments[0].TargetText = "Szia.";
+        vm.Segments[0].TargetText = ""; // dirty, but no target
+        dialogs.Asked.Clear();
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Empty(dialogs.Asked);
+        Assert.False(vm.IsDirty);
+    }
+
+    [Theory]
+    [InlineData("hu", null)]
+    [InlineData(" de-AT ", null)]
+    [InlineData("zh-Hant-TW", null)]
+    [InlineData("", "Enter a language code, such as hu or de-AT.")]
+    [InlineData("hu_HU", "'hu_HU' isn't a language code. Use letters, digits and hyphens, such as hu or de-AT.")]
+    [InlineData("magyarország", "'magyarország' isn't a language code. Use letters, digits and hyphens, such as hu or de-AT.")]
+    [InlineData("EN", "That's the source language (en).")]
+    public void LanguageTag_AcceptsXsLanguageCodesOtherThanTheSource(string tag, string? problem) =>
+        Assert.Equal(problem, LanguageTag.Problem(tag, "en"));
 
     [Fact]
     public async Task DismissError_ClearsTheMessage()
