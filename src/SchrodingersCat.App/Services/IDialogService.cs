@@ -13,7 +13,7 @@ public enum UnsavedChangesChoice
 }
 
 /// <summary>
-/// Asks the user things (files to open or save, what to do with unsaved changes), so view models don't depend on
+/// Asks the user things (files to open or save, what to do with unsaved changes, confirmations), so view models don't depend on
 /// Avalonia's windowing and storage APIs, and tests can answer instead.
 /// </summary>
 public interface IDialogService
@@ -26,4 +26,7 @@ public interface IDialogService
 
     /// <summary>Asks whether to save the unsaved changes to <paramref name="fileName"/> first.</summary>
     Task<UnsavedChangesChoice> AskToSaveChangesAsync(string fileName);
+
+    /// <summary>Asks for confirmation; true only if the user chose <paramref name="confirmLabel"/>.</summary>
+    Task<bool> ConfirmAsync(string title, string message, string confirmLabel);
 }

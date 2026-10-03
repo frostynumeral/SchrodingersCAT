@@ -231,7 +231,8 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - Add code check badges and chip outlines.
    - Click a source chip to insert it.
    - A headless open → edit tagged segment → save test that re-reads the file and checks the codes.
-7. **Keyboard workflow and clipboard:** the section 4 shortcuts, plus the clipboard format with a plain-text fallback. Headless tests per shortcut.
+7. **Keyboard workflow and clipboard:** *(Done 2026-10-03.)* the section 4 shortcuts, plus the clipboard format with a plain-text fallback. Headless tests per shortcut.
+   - The clipboard keeps chips with an app-specific token pointing at the copied content kept in the process, so pasting into another instance of the app gets the plain text.
 8. **Save policy and documentation:** implement the decision on open question 2, update CLAUDE.md, and mark this proposal implemented.
 
 ## Open questions

@@ -76,6 +76,7 @@
         </Style>
     </Window.Styles>
 
+    <!-- The segment shortcuts (Ctrl+Enter, Ctrl+Up/Down, Ctrl+Shift+Down, Ctrl+Insert) are in MainWindow.axaml.cs. -->
     <Window.KeyBindings>
         <KeyBinding Gesture="Ctrl+O" Command="{Binding OpenCommand}" />
         <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveCommand}" />
@@ -119,7 +120,7 @@
                             <TextBlock Grid.Column="0" Text="{Binding Label}" Opacity="0.6" TextWrapping="Wrap" />
                             <!-- Clicking a source chip inserts the code at the target's caret (active row only). -->
                             <controls:InlineContentBlock Grid.Column="1" Classes="source" Runs="{Binding SourceRuns}" TextWrapping="Wrap"
-                                                         ChipCommand="{Binding InsertCodeCommand}" />
+                                                         ChipCommand="{Binding InsertCodeCommand}" ClipboardUnit="{Binding Unit}" />
                             <Border Grid.Column="2" Classes="targetFrame" Classes.editing="{Binding IsActive}">
                                 <Panel>
                                     <controls:TargetEditor Classes="target" Model="{Binding ActiveEditModel}" Status="{Binding EditStatus}"

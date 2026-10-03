@@ -51,6 +51,9 @@ public sealed class TargetEditModel
     /// <summary>The unit the segment belongs to.</summary>
     public TranslationUnit Unit => _unit;
 
+    /// <summary>The segment whose target this is.</summary>
+    public Segment Segment => _segment;
+
     /// <summary>What the unit's source says about its codes; the rules every edit follows.</summary>
     public InlineCodeHints Hints => _hints;
 
@@ -115,6 +118,18 @@ public sealed class TargetEditModel
 
     public InlineContent ToContent() => ToContent(_items);
 
+    /// <summary>The selection as content (text, codes and annotation halves), for the clipboard.</summary>
+    public InlineContent SelectedContent() => ToContent(_items.GetRange(SelectionStart, SelectionEnd - SelectionStart));
+
+    /// <summary>Whether a half of the source code <paramref name="sourceCodeId"/> is missing from the unit's target.</summary>
+    public bool IsMissing(string sourceCodeId)
+    {
+        ArgumentNullException.ThrowIfNull(sourceCodeId);
+
+        var present = CodesInTarget();
+        return _hints.SourceHalves(sourceCodeId).Any(h => !present.Contains((h.Id, h.Kind)));
+    }
+
     // ---------------------------------------------------------------- editing
 
     /// <summary>Types text at the caret, replacing the selection (protected codes in it are kept).</summary>
@@ -161,6 +176,31 @@ public sealed class TargetEditModel
 
         var copyId = NewId();
         return InsertHalves([.. halves.Select(h => Copy(h, copyId))]);
+    }
+
+    /// <summary>
+    /// Pastes content at the caret, replacing the selection (protected codes in it are kept). Codes and annotations
+    /// come along only from the same unit, following the same rules as <see cref="InsertCode"/>: a code missing from
+    /// the target is inserted as it is (so cut and paste moves it), a code already there becomes a copy if it may be
+    /// copied, and anything else is left out with a note. From another unit (or another app) only the text is pasted.
+    /// </summary>
+    /// <param name="from">The unit the content was copied from, or null if unknown.</param>
+    public EditResult Paste(InlineContent content, TranslationUnit? from)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+
+        var notes = new List<string>();
+        var pasted = ReferenceEquals(from, _unit) ? PastedItems(content, notes) : PastedText(content, notes);
+        if (pasted.Count == 0 && !HasSelection)
+            return notes.Count == 0 ? EditResult.Unchanged : EditResult.Refused(string.Join(" ", notes));
+
+        BeginEdit(EditKind.Other, groupable: false);
+        var kept = DeleteSelectionCore();
+        _items.InsertRange(_caret, pasted);
+        _caret = _anchor = _caret + pasted.Count;
+        if (KeptMessage(kept) is { } keptNote)
+            notes.Add(keptNote);
+        return Commit(notes.Count == 0 ? null : string.Join(" ", notes));
     }
 
     /// <summary>Inserts the first code of this segment's source (in source order) that isn't in the target yet.</summary>
@@ -228,11 +268,13 @@ public sealed class TargetEditModel
 
     /// <summary>
     /// Replaces the target with this segment's source (text, codes and annotations, with the same ids). Codes already
-    /// used in another segment's target are left out, and protected codes the target had are kept at the end.
+    /// used in another segment's target are left out (annotation halves too, silently), and protected codes the target
+    /// had are kept at the end.
     /// </summary>
     public EditResult CopySource()
     {
         var elsewhere = OtherTargets().SelectMany(c => c).OfType<InlineCode>().Select(c => (c.Id, c.Kind)).ToHashSet();
+        var markersElsewhere = OtherTargets().SelectMany(c => c).OfType<InlineMarker>().Select(m => (m.Id, m.Kind)).ToHashSet();
         var copied = new List<Item>();
         var skipped = new List<string>();
         foreach (var element in _segment.Source)
@@ -241,6 +283,8 @@ public sealed class TargetEditModel
                 copied.AddRange(text.Text.Select(c => new Item(c, null)));
             else if (element is InlineCode code && elsewhere.Contains((code.Id, code.Kind)))
                 skipped.Add(code.Id);
+            else if (element is InlineMarker marker && markersElsewhere.Contains((marker.Id, marker.Kind)))
+                continue;
             else
                 copied.Add(new Item('\0', element));
         }
@@ -356,6 +400,93 @@ public sealed class TargetEditModel
         return Commit(null);
     }
 
+    private static List<Item> PastedText(InlineContent content, List<string> notes)
+    {
+        if (content.Any(e => e is not InlineText))
+            notes.Add("Codes from another unit were left out; only the text was pasted.");
+        return [.. content.OfType<InlineText>().SelectMany(t => t.Text).Select(c => new Item(c, null))];
+    }
+
+    // Decides per code (all its halves together) and per annotation what comes along; see Paste.
+    private List<Item> PastedItems(InlineContent content, List<string> notes)
+    {
+        // What the target will hold once the selection is replaced: the selection's protected codes stay.
+        var remaining = _items.Take(SelectionStart).Concat(_items.Skip(SelectionEnd))
+            .Concat(_items.GetRange(SelectionStart, SelectionEnd - SelectionStart).Where(IsProtected));
+        var present = OtherTargets().SelectMany(c => c).Concat(remaining.Select(i => i.Element).OfType<InlineElement>())
+            .Select(e => (IdOf(e), e is InlineCode code ? code.Kind : (InlineCodeKind?)null))
+            .ToHashSet();
+        var markerIds = present.Where(p => p.Item2 is null).Select(p => p.Item1).ToHashSet();
+
+        var codes = content.OfType<InlineCode>().ToList();
+        var markers = content.OfType<InlineMarker>().ToList();
+        var replacements = new Dictionary<string, string?>(StringComparer.Ordinal); // pasted id → id to use, or null to leave out
+        var leftOut = new List<string>();
+        var copyIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var group in codes.GroupBy(c => c.Id, StringComparer.Ordinal))
+        {
+            var halves = group.ToList();
+            if (halves.All(h => _hints.SourceCode(h.Id, h.Kind) is not null && !present.Contains((h.Id, h.Kind))))
+            {
+                replacements[group.Key] = group.Key; // missing from the target: comes back as it is
+                continue;
+            }
+
+            // Otherwise it becomes a copy of its source code: whole codes only, and only if that code may be copied.
+            var baseId = BaseId(halves[0]);
+            var whole = baseId is not null && _hints.SourceHalves(baseId).Count == halves.Count;
+            if (baseId is null || !whole || !_hints.IsCopyable(baseId))
+            {
+                replacements[group.Key] = null;
+                leftOut.Add(group.Key);
+                continue;
+            }
+
+            var copyId = NewId(copyIds);
+            copyIds.Add(copyId);
+            replacements[group.Key] = copyId;
+        }
+
+        // An annotation comes along whole, and only if it isn't in the target yet (annotations aren't copied).
+        var pastedMarkers = markers.GroupBy(m => m.Id, StringComparer.Ordinal)
+            .Where(g => g.Count() == 2 && !markerIds.Contains(g.Key))
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var items = new List<Item>();
+        foreach (var element in content)
+        {
+            switch (element)
+            {
+                case InlineText text:
+                    items.AddRange(text.Text.Select(c => new Item(c, null)));
+                    break;
+                case InlineCode code when replacements[code.Id] is { } id:
+                    items.Add(new Item('\0', id == code.Id ? code : Copy(_hints.SourceCode(BaseId(code)!, code.Kind) ?? code, id)));
+                    break;
+                case InlineMarker marker when pastedMarkers.Contains(marker.Id):
+                    items.Add(new Item('\0', marker));
+                    break;
+            }
+        }
+
+        if (leftOut.Count > 0)
+            notes.Add($"Left out code(s) {string.Join(", ", leftOut.Select(i => $"'{i}'"))}: already in the target, and they may not be copied (or only part of the code was copied).");
+        if (markers.Select(m => m.Id).Distinct(StringComparer.Ordinal).Any(id => !pastedMarkers.Contains(id)))
+            notes.Add("Left out annotations that are already in the target or were only partly copied.");
+        return items;
+    }
+
+    // The source code a pasted code stands for: itself, or the code it copies (by copyOf or a shared dataRef).
+    private string? BaseId(InlineCode code)
+    {
+        if (_hints.IsInSource(code.Id) && _hints.SourceCode(code.Id, code.Kind) is not null)
+            return code.Id;
+        if (code.CopyOf is not null && _hints.IsInSource(code.CopyOf))
+            return code.CopyOf;
+        return code.DataRef is null ? null : _hints.SourceCodes.FirstOrDefault(c => c.Kind == code.Kind && c.DataRef == code.DataRef)?.Id;
+    }
+
     // A copy has its own id, reuses the base code's original data, and names the base with copyOf only if it has none
     // (XLIFF 4.7.2.4.1).
     private static InlineCode Copy(InlineCode code, string id) => new(id, code.Kind)
@@ -399,7 +530,7 @@ public sealed class TargetEditModel
             .ToHashSet();
 
     // Unused in the unit's source, target and segment ids, so a copy can't be mistaken for a source code.
-    private string NewId()
+    private string NewId(HashSet<string>? alsoTaken = null)
     {
         var used = _hints.SourceCodes.Select(c => c.Id)
             .Concat(_unit.Segments.Select(s => s.Id).OfType<string>())
@@ -410,7 +541,7 @@ public sealed class TargetEditModel
         for (var n = 1; ; n++)
         {
             var id = n.ToString(CultureInfo.InvariantCulture);
-            if (!used.Contains(id))
+            if (!used.Contains(id) && alsoTaken?.Contains(id) != true)
                 return id;
         }
     }

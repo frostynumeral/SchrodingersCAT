@@ -7,6 +7,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SchrodingersCat.App.Controls;
 using SchrodingersCat.App.Editing;
+using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.Core.Models;
 
 namespace SchrodingersCat.App.Tests;
@@ -200,6 +201,95 @@ public sealed class TargetEditorTests
     }
 
     [AvaloniaFact]
+    public async Task CopyAndPaste_KeepsTheChips_AsACopy()
+    {
+        var (window, editor, unit) = Show();
+        SelectTheBoldPair(window, editor);
+
+        Press(window, PhysicalKey.C, RawInputModifiers.Control);
+        Assert.Equal("⟨1⟩OK⟨/1⟩", await window.Clipboard!.TryGetTextAsync()); // other apps get placeholders
+        editor.Editor.TextArea.Caret.Offset = Length;
+        Press(window, PhysicalKey.V, RawInputModifiers.Control);
+        await WaitFor(() => editor.Model!.Length == Length + 4);
+
+        // Code 1 is already in the target, so the paste is a copy with a new id (design section 2).
+        var codes = unit.Segments[0].Target!.OfType<InlineCode>().ToList();
+        Assert.Equal([("3", InlineCodeKind.Opening), ("3", InlineCodeKind.Closing)], codes.Skip(3).Select(c => (c.Id, c.Kind)));
+        Assert.Equal(7, editor.Editor.Document.Text.Count(c => c == TargetEditor.ChipCharacter));
+    }
+
+    [AvaloniaFact]
+    public async Task CutAndPaste_MovesTheCode()
+    {
+        var (window, editor, unit) = Show();
+        SelectTheBoldPair(window, editor);
+
+        Press(window, PhysicalKey.X, RawInputModifiers.Control);
+        editor.Editor.TextArea.Caret.Offset = editor.Model!.Length - 1;
+        Press(window, PhysicalKey.V, RawInputModifiers.Control);
+        await WaitFor(() => editor.Model!.Length == Length);
+
+        var target = unit.Segments[0].Target!;
+        Assert.Equal("Nyomd  ⟨2/⟩ fájl⟨1⟩OK⟨/1⟩.", InlineFormatterText(target)); // the same code, moved
+    }
+
+    [AvaloniaFact]
+    public void F9_InsertsTheNextMissingCode()
+    {
+        var unit = SampleUnit();
+        unit.Segments[0].Target = InlineContent.FromText("Nyomd ");
+        var (window, editor, _) = Show(unit);
+
+        Press(window, PhysicalKey.F9);
+        window.KeyTextInput("OK");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Nyomd ⟨1⟩OK⟨/1⟩", InlineFormatterText(unit.Segments[0].Target!));
+        Assert.Null(editor.Status);
+
+        Press(window, PhysicalKey.F9);
+        Press(window, PhysicalKey.F9);
+        Assert.Equal("All codes in the source are already in the target.", editor.Status);
+    }
+
+    [AvaloniaFact]
+    public void CtrlShiftF9_PicksACode_WithTypeAhead()
+    {
+        var unit = SampleUnit();
+        unit.Segments[0].Target = InlineContent.FromText("Nyomd ");
+        var (window, editor, _) = Show(unit);
+
+        Press(window, PhysicalKey.F9, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Assert.True(editor.CodePicker.IsOpen);
+        var list = (ListBox)editor.CodePicker.Child!.GetVisualDescendants().Single(v => v is ListBox);
+        Assert.Equal(["⟨b…b⟩", "{0}"], list.Items.Cast<CodeChoice>().Select(c => c.Text));
+        Assert.Equal("1", ((CodeChoice)list.SelectedItem!).CodeId); // the first missing code
+
+        window.KeyTextInput("{0");
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(["{0}"], list.Items.Cast<CodeChoice>().Select(c => c.Text));
+
+        Press(window, PhysicalKey.Enter);
+        Assert.False(editor.CodePicker.IsOpen);
+        Assert.Equal("Nyomd ⟨2/⟩", InlineFormatterText(unit.Segments[0].Target!));
+        Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
+    }
+
+    [AvaloniaFact]
+    public void TheCodePicker_ClosesOnEscape_WithoutInserting()
+    {
+        var (window, editor, unit) = Show();
+        var before = unit.Segments[0].Target;
+
+        Press(window, PhysicalKey.F9, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Press(window, PhysicalKey.Escape);
+
+        Assert.False(editor.CodePicker.IsOpen);
+        Assert.Equal(before, unit.Segments[0].Target);
+        Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
+    }
+
+    [AvaloniaFact]
     public void AvaloniaEditCantChangeTheDocumentBehindTheModelsBack()
     {
         var (_, editor, _) = Show();
@@ -252,6 +342,16 @@ public sealed class TargetEditorTests
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
         return (window, editor, unit);
     }
+
+    // ⟨b OK b⟩, with the caret at its end, as a user would select it.
+    private static void SelectTheBoldPair(Window window, TargetEditor editor)
+    {
+        editor.Editor.TextArea.Caret.Offset = OpeningChip;
+        for (var i = 0; i < 4; i++)
+            Press(window, PhysicalKey.ArrowRight, RawInputModifiers.Shift);
+    }
+
+    private static string InlineFormatterText(InlineContent content) => InlineFormatter.Format(content);
 
     private static string Label(Border chip) =>
         string.Join(" ", chip.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text));

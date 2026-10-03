@@ -42,6 +42,9 @@ public sealed record ChipRun(string CodeId, InlineCodeKind Kind, string Label, s
 
     /// <summary>The code check reports a problem with this code (design section 3); the chip gets a red outline.</summary>
     public bool HasProblem { get; init; }
+
+    /// <summary>The code itself, so a copy of the content keeps it.</summary>
+    public InlineCode? Code { get; init; }
 }
 
 /// <summary>Turns segment content into <see cref="ContentRun"/>s for the read-only chip views (design section 1).</summary>
@@ -91,6 +94,38 @@ public static class ContentRuns
             : [.. runs.Select(r => r is ChipRun chip && problemCodes.Contains(chip.CodeId) ? chip with { HasProblem = true } : r)];
     }
 
+    /// <summary>
+    /// The content between two positions of the runs, as a <c>SelectableTextBlock</c> counts them: a character of
+    /// text is one position, a chip too. Annotations aren't runs, so they're left out.
+    /// </summary>
+    public static InlineContent Slice(IReadOnlyList<ContentRun> runs, int start, int end)
+    {
+        ArgumentNullException.ThrowIfNull(runs);
+
+        var elements = new List<InlineElement>();
+        var position = 0;
+        foreach (var run in runs)
+        {
+            switch (run)
+            {
+                case TextRun text:
+                    var from = Math.Clamp(start - position, 0, text.Text.Length);
+                    var to = Math.Clamp(end - position, 0, text.Text.Length);
+                    if (to > from)
+                        elements.Add(new InlineText(text.Text[from..to]));
+                    position += text.Text.Length;
+                    break;
+                case ChipRun chip:
+                    if (position >= start && position < end && chip.Code is { } code)
+                        elements.Add(code);
+                    position++;
+                    break;
+            }
+        }
+
+        return new InlineContent(elements);
+    }
+
     /// <summary>One code half as a chip.</summary>
     public static ChipRun Chip(InlineCode code, TranslationUnit unit, InlineCodeHints hints)
     {
@@ -98,7 +133,7 @@ public static class ContentRuns
         ArgumentNullException.ThrowIfNull(unit);
         ArgumentNullException.ThrowIfNull(hints);
 
-        return new ChipRun(code.Id, code.Kind, Label(code), ToolTip(code, unit, hints), hints.IsProtected(code.Id));
+        return new ChipRun(code.Id, code.Kind, Label(code), ToolTip(code, unit, hints), hints.IsProtected(code.Id)) { Code = code };
     }
 
     /// <summary>The annotations still open after <paramref name="elements"/>, e.g. the preceding segments of a unit.</summary>

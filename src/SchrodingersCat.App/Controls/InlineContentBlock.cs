@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Media.Immutable;
 using Avalonia.Threading;
 using SchrodingersCat.App.ViewModels;
+using SchrodingersCat.Core.Models;
 
 namespace SchrodingersCat.App.Controls;
 
@@ -22,6 +23,9 @@ public sealed class InlineContentBlock : SelectableTextBlock
 
     public static readonly StyledProperty<ICommand?> ChipCommandProperty =
         AvaloniaProperty.Register<InlineContentBlock, ICommand?>(nameof(ChipCommand));
+
+    public static readonly StyledProperty<TranslationUnit?> ClipboardUnitProperty =
+        AvaloniaProperty.Register<InlineContentBlock, TranslationUnit?>(nameof(ClipboardUnit));
 
     private static readonly TextDecorationCollection TermUnderline =
     [
@@ -56,7 +60,33 @@ public sealed class InlineContentBlock : SelectableTextBlock
         set => SetValue(ChipCommandProperty, value);
     }
 
+    /// <summary>
+    /// The unit the runs belong to. When set, copying (Ctrl+C) keeps the chips, so pasting into a target of the same
+    /// unit inserts the codes (see <see cref="SegmentClipboard"/>).
+    /// </summary>
+    public TranslationUnit? ClipboardUnit
+    {
+        get => GetValue(ClipboardUnitProperty);
+        set => SetValue(ClipboardUnitProperty, value);
+    }
+
     protected override Type StyleKeyOverride => typeof(SelectableTextBlock);
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        ArgumentNullException.ThrowIfNull(e);
+
+        var copy = e.Key == Key.C && e.KeyModifiers == KeyModifiers.Control;
+        if (copy && ClipboardUnit is { } unit && SelectionStart != SelectionEnd && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+        {
+            var content = ContentRuns.Slice(Runs ?? [], Math.Min(SelectionStart, SelectionEnd), Math.Max(SelectionStart, SelectionEnd));
+            _ = SegmentClipboard.SetAsync(clipboard, content, unit);
+            e.Handled = true;
+            return;
+        }
+
+        base.OnKeyDown(e);
+    }
 
     // While hidden, the runs aren't shown: Avalonia still renders a hidden TextBlock whose inlines changed, measures
     // the new, never-measured chips during that render, and throws "Visual was invalidated during the render pass".

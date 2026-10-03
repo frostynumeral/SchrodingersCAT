@@ -5,6 +5,7 @@ using Avalonia.LogicalTree;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -380,6 +381,170 @@ public sealed class MainWindowHeadlessTests : IDisposable
     {
         Dispatcher.UIThread.RunJobs();
         return window.GetVisualDescendants().OfType<Border>().Single(b => b.Classes.Contains("issueBadge"));
+    }
+
+    // ---------------------------------------------------------------- keyboard workflow (step 7)
+
+    [AvaloniaFact]
+    public async Task CtrlDownAndCtrlUp_MoveBetweenSegments_AndTheEditorFollows()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+
+        Press(window, PhysicalKey.ArrowDown, RawInputModifiers.Control); // nothing selected: the first segment
+        Assert.Same(vm.Segments[0], vm.SelectedSegment);
+
+        Press(window, PhysicalKey.ArrowDown, RawInputModifiers.Control);
+        Assert.Same(vm.Segments[1], vm.SelectedSegment);
+        var editor = Assert.Single(VisibleEditors(window));
+        Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
+
+        Press(window, PhysicalKey.ArrowUp, RawInputModifiers.Control); // from inside the editor
+        Assert.Same(vm.Segments[0], vm.SelectedSegment);
+        Press(window, PhysicalKey.ArrowUp, RawInputModifiers.Control); // at the top: stays
+        Assert.Same(vm.Segments[0], vm.SelectedSegment);
+    }
+
+    [AvaloniaFact]
+    public async Task CtrlEnter_ConfirmsTheSegmentAndMovesOn()
+    {
+        var path = _files.Write("pretranslated.xlf", """
+            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+              <file id="f1">
+                <unit id="u1"><segment><source>Hello.</source><target>Szia.</target></segment></unit>
+                <unit id="u2"><segment><source>Bye.</source></segment></unit>
+              </file>
+            </xliff>
+            """);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        Click(window, TargetFrames(window)[0]);
+
+        Press(window, PhysicalKey.Enter, RawInputModifiers.Control);
+
+        Assert.Equal("Translated", vm.Segments[0].State);
+        Assert.True(vm.IsDirty);
+        Assert.Same(vm.Segments[1], vm.SelectedSegment);
+
+        // Nothing to confirm yet: it stays, and says why.
+        Press(window, PhysicalKey.Enter, RawInputModifiers.Control);
+        Assert.Same(vm.Segments[1], vm.SelectedSegment);
+        Assert.Equal("Initial", vm.Segments[1].State);
+        Assert.Equal("Translate the segment before confirming it.", window.FindControl<TextBlock>("StatusText")!.Text);
+    }
+
+    [AvaloniaFact]
+    public async Task CtrlShiftDown_GoesToTheNextSegmentWithCodeIssues()
+    {
+        var path = _files.Write("issues.xlf", """
+            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+              <file id="f1">
+                <unit id="u1"><segment><source>A<ph id="1"/></source><target>A<ph id="1"/></target></segment></unit>
+                <unit id="u2"><segment><source>B<ph id="1"/><ph id="2"/></source><target>B<ph id="2"/><ph id="1"/></target></segment></unit>
+                <unit id="u3"><segment><source>C<ph id="1"/></source><target>C</target></segment></unit>
+              </file>
+            </xliff>
+            """);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        Click(window, TargetFrames(window)[0]);
+
+        // u2 only has codes reordered (info), so it's skipped; u3 is missing a code (a warning).
+        Press(window, PhysicalKey.ArrowDown, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Assert.Same(vm.Segments[2], vm.SelectedSegment);
+
+        Press(window, PhysicalKey.ArrowDown, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Assert.Same(vm.Segments[2], vm.SelectedSegment);
+        Assert.Equal("No segments with code errors or warnings below this one.", vm.Segments[2].EditStatus);
+    }
+
+    [AvaloniaFact]
+    public async Task CtrlInsert_CopiesTheSource_AskingFirstIfThereIsATranslation()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var dialogs = new FakeDialogs(path);
+        var (window, vm) = Show(dialogs);
+        await vm.LoadAsync(path);
+        Click(window, TargetFrames(window)[2]);
+        var tagged = vm.Segments[2];
+
+        // No translation yet: copied without asking.
+        Press(window, PhysicalKey.Insert, RawInputModifiers.Control);
+        Assert.Equal("Press ⟨1⟩OK⟨/1⟩.", tagged.TargetText);
+        Assert.Empty(dialogs.Asked);
+
+        window.KeyTextInput("!");
+        Dispatcher.UIThread.RunJobs();
+        Press(window, PhysicalKey.Insert, RawInputModifiers.Control); // the user cancels
+        await WaitFor(() => dialogs.Asked.Count == 1);
+        Assert.Equal(["confirm: Copy source"], dialogs.Asked);
+        Assert.Equal("Press ⟨1⟩OK⟨/1⟩.!", tagged.TargetText);
+
+        dialogs.Confirm = true;
+        Press(window, PhysicalKey.Insert, RawInputModifiers.Control);
+        await WaitFor(() => tagged.TargetText == "Press ⟨1⟩OK⟨/1⟩.");
+    }
+
+    [AvaloniaFact]
+    public async Task CopyingFromTheSourceColumn_KeepsTheCodes()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        Click(window, TargetFrames(window)[2]);
+
+        var source = window.GetVisualDescendants().OfType<InlineContentBlock>().Where(b => b.Classes.Contains("source")).ElementAt(2);
+        source.Focus();
+        source.SelectAll();
+        Press(window, PhysicalKey.C, RawInputModifiers.Control);
+        Assert.Equal("Press ⟨1⟩OK⟨/1⟩.", await window.Clipboard!.TryGetTextAsync());
+
+        Click(window, Assert.Single(VisibleEditors(window)), onText: true);
+        Press(window, PhysicalKey.V, RawInputModifiers.Control);
+        await WaitFor(() => vm.Segments[2].TargetText == "Press ⟨1⟩OK⟨/1⟩.");
+        Assert.False(vm.Segments[2].HasIssues);
+    }
+
+    // The real confirmation window, through the real dialog service.
+    [AvaloniaTheory]
+    [InlineData("ConfirmButton", true)]
+    [InlineData("CancelButton", false)]
+    public async Task ConfirmDialog_ReturnsTheClickedChoice(string button, bool expected)
+    {
+        var owner = new Window();
+        owner.Show();
+        var answer = new AvaloniaDialogService(owner).ConfirmAsync("Copy source", "Replace?", "Replace");
+        Dispatcher.UIThread.RunJobs();
+        var dialog = owner.OwnedWindows.OfType<ConfirmDialog>().Single();
+        Assert.Equal("Replace", dialog.FindControl<Button>("ConfirmButton")!.Content);
+
+        dialog.FindControl<Button>(button)!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitFor(() => answer.IsCompleted);
+
+        Assert.Equal(expected, await answer);
+        owner.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ConfirmDialog_ClosedWithoutAnswer_MeansNo()
+    {
+        var owner = new Window();
+        owner.Show();
+        var answer = new AvaloniaDialogService(owner).ConfirmAsync("Copy source", "Replace?", "Replace");
+        Dispatcher.UIThread.RunJobs();
+
+        owner.OwnedWindows.OfType<ConfirmDialog>().Single().Close();
+        await WaitFor(() => answer.IsCompleted);
+
+        Assert.False(await answer);
+        owner.Close();
+    }
+
+    private static void Press(Window window, PhysicalKey key, RawInputModifiers modifiers = RawInputModifiers.None)
+    {
+        window.KeyPressQwerty(key, modifiers);
+        Dispatcher.UIThread.RunJobs();
     }
 
     private static string[] ProblemClass(Border chip) => [.. chip.Classes.Where(c => c == "problem")];

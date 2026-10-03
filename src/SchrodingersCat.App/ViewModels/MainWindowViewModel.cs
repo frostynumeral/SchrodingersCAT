@@ -137,6 +137,60 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     [RelayCommand]
     private void DismissError() => ErrorMessage = null;
 
+    // ---------------------------------------------------------------- keyboard workflow (design section 4)
+
+    /// <summary>Ctrl+Down: the next segment (the first if none is selected).</summary>
+    [RelayCommand]
+    private void NextSegment() => Move(1);
+
+    /// <summary>Ctrl+Up: the previous segment (the last if none is selected).</summary>
+    [RelayCommand]
+    private void PreviousSegment() => Move(-1);
+
+    /// <summary>Ctrl+Shift+Down: the next segment with code errors or warnings (info is normal in translation).</summary>
+    [RelayCommand]
+    private void NextSegmentWithIssues()
+    {
+        var start = SelectedSegment is null ? 0 : Segments.IndexOf(SelectedSegment) + 1;
+        var next = Segments.Skip(start).FirstOrDefault(s => s.HasErrors || s.HasWarnings);
+        if (next is not null)
+            SelectedSegment = next;
+        else
+            SelectedSegment?.EditStatus = "No segments with code errors or warnings below this one.";
+    }
+
+    /// <summary>Ctrl+Enter: confirms the selected segment and moves to the next one.</summary>
+    [RelayCommand]
+    private void ConfirmSegment()
+    {
+        if (SelectedSegment?.Confirm() == true)
+            Move(1);
+    }
+
+    /// <summary>Ctrl+Insert: replaces the selected segment's target with its source, asking first if there is one.</summary>
+    [RelayCommand]
+    private async Task CopySourceAsync()
+    {
+        if (SelectedSegment is not { } segment)
+            return;
+
+        if (segment.HasTarget && !await dialogs.ConfirmAsync(
+                "Copy source", "Replace the translation with the source text and codes? You can undo this with Ctrl+Z.", "Replace"))
+            return;
+
+        segment.CopySource();
+    }
+
+    private void Move(int step)
+    {
+        if (Segments.Count == 0)
+            return;
+
+        var index = SelectedSegment is null ? (step > 0 ? 0 : Segments.Count - 1) : Segments.IndexOf(SelectedSegment) + step;
+        if (index >= 0 && index < Segments.Count)
+            SelectedSegment = Segments[index];
+    }
+
     // Everything the serializer and the file system document for bad input, bad models or unavailable files.
     // Anything else is a bug and should not be dressed up as a user-facing message.
     private static bool IsReportable(Exception ex) =>

@@ -1,9 +1,10 @@
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Input;
-using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using AvaloniaEdit;
@@ -26,8 +27,9 @@ namespace SchrodingersCat.App.Controls;
 /// offsets and model positions are the same. Which offsets are chips is tracked separately, so the same character
 /// in the translation's text stays text.</para>
 /// <para>AvaloniaEdit never edits the document itself: a read-only section provider blocks its own edits, and
-/// typing, Backspace/Delete, Enter, paste, cut and undo are routed to the model, whose result is drawn again. So
-/// every rule the model enforces holds in the editor too. Refusals go to <see cref="Status"/>.</para>
+/// typing, Backspace/Delete, Enter, copy, cut, paste, undo and the code shortcuts (F9, Ctrl+Shift+F9) are routed to
+/// the model, whose result is drawn again. So every rule the model enforces holds in the editor too. Refusals go to
+/// <see cref="Status"/>.</para>
 /// </remarks>
 public sealed class TargetEditor : UserControl
 {
@@ -44,6 +46,10 @@ public sealed class TargetEditor : UserControl
         AvaloniaProperty.Register<TargetEditor, IReadOnlySet<string>?>(nameof(ProblemCodes));
 
     private readonly Dictionary<int, InlineElement> _chips = [];
+    private readonly Popup _picker;
+    private readonly TextBox _pickerFilter;
+    private readonly ListBox _pickerList;
+    private IReadOnlyList<CodeChoice> _choices = [];
     private bool _rendering;
 
     static TargetEditor()
@@ -75,7 +81,29 @@ public sealed class TargetEditor : UserControl
         area.Caret.PositionChanged += (_, _) => SyncSelection();
         area.SelectionChanged += (_, _) => SyncSelection();
         area.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
-        Content = Editor;
+
+        // The code picker (Ctrl+Shift+F9): a filter box with type-ahead over the unit's source codes.
+        _pickerFilter = new TextBox { Name = "CodeFilter", PlaceholderText = "Type to find a code" };
+        _pickerFilter.TextChanged += (_, _) => FilterChoices();
+        _pickerList = new ListBox
+        {
+            Name = "CodeList",
+            MaxHeight = 240,
+            ItemTemplate = new FuncDataTemplate<CodeChoice>((_, _) => ChoiceView()),
+        };
+        _pickerList.Tapped += (_, _) => InsertChosenCode();
+        var pickerContent = new StackPanel { Spacing = 4, Width = 280, Children = { _pickerFilter, _pickerList } };
+        pickerContent.AddHandler(KeyDownEvent, OnPickerKeyDown, RoutingStrategies.Tunnel);
+        _picker = new Popup
+        {
+            PlacementTarget = this,
+            Placement = PlacementMode.BottomEdgeAlignedLeft,
+            IsLightDismissEnabled = true,
+            Child = new Border { Classes = { "codePicker" }, Padding = new Thickness(6), Child = pickerContent },
+        };
+        _picker.Closed += (_, _) => Editor.TextArea.Focus();
+
+        Content = new Panel { Children = { Editor, _picker } };
     }
 
     /// <summary>The AvaloniaEdit control underneath.</summary>
@@ -100,6 +128,9 @@ public sealed class TargetEditor : UserControl
         get => GetValue(ProblemCodesProperty);
         set => SetValue(ProblemCodesProperty, value);
     }
+
+    /// <summary>The code picker (Ctrl+Shift+F9).</summary>
+    public Popup CodePicker => _picker;
 
     /// <summary>The code or annotation half drawn at a document offset, or null if the offset holds text.</summary>
     public InlineElement? ChipAt(int offset) => _chips.GetValueOrDefault(offset);
@@ -143,6 +174,7 @@ public sealed class TargetEditor : UserControl
             (Key.Z, true, false) => m => m.Undo(),
             (Key.Z, true, true) or (Key.Y, true, false) => m => m.Redo(),
             (Key.X, true, false) => Cut,
+            (Key.F9, false, false) => m => m.InsertNextMissingCode(),
             _ => null,
         };
 
@@ -153,31 +185,125 @@ public sealed class TargetEditor : UserControl
             return;
         }
 
+        if (e.Key == Key.C && ctrl && !shift)
+        {
+            e.Handled = true;
+            Copy();
+            return;
+        }
+
+        if (e.Key == Key.F9 && ctrl && shift)
+        {
+            e.Handled = true;
+            OpenCodePicker();
+            return;
+        }
+
         if (edit is null)
             return;
         e.Handled = true;
         Apply(edit);
     }
 
-    // Copies the selection with AvaloniaEdit's own copy, then deletes it through the model.
+    // The selection with its codes (see SegmentClipboard), then deleted through the model, which keeps protected codes.
     private EditResult Cut(TargetEditModel model)
     {
         if (!model.HasSelection)
             return EditResult.Unchanged;
-        Editor.Copy();
+        Copy();
         return model.Delete(DeleteDirection.Backward);
     }
 
-    // Plain text only for now; the clipboard format that keeps chips is step 7. Chip characters copied from an
-    // editor are dropped, because without the format they would become plain text that looks like a code.
+    private void Copy()
+    {
+        SyncSelection();
+        if (Model is { HasSelection: true } model && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+            _ = SegmentClipboard.SetAsync(clipboard, model.SelectedContent(), model.Unit);
+    }
+
+    // Codes come along when they were copied in this app from the same unit; the model applies the rules.
     private async Task PasteAsync()
     {
-        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard)
+        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard || await SegmentClipboard.GetAsync(clipboard) is not { } clip)
             return;
-        var text = await clipboard.TryGetTextAsync();
-        text = text?.Replace(ChipCharacter.ToString(), "", StringComparison.Ordinal);
-        if (!string.IsNullOrEmpty(text))
-            Apply(m => m.InsertText(text));
+        Apply(m => m.Paste(clip.Content, clip.Unit));
+    }
+
+    private void OpenCodePicker()
+    {
+        if (Model is not { } model)
+            return;
+
+        _choices = CodeChoice.For(model);
+        if (_choices.Count == 0)
+        {
+            Status = "There are no codes in the source.";
+            return;
+        }
+
+        SyncSelection();
+        _pickerFilter.Text = "";
+        FilterChoices();
+        _picker.IsOpen = true;
+        _pickerFilter.Focus();
+    }
+
+    // The first missing code is preselected: usually the one wanted next.
+    private void FilterChoices()
+    {
+        var shown = _choices.Where(c => c.Matches(_pickerFilter.Text ?? "")).ToList();
+        _pickerList.ItemsSource = shown;
+        _pickerList.SelectedItem = shown.FirstOrDefault(c => c.IsMissing) ?? shown.FirstOrDefault();
+    }
+
+    private void OnPickerKeyDown(object? sender, KeyEventArgs e)
+    {
+        var count = _pickerList.ItemCount;
+        switch (e.Key)
+        {
+            case Key.Down when count > 0:
+                _pickerList.SelectedIndex = Math.Min(_pickerList.SelectedIndex + 1, count - 1);
+                break;
+            case Key.Up when count > 0:
+                _pickerList.SelectedIndex = Math.Max(_pickerList.SelectedIndex - 1, 0);
+                break;
+            case Key.Enter:
+                InsertChosenCode();
+                break;
+            case Key.Escape:
+                _picker.IsOpen = false;
+                break;
+            default:
+                return;
+        }
+
+        e.Handled = true;
+    }
+
+    private void InsertChosenCode()
+    {
+        if (_pickerList.SelectedItem is not CodeChoice choice)
+            return;
+
+        _picker.IsOpen = false;
+        Apply(m => m.InsertCode(choice.CodeId));
+    }
+
+    // A row of the picker; it shows whichever choice the list gives it as its data context.
+    private static StackPanel ChoiceView()
+    {
+        var label = new TextBlock { Classes = { "label" }, FontWeight = Avalonia.Media.FontWeight.SemiBold };
+        var state = new TextBlock { Opacity = 0.6 };
+        var view = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8, Children = { label, state } };
+        view.DataContextChanged += (_, _) =>
+        {
+            if (view.DataContext is not CodeChoice choice)
+                return;
+            label.Text = choice.Text;
+            state.Text = choice.IsMissing ? "missing" : "in the target";
+            ToolTip.SetTip(view, choice.Description);
+        };
+        return view;
     }
 
     private void Apply(Func<TargetEditModel, EditResult> edit)
