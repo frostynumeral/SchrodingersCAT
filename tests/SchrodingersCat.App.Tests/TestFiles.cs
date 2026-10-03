@@ -48,6 +48,9 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
 
     public List<string> Asked { get; } = [];
 
+    /// <summary>The messages of the confirmations asked.</summary>
+    public List<string> Messages { get; } = [];
+
     public Task<string?> PickFileToOpenAsync()
     {
         Asked.Add("open");
@@ -69,6 +72,7 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
     public Task<bool> ConfirmAsync(string title, string message, string confirmLabel)
     {
         Asked.Add($"confirm: {title}");
+        Messages.Add(message);
         return Task.FromResult(Confirm);
     }
 }

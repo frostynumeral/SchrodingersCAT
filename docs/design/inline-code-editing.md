@@ -1,6 +1,6 @@
 # Proposal: editing targets with inline codes
 
-**Status:** accepted (2026-10-02). All [open questions](#open-questions) are decided; implementation follows the [steps](#implementation-steps), starting with step 1.
+**Status:** implemented (2026-10-03). All [open questions](#open-questions) are decided and all [implementation steps](#implementation-steps) are done, except the manual IME, screen reader and RTL checks of step 3.
 
 ## Problem
 
@@ -233,7 +233,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - A headless open → edit tagged segment → save test that re-reads the file and checks the codes.
 7. **Keyboard workflow and clipboard:** *(Done 2026-10-03.)* the section 4 shortcuts, plus the clipboard format with a plain-text fallback. Headless tests per shortcut.
    - The clipboard keeps chips with an app-specific token pointing at the copied content kept in the process, so pasting into another instance of the app gets the plain text.
-8. **Save policy and documentation:** implement the decision on open question 2, update CLAUDE.md, and mark this proposal implemented.
+8. **Save policy and documentation:** *(Done 2026-10-03.)* Implement the decision on open question 2, update CLAUDE.md, and mark this proposal implemented.
 
 ## Open questions
 
