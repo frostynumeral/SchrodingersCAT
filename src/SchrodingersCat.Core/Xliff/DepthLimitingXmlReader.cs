@@ -9,7 +9,8 @@ namespace SchrodingersCat.Core.Xliff;
 /// Checking the finished tree would be too late: building an <c>XDocument</c> gets quadratically slower with depth,
 /// so a small file nested 100,000 deep costs tens of seconds before any check could run.
 /// </remarks>
-internal sealed class DepthLimitingXmlReader(XmlReader inner, int maxDepth) : XmlReader
+/// <param name="error">Makes the exception to throw; by default an <see cref="XliffFormatException"/>.</param>
+internal sealed class DepthLimitingXmlReader(XmlReader inner, int maxDepth, Func<string, Exception>? error = null) : XmlReader
 {
     public override int AttributeCount => inner.AttributeCount;
 
@@ -84,7 +85,11 @@ internal sealed class DepthLimitingXmlReader(XmlReader inner, int maxDepth) : Xm
     private bool Check(bool read)
     {
         if (read && inner.NodeType == XmlNodeType.Element && inner.Depth >= maxDepth)
-            throw new XliffFormatException($"The file nests elements more than {maxDepth} deep (at <{inner.LocalName}>).");
+        {
+            var message = $"The file nests elements more than {maxDepth} deep (at <{inner.LocalName}>).";
+            throw error?.Invoke(message) ?? new XliffFormatException(message);
+        }
+
         return read;
     }
 }

@@ -152,7 +152,11 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
 
    - **Decision:** word bigrams, the 100 best candidates, a budget of 80,000 index rows per lookup. Almost all the
      time without a budget went into grouping the posting lists of very common bigrams, not into scoring.
-3. **TMX import/export,** with the untrusted-input tests, and reading `<mtc:matches>`.
+3. **TMX import/export,** *(Done 2026-10-03.)* with the untrusted-input tests, and reading `<mtc:matches>`.
+   - Codes keep their kind and pairing (and `x` ties source and target codes together), but not their native data:
+     entries have no original data, and code transfer replaces a match's codes anyway.
+   - A TMX unit the import can't use (no text in the language pair, an unknown element in `<seg>`, an `<ept>` without
+     its `<bpt>`) is skipped and reported; a file that isn't safe, well-formed TMX fails as a whole.
 4. **Matches pane and inserting matches** (Ctrl+1 … Ctrl+9), with headless tests.
 5. **Learning and TM selection:** Ctrl+Enter stores, the Translation memory menu, and the decisions below.
 

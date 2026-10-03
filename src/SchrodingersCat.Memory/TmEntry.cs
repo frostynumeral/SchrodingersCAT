@@ -26,4 +26,7 @@ public sealed record TmEntry(InlineContent Source, InlineContent Target)
 public sealed record TmMatch(TmEntry Entry, int Score)
 {
     public bool IsExact => Score >= MatchScore.Exact;
+
+    /// <summary>Where the match comes from, for display: the TM's name, or the XLIFF file's own origin; null if unknown.</summary>
+    public string? Origin { get; init; }
 }
