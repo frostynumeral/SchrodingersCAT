@@ -8,8 +8,8 @@ namespace SchrodingersCat.App.Controls;
 /// <summary>
 /// Builds chip controls, shared by the read-only views and the editor so both look the same. A code chip is a
 /// <c>Border.chip</c> with the class <c>opening</c>, <c>closing</c> or <c>standalone</c>, plus <c>protected</c> for codes
-/// that can't be deleted. An annotation half (editor only) is a small <c>Border.marker</c>. Their look comes from
-/// styles, so states can be added without touching this code.
+/// that can't be deleted and <c>problem</c> for codes the code check reports. An annotation half (editor only) is a
+/// small <c>Border.marker</c>. Their look comes from styles, so states can be added without touching this code.
 /// </summary>
 internal static class Chips
 {
@@ -28,6 +28,8 @@ internal static class Chips
         };
         if (chip.IsProtected)
             border.Classes.Add("protected");
+        if (chip.HasProblem)
+            border.Classes.Add("problem");
         ToolTip.SetTip(border, chip.ToolTip);
         return border;
     }

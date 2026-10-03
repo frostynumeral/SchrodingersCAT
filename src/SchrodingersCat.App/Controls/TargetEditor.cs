@@ -40,12 +40,17 @@ public sealed class TargetEditor : UserControl
     public static readonly StyledProperty<string?> StatusProperty =
         AvaloniaProperty.Register<TargetEditor, string?>(nameof(Status), defaultBindingMode: BindingMode.TwoWay);
 
+    public static readonly StyledProperty<IReadOnlySet<string>?> ProblemCodesProperty =
+        AvaloniaProperty.Register<TargetEditor, IReadOnlySet<string>?>(nameof(ProblemCodes));
+
     private readonly Dictionary<int, InlineElement> _chips = [];
+    private bool _rendering;
 
     static TargetEditor()
     {
         ModelProperty.Changed.AddClassHandler<TargetEditor>((editor, e) =>
             editor.OnModelChanged((TargetEditModel?)e.OldValue, (TargetEditModel?)e.NewValue));
+        ProblemCodesProperty.Changed.AddClassHandler<TargetEditor>((editor, _) => editor.Editor.TextArea.TextView.Redraw());
     }
 
     public TargetEditor()
@@ -67,6 +72,8 @@ public sealed class TargetEditor : UserControl
         area.ReadOnlySectionProvider = new BlockAllEdits();
         area.TextView.ElementGenerators.Add(new ChipGenerator(this));
         area.TextEntering += OnTextEntering;
+        area.Caret.PositionChanged += (_, _) => SyncSelection();
+        area.SelectionChanged += (_, _) => SyncSelection();
         area.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         Content = Editor;
     }
@@ -87,6 +94,13 @@ public sealed class TargetEditor : UserControl
         set => SetValue(StatusProperty, value);
     }
 
+    /// <summary>The ids of the codes whose chips get the problem outline (from the code check).</summary>
+    public IReadOnlySet<string>? ProblemCodes
+    {
+        get => GetValue(ProblemCodesProperty);
+        set => SetValue(ProblemCodesProperty, value);
+    }
+
     /// <summary>The code or annotation half drawn at a document offset, or null if the offset holds text.</summary>
     public InlineElement? ChipAt(int offset) => _chips.GetValueOrDefault(offset);
 
@@ -101,7 +115,13 @@ public sealed class TargetEditor : UserControl
             Dispatcher.UIThread.Post(() => Editor.TextArea.Focus(), DispatcherPriority.Input);
     }
 
-    private void OnModelEdited(object? sender, EventArgs e) => Render();
+    // An edit can come from outside the editor (a click on a source chip); typing should carry on here.
+    private void OnModelEdited(object? sender, EventArgs e)
+    {
+        Render();
+        if (!Editor.TextArea.IsKeyboardFocusWithin)
+            Dispatcher.UIThread.Post(() => Editor.TextArea.Focus(), DispatcherPriority.Input);
+    }
 
     private void OnTextEntering(object? sender, TextInputEventArgs e)
     {
@@ -160,10 +180,20 @@ public sealed class TargetEditor : UserControl
             Apply(m => m.InsertText(text));
     }
 
-    // The editor's caret and selection say where an edit happens.
     private void Apply(Func<TargetEditModel, EditResult> edit)
     {
         if (Model is not { } model)
+            return;
+
+        SyncSelection();
+        Status = edit(model).Message;
+    }
+
+    // The editor's caret and selection say where an edit happens, including edits from outside (a source chip click),
+    // so the model follows every move. While rendering, the editor follows the model instead.
+    private void SyncSelection()
+    {
+        if (_rendering || Model is not { } model)
             return;
 
         var area = Editor.TextArea;
@@ -172,8 +202,6 @@ public sealed class TargetEditor : UserControl
             ? caret
             : area.Selection.SurroundingSegment.Offset == caret ? area.Selection.SurroundingSegment.EndOffset : area.Selection.SurroundingSegment.Offset;
         model.Select(anchor, caret);
-
-        Status = edit(model).Message;
     }
 
     private void Render()
@@ -199,12 +227,20 @@ public sealed class TargetEditor : UserControl
         }
 
         var area = Editor.TextArea;
-        Editor.Document.Text = text.ToString();
-        if (Model is { } model)
+        _rendering = true;
+        try
         {
-            area.Caret.Offset = model.Caret;
-            var anchor = model.Caret == model.SelectionStart ? model.SelectionEnd : model.SelectionStart;
-            area.Selection = model.HasSelection ? Selection.Create(area, anchor, model.Caret) : Selection.Create(area, model.Caret, model.Caret);
+            Editor.Document.Text = text.ToString();
+            if (Model is { } model)
+            {
+                area.Caret.Offset = model.Caret;
+                var anchor = model.Caret == model.SelectionStart ? model.SelectionEnd : model.SelectionStart;
+                area.Selection = model.HasSelection ? Selection.Create(area, anchor, model.Caret) : Selection.Create(area, model.Caret, model.Caret);
+            }
+        }
+        finally
+        {
+            _rendering = false;
         }
 
         area.TextView.Redraw();
@@ -232,7 +268,10 @@ public sealed class TargetEditor : UserControl
 
             var chip = element switch
             {
-                InlineCode code => Chips.Create(ContentRuns.Chip(code, model.Unit, model.Hints)),
+                InlineCode code => Chips.Create(ContentRuns.Chip(code, model.Unit, model.Hints) with
+                {
+                    HasProblem = owner.ProblemCodes?.Contains(code.Id) == true,
+                }),
                 InlineMarker marker => Chips.CreateMarker(marker),
                 _ => null,
             };

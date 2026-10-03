@@ -1,4 +1,6 @@
+using SchrodingersCat.App.Editing;
 using SchrodingersCat.App.ViewModels;
+using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Xliff;
 
 namespace SchrodingersCat.App.Tests;
@@ -99,17 +101,92 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task SegmentsWithInlineCodes_AreReadOnly()
+    public async Task SegmentsWithInlineCodes_AreEditable()
     {
         var vm = await OpenSampleAsync();
         var tagged = vm.Segments[2];
+        vm.SelectedSegment = tagged;
+
+        tagged.EditModel.InsertText("Nyomd meg: ");
+        tagged.EditModel.InsertNextMissingCode();
+        tagged.EditModel.InsertText("OK");
+
+        Assert.Equal("Nyomd meg: ⟨1⟩OK⟨/1⟩", tagged.TargetText);
+        Assert.Equal("Translated", tagged.State);
+        Assert.True(vm.IsDirty);
+        Assert.False(tagged.HasIssues);
+    }
+
+    [Fact]
+    public async Task TheCodeCheck_RunsAfterEachEdit_AndMarksTheChipsInvolved()
+    {
+        var vm = await OpenSampleAsync();
+        var tagged = vm.Segments[2];
+        Assert.False(tagged.HasIssues); // not translated yet, so nothing to check
 
         tagged.TargetText = "Nyomja meg az OK gombot.";
 
-        Assert.False(tagged.IsEditable);
-        Assert.NotNull(tagged.ReadOnlyReason);
-        Assert.Equal("", tagged.TargetText);
-        Assert.False(vm.IsDirty);
+        var issue = Assert.Single(tagged.Issues);
+        Assert.Equal(InlineCodeIssueKind.MissingCode, issue.Kind);
+        Assert.True(tagged.HasWarnings);
+        Assert.False(tagged.HasErrors);
+        Assert.Equal("Warning: Code '1' is missing from the target.", tagged.IssueSummary);
+        Assert.All(tagged.SourceRuns.OfType<ChipRun>(), c => Assert.True(c.HasProblem)); // a missing code is marked where it is: the source
+
+        // Clicking a source chip inserts the code; the check clears.
+        vm.SelectedSegment = tagged;
+        tagged.InsertCodeCommand.Execute(tagged.SourceRuns.OfType<ChipRun>().First());
+
+        Assert.False(tagged.HasIssues);
+        Assert.Null(tagged.IssueSummary);
+        Assert.All(tagged.SourceRuns.OfType<ChipRun>(), c => Assert.False(c.HasProblem));
+        Assert.Equal("Nyomja meg az OK gombot.⟨1⟩⟨/1⟩", tagged.TargetText);
+    }
+
+    [Fact]
+    public async Task InsertingASourceCode_OnlyWorksInTheActiveSegment()
+    {
+        var vm = await OpenSampleAsync();
+        var tagged = vm.Segments[2];
+        var chip = tagged.SourceRuns.OfType<ChipRun>().First();
+
+        Assert.False(tagged.InsertCodeCommand.CanExecute(chip));
+
+        vm.SelectedSegment = tagged;
+        Assert.True(tagged.InsertCodeCommand.CanExecute(chip));
+    }
+
+    [Fact]
+    public async Task AnEdit_UpdatesTheIssuesOfTheUnitsOtherSegments()
+    {
+        // A pair spanning two segments: deleting its closing half in s2 leaves its opening half in s1 unpaired.
+        var vm = new MainWindowViewModel(_serializer, new FakeDialogs(_files.Write("spanning.xlf", """
+            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+              <file id="f1">
+                <unit id="u1">
+                  <segment id="s1"><source><sc id="1"/>Bold</source><target><sc id="1"/>Félkövér</target></segment>
+                  <segment id="s2"><source> text<ec startRef="1"/>.</source><target> szöveg<ec startRef="1"/>.</target></segment>
+                </unit>
+              </file>
+            </xliff>
+            """)));
+        await vm.OpenCommand.ExecuteAsync(null);
+        var (first, second) = (vm.Segments[0], vm.Segments[1]);
+        Assert.False(first.HasIssues);
+        var changed = new List<string?>();
+        first.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        second.EditModel.MoveCaret(8); // after the closing half
+        second.EditModel.Delete(DeleteDirection.Backward);
+
+        var issue = Assert.Single(first.Issues);
+        Assert.Equal(InlineCodeIssueKind.Unpaired, issue.Kind);
+        Assert.True(first.HasErrors);
+        Assert.Equal(["1"], first.TargetProblemCodes);
+        Assert.True(Assert.IsType<ChipRun>(first.TargetRuns[0]).HasProblem);
+        Assert.Contains(nameof(SegmentViewModel.HasErrors), changed);
+        Assert.Contains(nameof(SegmentViewModel.TargetRuns), changed);
+        Assert.False(second.HasIssues);
     }
 
     [Fact]

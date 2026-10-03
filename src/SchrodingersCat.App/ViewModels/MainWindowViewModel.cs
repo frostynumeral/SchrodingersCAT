@@ -93,8 +93,9 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         Segments.Clear();
         foreach (var unit in document.Units)
         {
+            var check = new UnitCheck(unit);
             foreach (var segment in unit.TranslatableSegments)
-                Segments.Add(new SegmentViewModel(unit, segment, () => IsDirty = true));
+                Segments.Add(new SegmentViewModel(check, segment, () => IsDirty = true));
         }
 
         FilePath = path;

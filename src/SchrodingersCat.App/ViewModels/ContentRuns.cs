@@ -39,6 +39,9 @@ public sealed record ChipRun(string CodeId, InlineCodeKind Kind, string Label, s
         InlineCodeKind.Closing => $"{Label}⟩",
         _ => Label,
     };
+
+    /// <summary>The code check reports a problem with this code (design section 3); the chip gets a red outline.</summary>
+    public bool HasProblem { get; init; }
 }
 
 /// <summary>Turns segment content into <see cref="ContentRun"/>s for the read-only chip views (design section 1).</summary>
@@ -75,6 +78,17 @@ public static class ContentRuns
         }
 
         return runs;
+    }
+
+    /// <summary>Marks the chips of the codes in <paramref name="problemCodes"/> as having a problem.</summary>
+    public static IReadOnlyList<ContentRun> MarkProblems(IReadOnlyList<ContentRun> runs, IReadOnlySet<string> problemCodes)
+    {
+        ArgumentNullException.ThrowIfNull(runs);
+        ArgumentNullException.ThrowIfNull(problemCodes);
+
+        return problemCodes.Count == 0
+            ? runs
+            : [.. runs.Select(r => r is ChipRun chip && problemCodes.Contains(chip.CodeId) ? chip with { HasProblem = true } : r)];
     }
 
     /// <summary>One code half as a chip.</summary>

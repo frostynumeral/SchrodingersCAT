@@ -12,6 +12,7 @@ using SchrodingersCat.App.Controls;
 using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.App.Views;
+using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Xliff;
 
 namespace SchrodingersCat.App.Tests;
@@ -267,14 +268,126 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal("Start of code 2\n<b class=\"warn\">", ToolTip.GetTip(opening));
         Assert.Equal("End of code 2\n</b>", ToolTip.GetTip(closing));
 
-        // The target can't be edited yet (step 6): even when selected, it shows the same chips, read-only.
-        Click(window, TargetFrames(window)[0]);
-        Assert.Same(vm.Segments[0], vm.SelectedSegment);
-        Assert.Empty(VisibleEditors(window));
+        // Not selected, the target shows the same chips, read-only; selected, the editor shows them.
         var target = ContentBlock(window, "target");
-        Assert.True(target.IsEffectivelyVisible);
         Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], Chips(target).Select(Label));
         Assert.Equal("Szia {0}, nyomd meg: ⟨bOKb⟩.", string.Concat(target.Inlines!.Select(InlineText)));
+
+        Click(window, TargetFrames(window)[0]);
+        Assert.Same(vm.Segments[0], vm.SelectedSegment);
+        var editor = Assert.Single(VisibleEditors(window));
+        Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], EditorChips(editor).Select(Label));
+    }
+
+    [AvaloniaFact]
+    public async Task OpenEditTaggedSegmentSave_KeepsTheCodes()
+    {
+        var path = _files.Write("tagged.xlf", """
+            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+              <file id="f1">
+                <unit id="u1">
+                  <segment><source>Hello <ph id="1" disp="{0}" canDelete="no"/>, press <pc id="2" subType="xlf:b" type="fmt">OK</pc>.</source></segment>
+                </unit>
+              </file>
+            </xliff>
+            """);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        Assert.False(IssueBadge(window).IsVisible); // not translated yet
+
+        Click(window, TargetFrames(window)[0]);
+        var editor = Assert.Single(VisibleEditors(window));
+        window.KeyTextInput("Szia ");
+        Dispatcher.UIThread.RunJobs();
+
+        // Both codes are missing: the protected one is an error, and the source chips are outlined.
+        var badge = IssueBadge(window);
+        Assert.True(badge.IsVisible);
+        Assert.Contains("error", badge.Classes);
+        Assert.Equal("2", Label(badge));
+        Assert.All(Chips(ContentBlock(window, "source")), c => Assert.Contains("problem", c.Classes));
+
+        // Clicking a source chip inserts it at the caret, and the editor keeps the keyboard.
+        Click(window, Chips(ContentBlock(window, "source"))[0]);
+        window.KeyTextInput(", nyomd meg: ");
+        Click(window, Chips(ContentBlock(window, "source"))[1]); // a pair: the caret goes between its halves
+        window.KeyTextInput("OK");
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], EditorChips(editor).Select(Label));
+        Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
+        Assert.False(IssueBadge(window).IsVisible);
+        Assert.All(Chips(ContentBlock(window, "source")), c => Assert.DoesNotContain("problem", c.Classes));
+
+        window.KeyPressQwerty(PhysicalKey.S, RawInputModifiers.Control);
+        await WaitFor(() => !vm.IsDirty);
+
+        var saved = await new Xliff20Serializer().ReadFileAsync(path, TestContext.Current.CancellationToken);
+        var segment = saved.Units.Single().Segments.Single();
+        Assert.Equal(new InlineContent(
+        [
+            new InlineText("Szia "),
+            new InlineCode("1", InlineCodeKind.Standalone) { Disp = "{0}", CanDelete = false },
+            new InlineText(", nyomd meg: "),
+            new InlineCode("2", InlineCodeKind.Opening) { SubType = "xlf:b", Type = "fmt", CanOverlap = false },
+            new InlineText("OK"),
+            new InlineCode("2", InlineCodeKind.Closing) { SubType = "xlf:b", Type = "fmt", CanOverlap = false },
+        ]), segment.Target);
+        Assert.Equal(SegmentState.Translated, segment.State);
+    }
+
+    // Regression: the active row's read-only target is hidden but still got its chips rebuilt after each edit, and
+    // Avalonia's next render of the hidden block threw "Visual was invalidated during the render pass".
+    [AvaloniaFact]
+    public async Task EditingATaggedSegment_RendersWithTheReadOnlyTargetHidden()
+    {
+        var path = _files.Write("tagged.xlf", TestFiles.Sample);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        var tagged = vm.Segments[2];
+        vm.SelectedSegment = tagged;
+        Dispatcher.UIThread.RunJobs();
+
+        tagged.InsertCodeCommand.Execute(tagged.SourceRuns.OfType<ChipRun>().First());
+        Dispatcher.UIThread.RunJobs();
+        window.CaptureRenderedFrame();
+
+        Click(window, TargetFrames(window)[0]);
+        Assert.Equal(["⟨1", "1⟩"], Chips(TargetViews(window)[2]).Select(Label)); // shown once visible again
+    }
+
+    [AvaloniaFact]
+    public async Task AProblemCode_IsOutlinedInTheEditor()
+    {
+        var path = _files.Write("unknown.xlf", """
+            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+              <file id="f1">
+                <unit id="u1">
+                  <segment><source>A<ph id="1"/></source><target>A<ph id="1"/><ph id="9"/></target></segment>
+                </unit>
+              </file>
+            </xliff>
+            """);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+
+        Assert.Equal([[], ["problem"]], Chips(ContentBlock(window, "target")).Select(ProblemClass));
+
+        Click(window, TargetFrames(window)[0]);
+        Assert.Equal([[], ["problem"]], EditorChips(Assert.Single(VisibleEditors(window))).Select(ProblemClass));
+    }
+
+    private static Border IssueBadge(Window window)
+    {
+        Dispatcher.UIThread.RunJobs();
+        return window.GetVisualDescendants().OfType<Border>().Single(b => b.Classes.Contains("issueBadge"));
+    }
+
+    private static string[] ProblemClass(Border chip) => [.. chip.Classes.Where(c => c == "problem")];
+
+    private static List<Border> EditorChips(TargetEditor editor)
+    {
+        Dispatcher.UIThread.RunJobs();
+        return editor.Editor.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("chip")).ToList();
     }
 
     private static InlineContentBlock ContentBlock(Window window, string role)

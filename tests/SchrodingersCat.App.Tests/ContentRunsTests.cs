@@ -137,7 +137,7 @@ public class ContentRunsTests
             Source = new InlineContent([new InlineText("cat"), new InlineMarker("t", InlineMarkerKind.Closing), new InlineText(".")]),
         });
 
-        var second = new SegmentViewModel(unit, unit.Segments[1], () => { });
+        var second = new SegmentViewModel(new UnitCheck(unit), unit.Segments[1], () => { });
 
         Assert.Equal([new TextRun("cat", AnnotationStyle.Term), new TextRun(".", AnnotationStyle.None)], second.SourceRuns);
     }
@@ -146,7 +146,7 @@ public class ContentRunsTests
     public void SegmentViewModel_TargetRunsAreEmptyWithoutATarget()
     {
         var unit = Unit(new InlineContent([new InlineCode("1", InlineCodeKind.Standalone)]));
-        var segment = new SegmentViewModel(unit, unit.Segments[0], () => { });
+        var segment = new SegmentViewModel(new UnitCheck(unit), unit.Segments[0], () => { });
 
         Assert.Empty(segment.TargetRuns);
 
