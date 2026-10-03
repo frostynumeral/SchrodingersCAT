@@ -1,3 +1,4 @@
+using SchrodingersCat.App.Editing;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Models;
@@ -152,6 +153,40 @@ public class ContentRunsTests
 
         unit.Segments[0].Target = InlineContent.Empty;
         Assert.Empty(segment.TargetRuns);
+    }
+
+    [Fact]
+    public void Slice_CountsAChipAsOnePosition_AndKeepsItsCode()
+    {
+        var open = new InlineCode("1", InlineCodeKind.Opening);
+        var close = new InlineCode("1", InlineCodeKind.Closing);
+        var source = new InlineContent([new InlineText("Press "), open, new InlineText("OK"), close, new InlineText(".")]);
+        var unit = Unit(source);
+        var runs = Build(unit, source);
+
+        Assert.Equal(source, ContentRuns.Slice(runs, 0, 11));
+        Assert.Equal(new InlineContent([new InlineText("ss "), open, new InlineText("O")]), ContentRuns.Slice(runs, 3, 8));
+        Assert.Equal(InlineContent.Empty, ContentRuns.Slice(runs, 4, 4));
+    }
+
+    [Fact]
+    public void CodeChoices_AreTheUnitsSourceCodes_ThisSegmentsFirst()
+    {
+        var unit = new TranslationUnit { Id = "u1" };
+        unit.Segments.Add(new Segment { Source = new InlineContent([new InlineCode("a", InlineCodeKind.Standalone) { Disp = "{0}" }]) });
+        unit.Segments.Add(new Segment
+        {
+            Source = new InlineContent([new InlineCode("b", InlineCodeKind.Opening) { SubType = "xlf:b" }, new InlineText("x"), new InlineCode("b", InlineCodeKind.Closing) { SubType = "xlf:b" }]),
+            Target = new InlineContent([new InlineCode("b", InlineCodeKind.Opening) { SubType = "xlf:b" }, new InlineText("x"), new InlineCode("b", InlineCodeKind.Closing) { SubType = "xlf:b" }]),
+        });
+
+        var choices = CodeChoice.For(new TargetEditModel(unit, unit.Segments[1]));
+
+        Assert.Equal([("b", "⟨b…b⟩", false), ("a", "{0}", true)], choices.Select(c => (c.CodeId, c.Text, c.IsMissing)));
+        Assert.StartsWith("Missing from the target.", choices[1].Description, StringComparison.Ordinal);
+        Assert.True(choices[1].Matches("{0"));
+        Assert.True(choices[1].Matches("A")); // the id, ignoring case
+        Assert.False(choices[1].Matches("b"));
     }
 
     private static TranslationUnit Unit(InlineContent source)

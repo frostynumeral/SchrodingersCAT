@@ -380,6 +380,22 @@ public class TargetEditModelTests
         Assert.Contains("'1'", result.Message);
     }
 
+    // Regression (found by the property test): copying the source's annotation halves put a second m1 opening into
+    // the unit's target, which the writer refuses.
+    [Fact]
+    public async Task CopySource_LeavesOutAnnotationHalvesUsedInAnotherSegment()
+    {
+        var (model, unit) = await EditWithUnitAsync("""
+            <segment id="s1"><source><sm id="m1" type="term"/>a</source></segment>
+            <segment id="s2"><source>b<em startRef="m1"/></source><target><sm id="m1" type="term"/>y<em startRef="m1"/></target></segment>
+            """);
+
+        model.CopySource();
+
+        Assert.Equal("a|", Show(model));
+        Assert.Single(unit.Segments.SelectMany(s => s.Target ?? InlineContent.Empty).OfType<InlineMarker>(), m => m.Kind == InlineMarkerKind.Opening);
+    }
+
     [Fact]
     public async Task CopySource_KeepsProtectedCodesTheTargetHad()
     {
@@ -483,6 +499,133 @@ public class TargetEditModelTests
         model.Delete(DeleteDirection.Forward); // at the end: nothing happens
 
         Assert.Equal(3, changes);
+    }
+
+    // ---------------------------------------------------------------- clipboard
+
+    [Fact]
+    public async Task SelectedContent_IsTheSelectionWithItsCodes()
+    {
+        var model = await EditAsync("""<segment><source><pc id="1">a</pc></source><target>x<pc id="1">yz</pc></target></segment>""");
+        model.Select(1, 4); // ⟨1⟩yz
+
+        Assert.Equal(new InlineContent([new InlineCode("1", InlineCodeKind.Opening) { CanOverlap = false }, new InlineText("yz")]), model.SelectedContent());
+    }
+
+    [Fact]
+    public async Task CutAndPaste_MovesACode()
+    {
+        var (model, unit) = await EditWithUnitAsync(Sample);
+        model.CopySource(); // Press ⟨1⟩OK⟨/1⟩ for ⟨2/⟩ files.
+        model.Select(6, 10);
+        var clip = model.SelectedContent();
+        model.Delete(DeleteDirection.Backward);
+        model.MoveCaret(model.Length - 1);
+
+        var result = model.Paste(clip, unit);
+
+        Assert.Equal(EditResult.Done, result);
+        Assert.Equal("Press  for ⟨2/⟩ files⟨1⟩OK⟨/1⟩|.", Show(model));
+    }
+
+    [Fact]
+    public async Task CopyAndPaste_OfACopyableCode_PastesACopy()
+    {
+        var (model, unit) = await EditWithUnitAsync(Sample);
+        model.CopySource();
+        model.Select(6, 10);
+        var clip = model.SelectedContent();
+        model.MoveCaret(model.Length);
+
+        model.Paste(clip, unit);
+
+        var copy = model.ToContent().OfType<InlineCode>().Last();
+        Assert.Equal(new InlineCode("3", InlineCodeKind.Closing) { DataRef = "d2", CanOverlap = false }, copy); // a new id, the same original data
+        Assert.DoesNotContain(InlineCodeChecker.Check(unit), i => i.Severity == IssueSeverity.Error);
+    }
+
+    [Fact]
+    public async Task Paste_LeavesOutCodesThatMayNotBeCopied_AndPartsOfCodes()
+    {
+        var (model, unit) = await EditWithUnitAsync(Sample);
+        model.CopySource();
+        model.Select(9, model.Length); // ⟨/1⟩ for ⟨2/⟩ files.: half of 1, and 2 which may not be copied
+        var clip = model.SelectedContent();
+        model.MoveCaret(0);
+
+        var result = model.Paste(clip, unit);
+
+        Assert.Equal(" for  files.|Press ⟨1⟩OK⟨/1⟩ for ⟨2/⟩ files.", Show(model));
+        Assert.Contains("'1', '2'", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Paste_FromAnotherUnit_PastesOnlyTheText()
+    {
+        var (model, unit) = await EditWithUnitAsync(Sample);
+        var other = await ReadUnitAsync(Sample);
+        var clip = new InlineContent([new InlineText("a"), new InlineCode("1", InlineCodeKind.Standalone), new InlineText("b")]);
+
+        var result = model.Paste(clip, other);
+
+        Assert.Equal("ab|", Show(model));
+        Assert.Equal("Codes from another unit were left out; only the text was pasted.", result.Message);
+        Assert.Equal("ab", unit.Segments[0].Target!.ToPlainText());
+    }
+
+    [Fact]
+    public async Task Paste_ReplacesTheSelection_KeepingProtectedCodes_AndIsOneUndoStep()
+    {
+        var (model, unit) = await EditWithUnitAsync(Sample);
+        model.InsertText("x");
+        model.InsertCode("2");
+        model.Select(0, model.Length);
+
+        model.Paste(InlineContent.FromText("Hello"), null);
+        Assert.Equal("Hello|⟨2/⟩", Show(model));
+
+        model.Undo();
+        Assert.Equal("x⟨2/⟩|", Show(model));
+        Assert.Equal("x", unit.Segments[0].Target!.ToPlainText());
+    }
+
+    [Fact]
+    public async Task Paste_AnnotationsComeAlongWhole_AndOnlyOnce()
+    {
+        var (model, unit) = await EditWithUnitAsync("""<segment><source><mrk id="m1" type="term">file</mrk></source><target><mrk id="m1" type="term">fájl</mrk></target></segment>""");
+        model.Select(0, model.Length);
+        var whole = model.SelectedContent();
+        model.Delete(DeleteDirection.Backward);
+
+        model.Paste(whole, unit);
+        Assert.Equal("⟦m1⟧fájl⟦/m1⟧|", Show(model));
+
+        var again = model.Paste(whole, unit); // already in the target: annotations aren't copied
+        Assert.Equal("⟦m1⟧fájl⟦/m1⟧fájl|", Show(model));
+        Assert.Equal("Left out annotations that are already in the target or were only partly copied.", again.Message);
+    }
+
+    [Fact]
+    public async Task Paste_NothingUsable_IsRefusedWithTheReason()
+    {
+        var (model, unit) = await EditWithUnitAsync(Sample);
+        model.InsertCode("2");
+
+        var result = model.Paste(new InlineContent([new InlineCode("2", InlineCodeKind.Standalone)]), unit);
+
+        Assert.True(result.IsRefused);
+        Assert.Equal("⟨2/⟩|", Show(model));
+    }
+
+    [Fact]
+    public async Task IsMissing_LooksAtTheWholeUnitsTarget()
+    {
+        var model = await EditAsync(Sample);
+        Assert.True(model.IsMissing("1"));
+
+        model.InsertCode("1");
+        Assert.False(model.IsMissing("1"));
+        Assert.False(model.IsMissing("unknown"));
     }
 
     // ---------------------------------------------------------------- helpers

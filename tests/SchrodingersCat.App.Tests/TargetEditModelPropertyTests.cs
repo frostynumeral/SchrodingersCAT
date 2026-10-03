@@ -44,6 +44,12 @@ public class TargetEditModelPropertyTests
                     Assert.InRange(model.SelectionStart, 0, model.SelectionEnd);
                     Assert.Superset(protectedAtStart, ProtectedHalves(model.ToContent(), hints));
                     Assert.Equal(model.ToContent(), segment.Target ?? InlineContent.Empty);
+
+                    // No edit, paste included, puts the same code or annotation half into the unit's target twice.
+                    var halves = unit.Segments.SelectMany(s => s.Target ?? InlineContent.Empty)
+                        .Select(e => e switch { InlineCode c => $"code {c.Id} {c.Kind}", InlineMarker m => $"marker {m.Id} {m.Kind}", _ => null })
+                        .OfType<string>().ToList();
+                    Assert.Equal(halves.Distinct().Count(), halves.Count);
                 }
             }
         });
@@ -51,11 +57,11 @@ public class TargetEditModelPropertyTests
     private static void Apply(TargetEditModel model, Segment segment, int step)
     {
         var sourceIds = segment.Source.OfType<InlineCode>().Select(c => c.Id).Distinct().ToList();
-        var position = step / 16 % (model.Length + 1);
-        switch (step % 16)
+        var position = step / 18 % (model.Length + 1);
+        switch (step % 18)
         {
             case 0 or 1 or 2:
-                model.InsertText(" é😀\t"[(step / 16) % 4].ToString());
+                model.InsertText(" é😀\t"[(step / 18) % 4].ToString());
                 break;
             case 3:
                 model.InsertText("szó ");
@@ -76,7 +82,7 @@ public class TargetEditModelPropertyTests
                 model.InsertNextMissingCode();
                 break;
             case 10 when sourceIds.Count > 0:
-                model.InsertCode(sourceIds[step / 16 % sourceIds.Count]);
+                model.InsertCode(sourceIds[step / 18 % sourceIds.Count]);
                 break;
             case 11:
                 model.InsertCode("no-such-code");
@@ -84,7 +90,13 @@ public class TargetEditModelPropertyTests
             case 12:
                 model.CopySource();
                 break;
-            case 13 or 14:
+            case 13:
+                model.Paste(model.SelectedContent(), model.Unit); // copy and paste in place
+                break;
+            case 14:
+                model.Paste(segment.Source, step % 3 == 0 ? null : model.Unit); // from the source column, or another app
+                break;
+            case 15 or 16:
                 model.Undo();
                 break;
             default:

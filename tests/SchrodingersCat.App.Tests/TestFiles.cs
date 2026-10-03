@@ -43,6 +43,9 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
 
     public UnsavedChangesChoice Choice { get; set; } = UnsavedChangesChoice.Cancel;
 
+    /// <summary>The answer to confirmations.</summary>
+    public bool Confirm { get; set; }
+
     public List<string> Asked { get; } = [];
 
     public Task<string?> PickFileToOpenAsync()
@@ -61,5 +64,11 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
     {
         Asked.Add($"save changes to {fileName}?");
         return Task.FromResult(Choice);
+    }
+
+    public Task<bool> ConfirmAsync(string title, string message, string confirmLabel)
+    {
+        Asked.Add($"confirm: {title}");
+        return Task.FromResult(Confirm);
     }
 }

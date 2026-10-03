@@ -35,6 +35,9 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     public string Label { get; }
 
+    /// <summary>The unit the segment belongs to.</summary>
+    public TranslationUnit Unit => _unit;
+
     public string SourceText { get; }
 
     /// <summary>The source with codes as chips; codes missing from the target are marked as problems.</summary>
@@ -97,6 +100,34 @@ public sealed partial class SegmentViewModel : ObservableObject
     public partial string? EditStatus { get; set; }
 
     public string State => _segment.State.ToString();
+
+    /// <summary>The target has content (copying the source over it asks first).</summary>
+    public bool HasTarget => _segment.Target is { IsEmpty: false };
+
+    /// <summary>
+    /// Confirms the translation (Ctrl+Enter): an Initial segment becomes Translated; later states stay. Refused, with
+    /// a status message, when there is no translation yet.
+    /// </summary>
+    public bool Confirm()
+    {
+        if (_segment.Target is null)
+        {
+            EditStatus = "Translate the segment before confirming it.";
+            return false;
+        }
+
+        if (_segment.State == SegmentState.Initial)
+        {
+            _segment.State = SegmentState.Translated;
+            OnPropertyChanged(nameof(State));
+            _changed();
+        }
+
+        return true;
+    }
+
+    /// <summary>Replaces the target with the source (Ctrl+Insert), as one undoable edit.</summary>
+    public void CopySource() => EditStatus = EditModel.CopySource().Message;
 
     /// <summary>
     /// The target as text. Setting it replaces the target, through the edit model so it can be undone, as selecting
