@@ -6,37 +6,40 @@ namespace SchrodingersCat.Memory;
 /// A translation memory held in memory, scoring every entry on lookup (design section 2). The SQLite TM (step 2)
 /// adds an index on top of the same scoring.
 /// </summary>
-public sealed class InMemoryTranslationMemory
+public sealed class InMemoryTranslationMemory : ITranslationMemory
 {
     /// <summary>Matches below this score aren't returned.</summary>
-    public const int DefaultThreshold = 70;
+    public const int DefaultThreshold = Ranking.DefaultThreshold;
 
     /// <summary>At most this many matches are returned.</summary>
-    public const int DefaultMaxMatches = 5;
+    public const int DefaultMaxMatches = Ranking.DefaultMaxMatches;
 
-    private readonly List<(TmEntry Entry, MatchScore.Normalized Source, string TargetKey)> _entries = [];
+    private readonly List<(TmEntry Entry, MatchScore.Normalized Source)> _entries = [];
+
+    // Where each pair is in _entries, so storing it again replaces it in place without a scan.
+    private readonly Dictionary<(string SourceKey, string TargetKey), int> _positions = [];
 
     public IReadOnlyList<TmEntry> Entries => [.. _entries.Select(e => e.Entry)];
 
-    /// <summary>
-    /// Stores a translation. Storing a pair that's already there (the same source and target, ignoring code ids)
-    /// replaces it, so its date and context are the newest; another translation of the same source is kept beside the
-    /// first (decision 4).
-    /// </summary>
+    public int Count => _entries.Count;
+
     public void Add(TmEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
 
         var source = MatchScore.Normalized.Of(entry.Source);
-        var targetKey = MatchScore.Normalized.Of(entry.Target).Key;
-        _entries.RemoveAll(e => e.Source.Key == source.Key && e.TargetKey == targetKey);
-        _entries.Add((entry, source, targetKey));
+        var pair = (source.Key, Ranking.TargetKey(entry));
+        if (_positions.TryGetValue(pair, out var position))
+        {
+            _entries[position] = (entry, source);
+        }
+        else
+        {
+            _positions[pair] = _entries.Count;
+            _entries.Add((entry, source));
+        }
     }
 
-    /// <summary>
-    /// The best matches for a source, best first, newest first among equal scores. An exact match between the same
-    /// neighbours scores 101; that needs at least one neighbour, so a lone segment's exact match stays 100.
-    /// </summary>
     public IReadOnlyList<TmMatch> Lookup(
         InlineContent source,
         string? previousSource = null,
@@ -46,20 +49,6 @@ public sealed class InMemoryTranslationMemory
     {
         ArgumentNullException.ThrowIfNull(source);
 
-        var query = MatchScore.Normalized.Of(source);
-        var hasContext = !string.IsNullOrWhiteSpace(previousSource) || !string.IsNullOrWhiteSpace(nextSource);
-        return [.. _entries
-            .Select(e =>
-            {
-                var score = MatchScore.Compare(query, e.Source);
-                if (score == MatchScore.Exact && hasContext
-                    && MatchScore.SameContext(previousSource, e.Entry.PreviousSource) && MatchScore.SameContext(nextSource, e.Entry.NextSource))
-                    score = MatchScore.Context;
-                return new TmMatch(e.Entry, score);
-            })
-            .Where(m => m.Score >= threshold)
-            .OrderByDescending(m => m.Score)
-            .ThenByDescending(m => m.Entry.Changed)
-            .Take(maxMatches)];
+        return Ranking.Rank(MatchScore.Normalized.Of(source), previousSource, nextSource, _entries, threshold, maxMatches);
     }
 }
