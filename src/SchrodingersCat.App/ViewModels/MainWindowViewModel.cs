@@ -66,7 +66,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
 
         return await dialogs.AskToSaveChangesAsync(Path.GetFileName(FilePath!)) switch
         {
-            UnsavedChangesChoice.Save => await SaveToAsync(FilePath!),
+            UnsavedChangesChoice.Save => await ConfirmCodeErrorsAsync() && await SaveToAsync(FilePath!),
             UnsavedChangesChoice.DontSave => true,
             _ => false,
         };
@@ -104,14 +104,33 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
-    private async Task SaveAsync() => await SaveToAsync(FilePath!);
+    private async Task SaveAsync()
+    {
+        if (await ConfirmCodeErrorsAsync())
+            await SaveToAsync(FilePath!);
+    }
 
     /// <summary>Saves to a new path, which becomes the open file. The original file is left as it was.</summary>
     [RelayCommand(CanExecute = nameof(CanSave))]
     private async Task SaveAsAsync()
     {
-        if (await dialogs.PickFileToSaveAsync(Path.GetFileName(FilePath)) is { } path && await SaveToAsync(path))
+        if (await ConfirmCodeErrorsAsync() && await dialogs.PickFileToSaveAsync(Path.GetFileName(FilePath)) is { } path && await SaveToAsync(path))
             FilePath = path;
+    }
+
+    // Decision 2 of docs/design/inline-code-editing.md: warn, and let the translator save unfinished work anyway.
+    // (The writer still refuses what XLIFF can't hold, such as unpaired codes; that failure shows in the banner.)
+    private async Task<bool> ConfirmCodeErrorsAsync()
+    {
+        var withErrors = Segments.Where(s => s.HasErrors).Select(s => s.Label).ToList();
+        if (withErrors.Count == 0)
+            return true;
+
+        var names = string.Join(", ", withErrors.Take(3)) + (withErrors.Count > 3 ? ", …" : "");
+        var message = withErrors.Count == 1
+            ? $"Segment {names} has code errors. Save anyway?"
+            : $"{withErrors.Count} segments have code errors ({names}). Save anyway?";
+        return await dialogs.ConfirmAsync("Code errors", message, "Save anyway");
     }
 
     private async Task<bool> SaveToAsync(string path)

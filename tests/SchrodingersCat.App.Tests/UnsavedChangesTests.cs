@@ -7,6 +7,81 @@ namespace SchrodingersCat.App.Tests;
 /// <summary>Unsaved edits are never lost without asking: opening another file, closing, and "Save as".</summary>
 public sealed class UnsavedChangesTests : IDisposable
 {
+    // ---------------------------------------------------------------- code errors (decision 2)
+
+    // The protected {0} of u1 is missing from the target: an error.
+    private const string WithCodeError = """
+        <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+          <file id="f1">
+            <unit id="u1"><segment><source>Hello <ph id="1" disp="{0}" canDelete="no"/>.</source><target>Szia.</target></segment></unit>
+            <unit id="u2"><segment><source>Bye.</source></segment></unit>
+          </file>
+        </xliff>
+        """;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Save_WithCodeErrors_WarnsFirst(bool saveAnyway)
+    {
+        var path = _files.Write("errors.xlf", WithCodeError);
+        var dialogs = new FakeDialogs(path) { Confirm = saveAnyway };
+        var vm = new MainWindowViewModel(_serializer, dialogs);
+        await vm.OpenCommand.ExecuteAsync(null);
+        vm.Segments[1].TargetText = "Viszlát.";
+        dialogs.Asked.Clear();
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(["confirm: Code errors"], dialogs.Asked);
+        Assert.Equal(["Segment u1 has code errors. Save anyway?"], dialogs.Messages);
+        Assert.Equal(!saveAnyway, vm.IsDirty);
+        Assert.Equal(saveAnyway, File.ReadAllText(path).Contains("Viszlát.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Save_WithoutCodeErrors_DoesNotWarn()
+    {
+        var (vm, dialogs, _) = await OpenEditedSampleAsync();
+        dialogs.Asked.Clear();
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Empty(dialogs.Asked);
+        Assert.False(vm.IsDirty);
+    }
+
+    [Fact]
+    public async Task SaveAs_WithCodeErrors_WarnsBeforeThePicker()
+    {
+        var path = _files.Write("errors.xlf", WithCodeError);
+        var dialogs = new FakeDialogs(path) { Confirm = false, SavePath = _files.PathOf("copy.xlf") };
+        var vm = new MainWindowViewModel(_serializer, dialogs);
+        await vm.OpenCommand.ExecuteAsync(null);
+        dialogs.Asked.Clear();
+
+        await vm.SaveAsCommand.ExecuteAsync(null);
+
+        Assert.Equal(["confirm: Code errors"], dialogs.Asked); // declined: no picker
+        Assert.False(File.Exists(_files.PathOf("copy.xlf")));
+    }
+
+    [Fact]
+    public async Task Close_Save_WithCodeErrors_Declined_KeepsTheWindowOpen()
+    {
+        var path = _files.Write("errors.xlf", WithCodeError);
+        var dialogs = new FakeDialogs(path) { Choice = UnsavedChangesChoice.Save, Confirm = false };
+        var vm = new MainWindowViewModel(_serializer, dialogs);
+        await vm.OpenCommand.ExecuteAsync(null);
+        vm.Segments[1].TargetText = "Viszlát.";
+        dialogs.Asked.Clear();
+
+        Assert.False(await vm.ConfirmCloseAsync());
+
+        Assert.Equal(["save changes to errors.xlf?", "confirm: Code errors"], dialogs.Asked);
+        Assert.True(vm.IsDirty);
+    }
+
     private readonly TestFiles _files = new();
     private readonly Xliff20Serializer _serializer = new();
 
