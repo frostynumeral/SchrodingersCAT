@@ -86,11 +86,15 @@ any other edit.
 
 - **A SQLite file** per TM (`*.sctm`), through `Microsoft.Data.Sqlite`. One file is easy to copy and back up,
   survives crashes (transactions), and is fast enough for hundreds of thousands of entries.
-- **Candidates for fuzzy matches** come from an index of word trigrams of the normalised source: the entries
-  sharing the most trigrams with the current source are scored, not the whole TM. (SQLite's FTS5 with the trigram
-  tokenizer is the alternative; the spike in step 2 compares them.)
-- **Content** is stored as XLIFF inline XML (the format Core already reads and writes), so nothing new needs a
-  serializer.
+- **Candidates for fuzzy matches** come from an index of word bigrams of the normalised source (with sentence start
+  and end marks, numbers as one word): the entries sharing the most bigrams with the current source are scored, not
+  the whole TM. A lookup reads the query's bigrams from the rarest up, within a budget of index rows, so very common
+  bigrams can't make it slow. (Proposed as word trigrams, or SQLite's FTS5 with its trigram tokenizer; the step 2
+  spike chose bigrams, see below.)
+- **Content** is stored in a small binary format of its own (`TmContentFormat`), with every property of every
+  element and strings as raw UTF-16. (Proposed as XLIFF inline XML, but Core has no content-only reader or writer,
+  its document writer refuses what a TM entry legitimately holds, such as a pair half whose other half is in the next
+  segment, and UTF-8 text or JSON would mangle the lone surrogates `<cp>` can bring in.)
 - **Untrusted files:** a TM file can come from someone else, like an XLIFF file. Opening one checks its schema
   version and never runs anything stored in it.
 
@@ -132,8 +136,22 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - Example tests per rule (whitespace, case, codes, numbers, context).
    - Property tests with the shared generators: a source matches itself at 100%; scores are within 0–101; inserting
      a 100% match of a unit's own segment reproduces its target codes exactly.
-2. **Storage spike and SQLite TM:** trigram index versus FTS5 on a generated TM of 200,000 entries; then the chosen
-   one, with lookups under 50 ms at that size.
+2. **Storage spike and SQLite TM:** *(Done 2026-10-03.)* trigram index versus FTS5 on a generated TM of 200,000
+   entries; then the chosen one, with lookups under 50 ms at that size.
+   - **Spike** (throwaway, not kept): 60,000 random sentences of 3–25 words from a 6,000-word Zipf vocabulary, plus
+     140,000 variants with 1–4 word edits; 300 queries (100 stored sentences, 100 new variants, 100 new sentences);
+     the in-memory TM's full scan as the reference.
+
+     | Candidates from | Lookup, median / p95 | Same top 5 as the full scan | Matches found | Build |
+     |---|---|---|---|---|
+     | Full scan (reference) | 302 ms | 300/300 | 542/542 | |
+     | FTS5 trigram, best 200 by rank | 743 / 1,276 ms | 291/300 | 526/542 | 4 s, 77 MB |
+     | Word bigrams, best 200 | 47 / 55 ms | 296/300 | 541/542 | 9 s, 80 MB |
+     | Word bigrams, best 100, budget 80,000 rows | 3.7 / 10.5 ms | 295/300 | 539/542 | |
+     | Word bigrams, best 100, budget 20,000 rows | 2.6 / 4.8 ms | 291/300 | 524/542 | |
+
+   - **Decision:** word bigrams, the 100 best candidates, a budget of 80,000 index rows per lookup. Almost all the
+     time without a budget went into grouping the posting lists of very common bigrams, not into scoring.
 3. **TMX import/export,** with the untrusted-input tests, and reading `<mtc:matches>`.
 4. **Matches pane and inserting matches** (Ctrl+1 … Ctrl+9), with headless tests.
 5. **Learning and TM selection:** Ctrl+Enter stores, the Translation memory menu, and the decisions below.
