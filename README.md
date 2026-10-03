@@ -47,14 +47,16 @@ The build runs the .NET recommended code analyzers and treats every warning as a
 ## Project layout
 
 ```
-src/SchrodingersCat.Core/          Domain model (Models/), inline code checks (Checks/) and XLIFF serializer (Xliff/)
-src/SchrodingersCat.App/           Avalonia desktop editor
-tests/SchrodingersCat.Core.Tests/  xUnit tests, including property-based tests (CsCheck)
-tests/SchrodingersCat.App.Tests/   View model and headless UI tests
-tests/SchrodingersCat.TestSupport/ Random document generators shared by the test projects
-docs/design/                       Design notes (inline codes, inline code editing)
-Directory.Build.props              Shared build settings (analyzers, warnings as errors)
-.editorconfig                      Code style and analyzer rule overrides
+src/SchrodingersCat.Core/           Domain model (Models/), inline code checks (Checks/) and XLIFF serializer (Xliff/)
+src/SchrodingersCat.Memory/         Translation memory (in progress)
+src/SchrodingersCat.App/            Avalonia desktop editor
+tests/SchrodingersCat.Core.Tests/   xUnit tests, including property-based tests (CsCheck)
+tests/SchrodingersCat.Memory.Tests/ Translation memory tests
+tests/SchrodingersCat.App.Tests/    View model and headless UI tests
+tests/SchrodingersCat.TestSupport/  Random document generators shared by the test projects
+docs/design/                        Design notes (inline codes, inline code editing, translation memory)
+Directory.Build.props               Shared build settings (analyzers, warnings as errors)
+.editorconfig                       Code style and analyzer rule overrides
 ```
 
 ## Usage

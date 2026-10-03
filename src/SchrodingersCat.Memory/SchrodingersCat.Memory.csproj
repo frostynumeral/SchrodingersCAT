@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Translation memory (docs/design/translation-memory.md). Separate from Core, so Core stays free of the storage
+       dependencies the TM will need. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SchrodingersCat.Core\SchrodingersCat.Core.csproj" />
+  </ItemGroup>
+
+</Project>

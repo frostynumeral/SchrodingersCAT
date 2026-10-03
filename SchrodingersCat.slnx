@@ -2,10 +2,12 @@
   <Folder Name="/src/">
     <Project Path="src/SchrodingersCat.App/SchrodingersCat.App.csproj" />
     <Project Path="src/SchrodingersCat.Core/SchrodingersCat.Core.csproj" />
+    <Project Path="src/SchrodingersCat.Memory/SchrodingersCat.Memory.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SchrodingersCat.App.Tests/SchrodingersCat.App.Tests.csproj" />
     <Project Path="tests/SchrodingersCat.Core.Tests/SchrodingersCat.Core.Tests.csproj" />
+    <Project Path="tests/SchrodingersCat.Memory.Tests/SchrodingersCat.Memory.Tests.csproj" />
     <Project Path="tests/SchrodingersCat.TestSupport/SchrodingersCat.TestSupport.csproj" />
   </Folder>
 </Solution>
