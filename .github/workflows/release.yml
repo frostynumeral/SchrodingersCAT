@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      # Refuse a tag that doesn't match VersionPrefix, so the binaries can't report a different version.
+      - name: Check the tag matches the version
+        run: |
+          prefix=$(dotnet msbuild src/SchrodingersCat.App -getProperty:VersionPrefix)
+          tag=${GITHUB_REF_NAME#v}
+          if [[ "${tag%%-*}" != "$prefix" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match VersionPrefix $prefix in Directory.Build.props."
+            exit 1
+          fi
+
+      - run: dotnet restore
+
+      - run: dotnet build --no-restore --configuration Release
+
+      - run: dotnet test --no-build --configuration Release
+
+  publish:
+    needs: test
+    runs-on: ubuntu-24.04
+
+    strategy:
+      matrix:
+        rid: [win-x64, linux-x64, osx-x64, osx-arm64]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish
+        run: >
+          dotnet publish src/SchrodingersCat.App
+          --configuration Release
+          --runtime ${{ matrix.rid }}
+          --self-contained
+          -p:Version=${GITHUB_REF_NAME#v}
+          --output publish/SchrodingersCat
+
+      # SkiaSharp's native debug symbols (about 100 MB on Windows) are of no use to users. Our own .pdb stays.
+      - name: Zip
+        run: |
+          cd publish
+          rm -f SchrodingersCat/lib*.pdb
+          zip -qr "../SchrodingersCat-${GITHUB_REF_NAME}-${{ matrix.rid }}.zip" SchrodingersCat
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.rid }}
+          path: SchrodingersCat-*.zip
+
+  release:
+    needs: publish
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Every 0.x release is a pre-release.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*.zip
+          --repo "$GITHUB_REPOSITORY"
+          --title "SchrödingersCAT $GITHUB_REF_NAME"
+          --generate-notes
+          $([[ "$GITHUB_REF_NAME" == v0.* || "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)

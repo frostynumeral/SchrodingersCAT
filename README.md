@@ -32,6 +32,10 @@ A computer-assisted translation (CAT) tool written in C#/.NET.
 - Opening a translation memory in the editor and storing confirmed segments in it (the TM itself, SQLite storage and TMX exchange exist in `SchrodingersCat.Memory`).
 - Terminology, search, and review workflows.
 
+## Download
+
+Pre-release builds for Windows, Linux and macOS (Intel and Apple silicon) are on the [Releases](../../releases) page. They include .NET, so nothing else needs installing: unzip and run `SchrodingersCat.App`. The builds aren't signed, so Windows SmartScreen and macOS Gatekeeper will warn the first time. On macOS, run `xattr -dr com.apple.quarantine SchrodingersCat` on the unzipped folder first.
+
 ## Building
 
 Requires the .NET 10 SDK.
