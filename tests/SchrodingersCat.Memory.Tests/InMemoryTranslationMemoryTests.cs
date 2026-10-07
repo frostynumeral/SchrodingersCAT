@@ -64,7 +64,36 @@ public class InMemoryTranslationMemoryTests
         tm.Add(Entry("Save", "Mentés", Monday.AddDays(1)));
         tm.Add(Entry("Save", "Mentsd"));
 
-        Assert.Equal([("Mentés", Monday.AddDays(1)), ("Mentsd", Monday)], tm.Entries.Select(e => (e.Target.ToPlainText(), e.Changed)));
+        Assert.Equal([("Mentés", Monday.AddDays(1)), ("Mentsd", Monday)], tm.Entries().Select(e => (e.Target.ToPlainText(), e.Changed)));
+    }
+
+    [Fact]
+    public void Remove_TakesOutOnlyThatPair()
+    {
+        var tm = new InMemoryTranslationMemory();
+        tm.AddRange([Entry("Save", "Mentés"), Entry("Save", "Mentsd"), Entry("Open", "Megnyitás")]);
+
+        Assert.True(tm.Remove(Entry("save", "Mentés", Monday.AddDays(3)) with { Source = Text("Save") }));
+        Assert.False(tm.Remove(Entry("Save", "Mentés")));
+        tm.Add(Entry("Save", "Mentés", Monday.AddDays(1)));
+
+        Assert.Equal(["Mentsd", "Megnyitás", "Mentés"], tm.Entries().Select(e => e.Target.ToPlainText()));
+        Assert.Equal(["Mentés", "Mentsd"], tm.Lookup(Text("Save")).Select(m => m.Entry.Target.ToPlainText()));
+    }
+
+    // Re-confirming a corrected segment: its old pair goes, unless it came from another document.
+    [Fact]
+    public void Replace_RemovesThePreviousPairOnlyIfStoredFromTheSameDocument()
+    {
+        var tm = new InMemoryTranslationMemory();
+        tm.Add(Entry("Save", "Mentéss") with { Document = "a.xlf" });
+        tm.Add(Entry("Open", "Nyiss") with { Document = "other.xlf" });
+
+        tm.Replace(Entry("Save", "Mentéss") with { Document = "a.xlf" }, Entry("Save", "Mentés") with { Document = "a.xlf" });
+        tm.Replace(Entry("Open", "Nyiss") with { Document = "a.xlf" }, Entry("Open", "Megnyitás") with { Document = "a.xlf" });
+        tm.Replace(Entry("Close", "Zárj") with { Document = "a.xlf" }, Entry("Close", "Bezárás") with { Document = "a.xlf" }); // nothing to replace
+
+        Assert.Equal(["Nyiss", "Mentés", "Megnyitás", "Bezárás"], tm.Entries().Select(e => e.Target.ToPlainText()));
     }
 
     private static TmEntry Entry(string source, string target, DateTimeOffset? changed = null) =>

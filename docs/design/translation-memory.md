@@ -170,8 +170,26 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      (codes already in another segment's target stay out, protected codes stay in), as one undoable edit.
    - Not in this step: opening a TM (step 5, so the app shows only the file's matches until then), and inserting
      exact matches automatically on entering a segment, which moves to step 5 together with storing.
-5. **Learning and TM selection:** Ctrl+Enter stores, the Translation memory menu, auto-inserting exact matches, and
-   the decisions below.
+5. **Learning and TM selection** *(Done 2026-10-07.)*: Ctrl+Enter stores, the Translation memory menu, auto-inserting
+   exact matches, and the decisions below.
+   - **Menu:** New…, Open…, Close, Import TMX…, Export TMX…. A new TM takes the open document's languages (asking for
+     the target language if the file has none) and never replaces an existing file. The open TM is remembered in
+     the user's settings (`settings.json`); at startup a damaged one is forgotten, a missing one only reported (it may
+     be on a drive that isn't plugged in). Closing the window keeps it remembered; the menu's Close forgets it.
+   - **Storing:** Ctrl+Enter stores the confirmed segment with its neighbours' plain text, the file name, the time and
+     the user. A target with code errors is confirmed but not stored, and a notice says so. Re-confirming a corrected
+     segment replaces the pair it stored before, or, for a segment already confirmed when the file was opened, its
+     target then; only if that pair was stored from the same document, so the same translation from another file or
+     an import stays (`ITranslationMemory.Replace`, one transaction). A file without `trgLang` takes the TM's target
+     language when it first stores.
+   - **One queue:** every TM operation runs in order on a background thread, so the store Ctrl+Enter queues is done
+     before the next segment's lookup, and a repetition right below gets the translation.
+   - **Auto-insert:** the best match, if it's a TM's 100% or 101%, goes into an empty target once per segment, and the
+     segment stays Initial until confirmed. A file's 100% matches aren't inserted, as they may be machine translation.
+     Redoing an undone automatic insertion counts as an edit (the segment becomes Translated).
+   - **Languages:** a TM that doesn't serve the document (decision 3, `TmLanguages`) is neither looked up nor stored
+     in, and the pane's header says why; a TM for the base language serves a regional variant with every score one
+     point lower, so a 100% isn't inserted automatically.
 
 ## Open questions
 

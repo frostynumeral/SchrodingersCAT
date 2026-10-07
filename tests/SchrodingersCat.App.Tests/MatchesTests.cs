@@ -67,7 +67,7 @@ public sealed class MatchesTests : IDisposable
         var tm = new InMemoryTranslationMemory();
         tm.Add(new TmEntry(Text("Hello world."), Text("Helló világ.")) { NextSource = "Goodbye.", Changed = Noon, ChangedBy = "adam", Document = "/work/old.xlf" });
         tm.Add(new TmEntry(Text("hello world."), Text("helló világ.")) { Changed = Noon });
-        vm.TranslationMemory = new OpenTranslationMemory(tm, "Project TM");
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "Project TM", "en", "hu"));
 
         vm.SelectedSegment = vm.Segments[0];
         await vm.MatchLookup;
@@ -85,7 +85,7 @@ public sealed class MatchesTests : IDisposable
     {
         var vm = await OpenAsync(TestFiles.Sample);
         var tm = new FakeMemory(_ => []);
-        vm.TranslationMemory = new OpenTranslationMemory(tm, "TM");
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "TM", "en", "hu"));
 
         vm.SelectedSegment = vm.Segments[1];
         await vm.MatchLookup;
@@ -102,13 +102,13 @@ public sealed class MatchesTests : IDisposable
         vm.SelectedSegment = vm.Segments[0];
         Assert.Equal("No matches. No translation memory is open.", vm.MatchesStatus);
 
-        vm.TranslationMemory = new OpenTranslationMemory(new InMemoryTranslationMemory(), "Empty");
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(new InMemoryTranslationMemory(), "Empty", "en", "hu"));
         await vm.MatchLookup;
         Assert.Equal("No matches.", vm.MatchesStatus);
 
         var tm = new InMemoryTranslationMemory();
         tm.Add(new TmEntry(Text("Hello world."), Text("Helló világ.")));
-        vm.TranslationMemory = new OpenTranslationMemory(tm, "Full");
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "Full", "en", "hu"));
         await vm.MatchLookup;
         Assert.Equal("Helló világ.", Assert.Single(vm.Matches).Target.Target.ToPlainText());
     }
@@ -118,8 +118,8 @@ public sealed class MatchesTests : IDisposable
     {
         var vm = await OpenAsync(TestFiles.Sample);
         var tm = new InMemoryTranslationMemory();
-        tm.Add(new TmEntry(Content("Press ", Open("a"), "OK", Close("a"), "."), Content("Nyomd meg az ", Open("a"), "OK", Close("a"), " gombot.")));
-        vm.TranslationMemory = new OpenTranslationMemory(tm, "TM");
+        tm.Add(new TmEntry(Content("Press ", Open("a"), "OK", Close("a"), " now."), Content("Nyomd meg az ", Open("a"), "OK", Close("a"), " gombot.")));
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "TM", "en", "hu"));
         vm.SelectedSegment = vm.Segments[2];
         await vm.MatchLookup;
         var segment = vm.Segments[2];
@@ -127,7 +127,7 @@ public sealed class MatchesTests : IDisposable
         vm.InsertMatchCommand.Execute(1);
 
         Assert.Equal("Nyomd meg az ⟨1⟩OK⟨/1⟩ gombot.", segment.TargetText);
-        Assert.Equal("Inserted the 100% match.", segment.EditStatus);
+        Assert.Equal("Inserted the 75% match.", segment.EditStatus);
         Assert.False(segment.HasIssues);
         Assert.Equal("Translated", segment.State);
         Assert.True(vm.IsDirty);
@@ -144,7 +144,7 @@ public sealed class MatchesTests : IDisposable
         var vm = await OpenAsync(WithMatches);
         var tm = new InMemoryTranslationMemory();
         tm.Add(new TmEntry(Text("Press OK."), Text("Nyomd meg: OK.")));
-        vm.TranslationMemory = new OpenTranslationMemory(tm, "TM");
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "TM", "en", "hu"));
         vm.SelectedSegment = vm.Segments[2];
         await vm.MatchLookup;
 
@@ -191,7 +191,7 @@ public sealed class MatchesTests : IDisposable
                 gate.Wait(TimeSpan.FromSeconds(10));
             return [new TmMatch(new TmEntry(source, Text(source.ToPlainText() + " (TM)")), 100)];
         });
-        vm.TranslationMemory = new OpenTranslationMemory(tm, "Slow");
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "Slow", "en", "hu"));
 
         vm.SelectedSegment = vm.Segments[0];
         Assert.True(vm.IsLookingUp);
@@ -211,7 +211,7 @@ public sealed class MatchesTests : IDisposable
     public async Task ADamagedTm_ShowsTheErrorAndKeepsTheFilesMatches()
     {
         var vm = await OpenAsync(WithMatches);
-        vm.TranslationMemory = new OpenTranslationMemory(new FakeMemory(_ => throw new TmFormatException("Entry 7 is damaged.")), "Broken");
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(new FakeMemory(_ => throw new TmFormatException("Entry 7 is damaged.")), "Broken", "en", "hu"));
 
         vm.SelectedSegment = vm.Segments[0];
         await vm.MatchLookup;
@@ -254,6 +254,14 @@ public sealed class MatchesTests : IDisposable
         public int Count => 0;
 
         public void Add(TmEntry entry) => throw new NotSupportedException();
+
+        public void AddRange(IEnumerable<TmEntry> entries) => throw new NotSupportedException();
+
+        public bool Remove(TmEntry entry) => throw new NotSupportedException();
+
+        public void Replace(TmEntry previous, TmEntry entry) => throw new NotSupportedException();
+
+        public IEnumerable<TmEntry> Entries() => throw new NotSupportedException();
 
         public IReadOnlyList<TmMatch> Lookup(
             InlineContent source, string? previousSource = null, string? nextSource = null,

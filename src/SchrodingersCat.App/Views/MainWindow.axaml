@@ -119,6 +119,17 @@
     </Window.KeyBindings>
 
     <DockPanel>
+        <Menu x:Name="MainMenu" DockPanel.Dock="Top">
+            <MenuItem x:Name="MemoryMenu" Header="_Translation memory">
+                <MenuItem x:Name="NewMemoryItem" Header="_New…" Command="{Binding NewTranslationMemoryCommand}" />
+                <MenuItem x:Name="OpenMemoryItem" Header="_Open…" Command="{Binding OpenTranslationMemoryCommand}" />
+                <MenuItem x:Name="CloseMemoryItem" Header="_Close" Command="{Binding CloseTranslationMemoryCommand}" />
+                <Separator />
+                <MenuItem x:Name="ImportTmxItem" Header="_Import TMX…" Command="{Binding ImportTmxCommand}" />
+                <MenuItem x:Name="ExportTmxItem" Header="_Export TMX…" Command="{Binding ExportTmxCommand}" />
+            </MenuItem>
+        </Menu>
+
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8">
             <Button x:Name="OpenButton" Content="Open…" Command="{Binding OpenCommand}" />
             <Button x:Name="SaveButton" Content="Save" Command="{Binding SaveCommand}" />
@@ -134,6 +145,10 @@
                 <SelectableTextBlock x:Name="ErrorText" Text="{Binding ErrorMessage}" TextWrapping="Wrap" VerticalAlignment="Center" />
             </DockPanel>
         </Border>
+
+        <!-- The outcome of the last action with no segment to report it in (a segment not stored, an import or export). -->
+        <SelectableTextBlock x:Name="NoticeText" DockPanel.Dock="Top" Margin="12,0,12,8" Text="{Binding Notice}" TextWrapping="Wrap"
+                             IsVisible="{Binding Notice, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
         <Panel>
             <TextBlock Text="Open an XLIFF file to start translating (Ctrl+O)." HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -153,7 +168,7 @@
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="4,0,4,4">
                         <TextBlock Text="Matches" FontWeight="SemiBold" />
-                        <TextBlock x:Name="MemoryName" Text="{Binding TranslationMemory.Name, FallbackValue={x:Null}}" Opacity="0.6" />
+                        <TextBlock x:Name="MemoryName" Text="{Binding MemoryLabel}" Opacity="0.6" TextWrapping="Wrap" />
                     </StackPanel>
                     <TextBlock x:Name="MatchesStatus" DockPanel.Dock="Top" Margin="4,0" Opacity="0.6" Text="{Binding MatchesStatus}"
                                IsVisible="{Binding MatchesStatus, Converter={x:Static ObjectConverters.IsNotNull}}" />

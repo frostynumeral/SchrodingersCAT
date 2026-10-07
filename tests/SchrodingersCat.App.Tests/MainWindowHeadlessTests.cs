@@ -515,14 +515,14 @@ public sealed class MainWindowHeadlessTests : IDisposable
         await vm.LoadAsync(path);
         var tm = new InMemoryTranslationMemory();
         tm.Add(new TmEntry(InlineContent.FromText("Press OK."), InlineContent.FromText("Nyomd meg: OK.")));
-        vm.TranslationMemory = new OpenTranslationMemory(tm, "Project TM");
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "Project TM", "en", "hu"));
         var status = window.FindControl<TextBlock>("MatchesStatus")!;
         Assert.Equal("Select a segment to see its matches.", status.Text);
 
         Click(window, TargetFrames(window)[2]);
         await WaitFor(() => MatchRows(window).Count == 2);
         Assert.False(status.IsVisible);
-        Assert.Equal("Project TM", window.FindControl<TextBlock>("MemoryName")!.Text);
+        Assert.Equal("Project TM (en → hu)", window.FindControl<TextBlock>("MemoryName")!.Text);
         Assert.Equal(["Ctrl+1 96%", "Ctrl+2 90%"], MatchRows(window).Select(r =>
             $"{r.GetVisualDescendants().OfType<Button>().Single().Content} {r.GetVisualDescendants().OfType<Border>().Single(b => b.Classes.Contains("matchScore")).GetLogicalDescendants().OfType<TextBlock>().Single().Text}"));
 
@@ -548,6 +548,89 @@ public sealed class MainWindowHeadlessTests : IDisposable
         // Ctrl+Z undoes the insertion.
         Press(window, PhysicalKey.Z, RawInputModifiers.Control);
         Assert.Equal("Most nyomd meg: ⟨1⟩OK⟨/1⟩.", vm.Segments[2].TargetText);
+    }
+
+    [AvaloniaFact]
+    public async Task TheMenu_OpensATm_AndCtrlEnterFeedsTheRepetitionBelow()
+    {
+        var path = _files.Write("repetitions.xlf", """
+            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+              <file id="f1">
+                <unit id="u1"><segment><source>Hello world.</source></segment></unit>
+                <unit id="u2"><segment><source>Hello world.</source></segment></unit>
+              </file>
+            </xliff>
+            """);
+        var dialogs = new FakeDialogs(path) { MemoryToCreate = _files.PathOf("project.sctm") };
+        var (window, vm) = Show(dialogs);
+        await vm.LoadAsync(path);
+        // Items of a closed submenu aren't kept up to date, so their commands are asked.
+        var closeItem = window.FindControl<MenuItem>("CloseMemoryItem")!;
+        Assert.False(closeItem.Command!.CanExecute(null));
+
+        window.FindControl<MenuItem>("NewMemoryItem")!.Command!.Execute(null);
+        await WaitFor(() => vm.TranslationMemory is not null);
+        Assert.Equal("project.sctm (en → hu)", window.FindControl<TextBlock>("MemoryName")!.Text);
+        Assert.True(closeItem.Command.CanExecute(null));
+
+        Click(window, TargetFrames(window)[0]);
+        window.KeyTextInput("Helló világ.");
+        Press(window, PhysicalKey.Enter, RawInputModifiers.Control);
+        await WaitFor(() => vm.Segments[1].TargetText.Length > 0);
+
+        // The repetition got the translation just stored, unconfirmed, in its editor.
+        var editor = Assert.Single(VisibleEditors(window));
+        Assert.Same(vm.Segments[1].EditModel, editor.Model);
+        Assert.Equal("Helló világ.", editor.Editor.Document.Text);
+        Assert.Equal("Initial", vm.Segments[1].State);
+        Assert.Equal("Inserted the 100% match automatically. Confirm it with Ctrl+Enter.", window.FindControl<TextBlock>("StatusText")!.Text);
+        await vm.ShutDownAsync();
+    }
+
+    [AvaloniaFact]
+    public async Task TheNoticeLine_SaysWhenASegmentWasntStored()
+    {
+        var path = _files.Write("errors.xlf", """
+            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+              <file id="f1">
+                <unit id="u1"><segment><source>Open <ph id="1" canDelete="no"/>.</source><target>Megnyitás.</target></segment></unit>
+                <unit id="u2"><segment><source>Next.</source></segment></unit>
+              </file>
+            </xliff>
+            """);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        await vm.UseTranslationMemoryAsync(OpenTranslationMemory.Create(_files.PathOf("project.sctm"), "en", "hu"));
+        var notice = window.FindControl<SelectableTextBlock>("NoticeText")!;
+        Assert.False(notice.IsVisible);
+
+        Click(window, TargetFrames(window)[0]);
+        Press(window, PhysicalKey.Enter, RawInputModifiers.Control);
+
+        Assert.True(notice.IsVisible);
+        Assert.Equal("u1 was confirmed but not stored in project.sctm: its target has code errors.", notice.Text);
+        await vm.ShutDownAsync();
+    }
+
+    // Closing the window closes the TM after its queued work, and keeps it remembered for next time.
+    [AvaloniaFact]
+    public async Task ClosingTheWindow_ClosesTheTm()
+    {
+        var tmPath = _files.PathOf("project.sctm");
+        var settings = new JsonSettingsStore(_files.PathOf("settings.json"));
+        var vm = new MainWindowViewModel(new Xliff20Serializer(), new FakeDialogs(null) { MemoryToOpen = tmPath }, settings);
+        var window = new MainWindow { DataContext = vm };
+        window.Show();
+        SqliteTranslationMemory.Create(tmPath, "en", "hu").Dispose();
+        await vm.OpenTranslationMemoryCommand.ExecuteAsync(null);
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+
+        window.Close();
+        await WaitFor(() => closed);
+
+        Assert.Null(vm.TranslationMemory);
+        Assert.Equal(tmPath, settings.Load().TranslationMemoryPath);
     }
 
     private static List<Border> MatchRows(Window window)

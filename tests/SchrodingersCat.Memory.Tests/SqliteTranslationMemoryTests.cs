@@ -82,10 +82,56 @@ public sealed class SqliteTranslationMemoryTests : IDisposable
                 Assert.Equal(memory.Count, sqlite.Count);
                 foreach (var segment in document.Units.SelectMany(u => u.Segments))
                     Assert.Equal(memory.Lookup(segment.Source), sqlite.Lookup(segment.Source));
+
+                // Removing every other entry keeps them equal, index included.
+                foreach (var entry in entries.Where((_, i) => i % 2 == 0))
+                    Assert.Equal(memory.Remove(entry), sqlite.Remove(entry));
+                Assert.Equal(memory.Count, sqlite.Count);
+                foreach (var segment in document.Units.SelectMany(u => u.Segments))
+                    Assert.Equal(memory.Lookup(segment.Source), sqlite.Lookup(segment.Source));
             }
 
             File.Delete(path);
         });
+
+    [Fact]
+    public void Remove_TakesOutThePairAndItsIndexRows_OtherTranslationsStay()
+    {
+        var path = PathOf("a.sctm");
+        using (var tm = SqliteTranslationMemory.Create(path, "en", "hu"))
+        {
+            tm.AddRange([Entry("Save the file.", "Mentsd a fájlt.", Monday), Entry("Save the file.", "Fájl mentése.", Monday), Entry("Delete it.", "Töröld.", Monday)]);
+
+            Assert.True(tm.Remove(Entry("Save the file.", "Mentsd a fájlt.", Monday.AddDays(1)) with { NextSource = "Next." })); // the pair, whatever its date and context
+            Assert.False(tm.Remove(Entry("Save the file.", "Mentsd a fájlt.", Monday)));
+
+            Assert.Equal(["Fájl mentése."], tm.Lookup(Text("Save the file.")).Select(m => m.Entry.Target.ToPlainText()));
+            Assert.True(tm.Remove(Entry("Save the file.", "Fájl mentése.", Monday)));
+            Assert.Empty(tm.Lookup(Text("Save the file.")));
+            Assert.Equal(1, tm.Count);
+        }
+
+        // Only "Delete it." is left: its bigrams, and nothing of the removed entries.
+        Assert.Equal(0L, Scalar(path, "SELECT count(*) FROM postings p LEFT JOIN entries e ON e.id = p.entry WHERE e.id IS NULL"));
+        Assert.Equal(0L, Scalar(path, "SELECT count(*) FROM features WHERE entries <> (SELECT count(*) FROM postings p WHERE p.feature = features.feature)"));
+        Assert.Equal(4L, Scalar(path, "SELECT count(*) FROM features")); // ^delete, delete it, it ., .$
+        using var reopened = SqliteTranslationMemory.Open(path);
+        Assert.Equal(1, reopened.Count);
+    }
+
+    [Fact]
+    public void Replace_RemovesThePreviousPairOnlyIfStoredFromTheSameDocument()
+    {
+        using var tm = SqliteTranslationMemory.Create(PathOf("a.sctm"), "en", "hu");
+        tm.Add(Entry("Save", "Mentéss", Monday) with { Document = "a.xlf" });
+        tm.Add(Entry("Open", "Nyiss", Monday) with { Document = "other.xlf" });
+
+        tm.Replace(Entry("Save", "Mentéss", Monday) with { Document = "a.xlf" }, Entry("Save", "Mentés", Monday) with { Document = "a.xlf" });
+        tm.Replace(Entry("Open", "Nyiss", Monday) with { Document = "a.xlf" }, Entry("Open", "Megnyitás", Monday) with { Document = "a.xlf" });
+
+        Assert.Equal(["Nyiss", "Mentés", "Megnyitás"], tm.Entries().Select(e => e.Target.ToPlainText()));
+        Assert.Equal(["Mentés"], tm.Lookup(Text("Save")).Select(m => m.Entry.Target.ToPlainText()));
+    }
 
     [Fact]
     public void Entries_ListsEverythingInTheOrderStored()
@@ -164,6 +210,15 @@ public sealed class SqliteTranslationMemoryTests : IDisposable
     }
 
     private string PathOf(string name) => Path.Combine(_directory, name);
+
+    private static long Scalar(string path, string sql)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return (long)command.ExecuteScalar()!;
+    }
 
     private static void Sql(string path, string sql)
     {

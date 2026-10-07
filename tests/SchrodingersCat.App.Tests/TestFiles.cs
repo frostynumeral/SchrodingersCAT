@@ -87,4 +87,37 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
         Messages.Add(message);
         return Task.FromResult(Confirm);
     }
+
+    /// <summary>The answers to the translation memory and TMX pickers (null = cancelled).</summary>
+    public string? MemoryToOpen { get; set; }
+
+    public string? MemoryToCreate { get; set; }
+
+    public string? TmxToImport { get; set; }
+
+    public string? TmxToExport { get; set; }
+
+    public Task<string?> PickTranslationMemoryToOpenAsync()
+    {
+        Asked.Add("open TM");
+        return Task.FromResult(MemoryToOpen);
+    }
+
+    public Task<string?> PickTranslationMemoryToCreateAsync(string suggestedName)
+    {
+        Asked.Add($"new TM (suggested {suggestedName})");
+        return Task.FromResult(MemoryToCreate);
+    }
+
+    public Task<string?> PickTmxToImportAsync()
+    {
+        Asked.Add("import TMX");
+        return Task.FromResult(TmxToImport);
+    }
+
+    public Task<string?> PickTmxToExportAsync(string suggestedName)
+    {
+        Asked.Add($"export TMX (suggested {suggestedName})");
+        return Task.FromResult(TmxToExport);
+    }
 }

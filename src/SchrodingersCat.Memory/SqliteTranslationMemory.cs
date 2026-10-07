@@ -215,6 +215,34 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
         return Ranking.Rank(query, previousSource, nextSource, candidates, threshold, maxMatches);
     }
 
+    /// <summary>Removes the stored pair, with its index rows; bigrams no entry has any more leave the index.</summary>
+    public bool Remove(TmEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        using var transaction = _connection.BeginTransaction();
+        var source = MatchScore.Normalized.Of(entry.Source);
+        if (FindPair(source, entry) is not { Id: { } id })
+            return false;
+
+        Delete(id, source);
+        transaction.Commit();
+        return true;
+    }
+
+    public void Replace(TmEntry previous, TmEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(previous);
+        ArgumentNullException.ThrowIfNull(entry);
+
+        using var transaction = _connection.BeginTransaction();
+        var source = MatchScore.Normalized.Of(previous.Source);
+        if (FindPair(source, previous) is { Id: { } id, Stored: var stored } && stored!.Document == previous.Document)
+            Delete(id, source);
+        Store(entry);
+        transaction.Commit();
+    }
+
     /// <summary>Every entry, oldest stored first (for export).</summary>
     public IEnumerable<TmEntry> Entries()
     {
@@ -232,23 +260,7 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
     private void Store(TmEntry entry)
     {
         var source = MatchScore.Normalized.Of(entry.Source);
-        var targetKey = Ranking.TargetKey(entry);
-        var pairHash = Hash($"{source.Key.Length}:{source.Key}{targetKey}");
-
-        // The same pair (ignoring code ids) replaces the stored one; the hash only narrows the search.
-        long? existing = null;
-        using (var command = _connection.CreateCommand())
-        {
-            command.CommandText = "SELECT id, source, target, previous_source, next_source, document, changed, changed_by FROM entries WHERE pair_hash = $hash";
-            command.Parameters.AddWithValue("$hash", pairHash);
-            using var reader = command.ExecuteReader();
-            while (reader.Read() && existing is null)
-            {
-                var stored = ReadEntry(reader);
-                if (MatchScore.Normalized.Of(stored.Source).Key == source.Key && Ranking.TargetKey(stored) == targetKey)
-                    existing = reader.GetInt64(0);
-            }
-        }
+        var (pairHash, existing, _) = FindPair(source, entry);
 
         var values = new (string, object?)[]
         {
@@ -276,6 +288,38 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
             Execute(_connection, "INSERT INTO postings(feature, entry) VALUES($feature, $entry)", ("$feature", feature), ("$entry", entryId));
             Execute(_connection, "INSERT INTO features(feature, entries) VALUES($feature, 1) ON CONFLICT(feature) DO UPDATE SET entries = entries + 1", ("$feature", feature));
         }
+    }
+
+    // An entry and its index rows. Its postings are found by their primary key (feature, entry), from the source's
+    // bigrams: equal sources have equal bigrams. Bigrams no entry has any more leave the index.
+    private void Delete(long id, MatchScore.Normalized source)
+    {
+        Execute(_connection, "DELETE FROM entries WHERE id = $id", ("$id", id));
+        foreach (var feature in Features(source).Distinct())
+        {
+            Execute(_connection, "DELETE FROM postings WHERE feature = $feature AND entry = $id", ("$feature", feature), ("$id", id));
+            Execute(_connection, "UPDATE features SET entries = entries - 1 WHERE feature = $feature", ("$feature", feature));
+            Execute(_connection, "DELETE FROM features WHERE feature = $feature AND entries <= 0", ("$feature", feature));
+        }
+    }
+
+    // The same pair (ignoring code ids) as the entry's, if stored; the hash only narrows the search.
+    private (long PairHash, long? Id, TmEntry? Stored) FindPair(MatchScore.Normalized source, TmEntry entry)
+    {
+        var targetKey = Ranking.TargetKey(entry);
+        var pairHash = Hash($"{source.Key.Length}:{source.Key}{targetKey}");
+        using var command = _connection.CreateCommand();
+        command.CommandText = "SELECT id, source, target, previous_source, next_source, document, changed, changed_by FROM entries WHERE pair_hash = $hash";
+        command.Parameters.AddWithValue("$hash", pairHash);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var stored = ReadEntry(reader);
+            if (MatchScore.Normalized.Of(stored.Source).Key == source.Key && Ranking.TargetKey(stored) == targetKey)
+                return (pairHash, reader.GetInt64(0), stored);
+        }
+
+        return (pairHash, null, null);
     }
 
     // ---------------------------------------------------------------- reading

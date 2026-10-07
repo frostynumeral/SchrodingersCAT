@@ -43,12 +43,13 @@ public partial class MainWindow : Window
             command.Execute(parameter);
     }
 
-    // Closing is synchronous, but asking about unsaved changes is not: cancel this close, ask, and close again
-    // (for real this time) only if the view model allows it.
+    // Closing is synchronous, but asking about unsaved changes and closing the TM are not: cancel this close, ask,
+    // let the TM finish its queued stores, and close again (for real this time) only if the view model allows it.
     protected override void OnClosing(WindowClosingEventArgs e)
     {
         base.OnClosing(e);
-        if (_closeConfirmed || e.Cancel || DataContext is not MainWindowViewModel { IsDirty: true } viewModel)
+        if (_closeConfirmed || e.Cancel || DataContext is not MainWindowViewModel viewModel
+            || (!viewModel.IsDirty && viewModel.TranslationMemory is null))
             return;
 
         e.Cancel = true;
@@ -60,6 +61,7 @@ public partial class MainWindow : Window
         if (!await viewModel.ConfirmCloseAsync())
             return;
 
+        await viewModel.ShutDownAsync();
         _closeConfirmed = true;
         Close();
     }

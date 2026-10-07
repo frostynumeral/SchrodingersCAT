@@ -9,7 +9,8 @@ using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.ViewModels;
 
-public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDialogService dialogs) : ObservableObject
+/// <param name="settings">Where the open TM is remembered between sessions; null remembers nothing.</param>
+public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDialogService dialogs, ISettingsStore? settings = null) : ObservableObject
 {
     private TranslationDocument? _document;
 
@@ -38,8 +39,16 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     {
         oldValue?.IsActive = false;
         newValue?.IsActive = true;
+        Notice = null;
         MatchLookup = LookUpMatchesAsync();
     }
+
+    /// <summary>
+    /// The outcome of the last action that has no segment to report it in: a confirmed segment that wasn't stored, an
+    /// import or export. Cleared when the selection changes.
+    /// </summary>
+    [ObservableProperty]
+    public partial string? Notice { get; private set; }
 
     /// <summary>The column headers, with the document's languages.</summary>
     public string SourceHeader => _document is null ? "Source" : $"Source ({_document.SourceLanguage})";
@@ -111,6 +120,8 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         ErrorMessage = null;
         OnPropertyChanged(nameof(SourceHeader));
         OnPropertyChanged(nameof(TargetHeader));
+        OnPropertyChanged(nameof(MemoryLabel));
+        NewTranslationMemoryCommand.NotifyCanExecuteChanged();
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
@@ -131,11 +142,12 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     // What a save needs from the translator first; false if they cancelled.
     private async Task<bool> ReadyToSaveAsync() => await ConfirmCodeErrorsAsync() && await EnsureTargetLanguageAsync();
 
-    // XLIFF requires trgLang once there are targets, and a file may come without one: ask when it's needed.
-    private async Task<bool> EnsureTargetLanguageAsync()
+    // XLIFF requires trgLang once there are targets, and a file may come without one: ask when it's needed (and before
+    // creating a TM, which needs it, if <paramref name="required"/>).
+    private async Task<bool> EnsureTargetLanguageAsync(bool required = false)
     {
         var document = _document!;
-        if (document.TargetLanguage is not null || !document.Units.Any(u => u.Segments.Any(s => s.Target is not null)))
+        if (document.TargetLanguage is not null || (!required && !document.Units.Any(u => u.Segments.Any(s => s.Target is not null))))
             return true;
 
         var tag = await dialogs.AskTargetLanguageAsync(document.SourceLanguage, t => LanguageTag.Problem(t, document.SourceLanguage));
@@ -144,6 +156,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
 
         document.TargetLanguage = tag.Trim();
         OnPropertyChanged(nameof(TargetHeader));
+        OnPropertyChanged(nameof(MemoryLabel));
         return true;
     }
 
@@ -207,12 +220,20 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
             SelectedSegment?.EditStatus = "No segments with code errors or warnings below this one.";
     }
 
-    /// <summary>Ctrl+Enter: confirms the selected segment and moves to the next one.</summary>
+    /// <summary>
+    /// Ctrl+Enter: confirms the selected segment, stores it in the open TM (step 5 of the TM design), and moves to the
+    /// next one. The store is queued before the move queues the next lookup, so a repetition below finds it: nothing
+    /// may be awaited before <see cref="Store"/>.
+    /// </summary>
     [RelayCommand]
     private void ConfirmSegment()
     {
-        if (SelectedSegment?.Confirm() == true)
-            Move(1);
+        if (SelectedSegment is not { } segment || !segment.Confirm())
+            return;
+
+        var notice = Store(segment);
+        Move(1);
+        Notice = notice;
     }
 
     /// <summary>Ctrl+Insert: replaces the selected segment's target with its source, asking first if there is one.</summary>
@@ -237,12 +258,50 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     /// <summary>The selected segment's matches, best first: the open TM's and the file's, at most nine (Ctrl+1 … Ctrl+9).</summary>
     public ObservableCollection<MatchViewModel> Matches { get; } = [];
 
-    /// <summary>The TM matches are looked up in; null if none is open (then only the file's matches are shown).</summary>
+    /// <summary>
+    /// The open TM: matches are looked up in it, and Ctrl+Enter stores in it. Null if none is open (then only the
+    /// file's matches are shown). Changed through the Translation memory menu or <see cref="UseTranslationMemoryAsync"/>.
+    /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(MatchesStatus))]
-    public partial OpenTranslationMemory? TranslationMemory { get; set; }
+    [NotifyPropertyChangedFor(nameof(MemoryLabel))]
+    [NotifyCanExecuteChangedFor(nameof(CloseTranslationMemoryCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ImportTmxCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportTmxCommand))]
+    public partial OpenTranslationMemory? TranslationMemory { get; private set; }
 
     partial void OnTranslationMemoryChanged(OpenTranslationMemory? value) => MatchLookup = LookUpMatchesAsync();
+
+    /// <summary>The open TM and its languages for the pane's header, and why it can't be used for this document.</summary>
+    public string? MemoryLabel
+    {
+        get
+        {
+            if (TranslationMemory is not { } memory)
+                return null;
+
+            var label = $"{memory.Name} ({memory.SourceLanguage} → {memory.TargetLanguage})";
+            if (_document is not { } document)
+                return label;
+
+            var documentLanguages = $"{document.SourceLanguage} → {document.TargetLanguage ?? "?"}";
+            return MemoryPenalty switch
+            {
+                null => $"{label} doesn't serve this document ({documentLanguages}).",
+                > 0 and var penalty => $"{label}: matches lose {penalty} point for this document ({documentLanguages}).",
+                _ => label,
+            };
+        }
+    }
+
+    // What every TM match loses for this document (decision 3), or null if the TM doesn't serve it: then nothing is
+    // looked up or stored. Without a document, nothing is either.
+    private int? MemoryPenalty => TranslationMemory is { } memory && _document is { } document
+        ? TmLanguages.Penalty(memory.SourceLanguage, memory.TargetLanguage, document.SourceLanguage, document.TargetLanguage)
+        : null;
+
+    /// <summary>The latest store in the TM; tests await it.</summary>
+    internal Task StoreTask { get; private set; } = Task.CompletedTask;
 
     /// <summary>A TM lookup for the selected segment is running.</summary>
     [ObservableProperty]
@@ -276,7 +335,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     }
 
     // The file's matches show straight away; the TM's follow from a background lookup, unless the selection has moved
-    // on by then.
+    // on by then. Once the matches are complete, an exact one goes into an empty target (decision 2).
     private async Task LookUpMatchesAsync()
     {
         _cancelLookup?.Invoke();
@@ -285,8 +344,13 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
 
         var segment = SelectedSegment;
         ShowMatches(segment, []);
-        if (segment is null || TranslationMemory is not { } memory)
+        if (segment is null)
             return;
+        if (TranslationMemory is not { } memory || MemoryPenalty is not { } penalty)
+        {
+            AutoInsert(segment);
+            return;
+        }
 
         using var lookup = new CancellationTokenSource();
         Action cancel = lookup.Cancel;
@@ -295,19 +359,19 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         OnPropertyChanged(nameof(MatchesStatus));
         try
         {
-            var index = Segments.IndexOf(segment);
-            var previous = index > 0 ? Segments[index - 1].Source.ToPlainText() : null;
-            var next = index >= 0 && index < Segments.Count - 1 ? Segments[index + 1].Source.ToPlainText() : null;
-            var found = await memory.LookupAsync(segment.Source, previous, next, lookup.Token);
-            if (!lookup.IsCancellationRequested)
-                ShowMatches(segment, found);
+            var (previous, next) = Neighbours(segment);
+            var found = await memory.LookupAsync(segment.Source, previous, next, penalty, lookup.Token);
+            if (lookup.IsCancellationRequested)
+                return;
+            ShowMatches(segment, found);
         }
         catch (OperationCanceledException) when (lookup.IsCancellationRequested)
         {
+            return;
         }
         catch (Exception ex) when (ex is TmFormatException or DbException or IOException)
         {
-            // A damaged TM is shown like a damaged file; the translator can go on without matches.
+            // A damaged TM is shown like a damaged file; the translator can go on with the file's matches.
             ErrorMessage = $"Could not look up matches in {memory.Name}: {ex.Message}";
         }
         finally
@@ -318,7 +382,275 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
                 IsLookingUp = false;
             }
         }
+
+        AutoInsert(segment);
     }
+
+    // Only a TM's match: a file's match may be machine translation scored 100 (the XLIFF reader doesn't tell).
+    private void AutoInsert(SegmentViewModel segment)
+    {
+        if (ReferenceEquals(SelectedSegment, segment) && segment.CanAutoInsert && Matches is [{ IsExact: true, IsFromFile: false } best, ..])
+            segment.InsertMatch(best, automatic: true);
+    }
+
+    // The neighbouring segments' plain text: the context of a lookup, and of what Ctrl+Enter stores, so 101% matches
+    // are found again.
+    private (string? Previous, string? Next) Neighbours(SegmentViewModel segment)
+    {
+        var index = Segments.IndexOf(segment);
+        var previous = index > 0 ? Segments[index - 1].Source.ToPlainText() : null;
+        var next = index >= 0 && index < Segments.Count - 1 ? Segments[index + 1].Source.ToPlainText() : null;
+        return (previous, next);
+    }
+
+    // Queues the confirmed translation for the open TM, replacing what the segment stored before; returns a notice if
+    // it isn't stored. StoredTarget changes at once: the queue keeps the order, so a quick second confirmation
+    // replaces this one.
+    private string? Store(SegmentViewModel segment)
+    {
+        if (TranslationMemory is not { } memory || MemoryPenalty is null || segment.Target is not { IsEmpty: false } target)
+            return null;
+        if (segment.HasErrors)
+            return $"{segment.Label} was confirmed but not stored in {memory.Name}: its target has code errors.";
+
+        // Storing says the translation is in the TM's target language; a file without trgLang takes it, so a later
+        // save can't declare another language for what the TM now holds.
+        if (_document!.TargetLanguage is null)
+        {
+            _document.TargetLanguage = memory.TargetLanguage;
+            OnPropertyChanged(nameof(TargetHeader));
+            OnPropertyChanged(nameof(MemoryLabel));
+        }
+
+        var (previous, next) = Neighbours(segment);
+        var entry = new TmEntry(segment.Source, target)
+        {
+            PreviousSource = previous,
+            NextSource = next,
+            Document = FilePath is null ? null : Path.GetFileName(FilePath),
+            Changed = DateTimeOffset.UtcNow,
+            ChangedBy = Environment.UserName,
+        };
+        var replacing = segment.StoredTarget;
+        segment.StoredTarget = target;
+        StoreTask = StoreAsync(memory, segment, entry, replacing);
+        return null;
+    }
+
+    private async Task StoreAsync(OpenTranslationMemory memory, SegmentViewModel segment, TmEntry entry, InlineContent? replacing)
+    {
+        try
+        {
+            await memory.StoreAsync(entry, replacing);
+        }
+        catch (Exception ex) when (IsMemoryReportable(ex))
+        {
+            ErrorMessage = $"Could not store {segment.Label} in {memory.Name}: {ex.Message}";
+        }
+    }
+
+    // ---------------------------------------------------------------- the Translation memory menu (TM design, step 5)
+
+    /// <summary>
+    /// Makes <paramref name="memory"/> the open TM (null closes it) and closes the previous one once its queued work is
+    /// done. <paramref name="remember"/>: open it again next time; false when the app shuts down, so it's remembered.
+    /// </summary>
+    public async Task UseTranslationMemoryAsync(OpenTranslationMemory? memory, bool remember = true)
+    {
+        var previous = TranslationMemory;
+        TranslationMemory = memory;
+        if (remember)
+            Remember(memory?.Path);
+        if (previous is not null && previous != memory)
+            await previous.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Called at startup: opens the TM that was open last time. If it can't be opened, that's reported; a damaged one is
+    /// forgotten, one that's missing isn't (it may be on a drive that isn't plugged in).
+    /// </summary>
+    public void RestoreTranslationMemory()
+    {
+        if (TranslationMemory is not null || settings?.Load().TranslationMemoryPath is not { } path)
+            return;
+
+        try
+        {
+            TranslationMemory = OpenTranslationMemory.Open(path);
+        }
+        catch (Exception ex) when (IsMemoryReportable(ex))
+        {
+            ErrorMessage = $"Could not open the translation memory {Path.GetFileName(path)}: {ex.Message}";
+            if (ex is TmFormatException)
+                Remember(null);
+        }
+    }
+
+    /// <summary>Called when the window closes: finishes the queued TM work and closes the TM, still remembering it.</summary>
+    public Task ShutDownAsync() => UseTranslationMemoryAsync(null, remember: false);
+
+    /// <summary>Creates a TM for the open document's languages, asking for the target language first if the file has none.</summary>
+    [RelayCommand(CanExecute = nameof(HasDocument))]
+    private async Task NewTranslationMemoryAsync()
+    {
+        var document = _document!;
+        if (!await EnsureTargetLanguageAsync(required: true)
+            || await dialogs.PickTranslationMemoryToCreateAsync($"{document.SourceLanguage}-{document.TargetLanguage}.sctm") is not { } path)
+            return;
+
+        // Never replace a TM: years of work can be in one.
+        var name = Path.GetFileName(path);
+        if (File.Exists(path))
+        {
+            ErrorMessage = $"{name} already exists. Open it with Translation memory → Open…, or choose another name.";
+            return;
+        }
+
+        OpenTranslationMemory memory;
+        try
+        {
+            memory = OpenTranslationMemory.Create(path, document.SourceLanguage, document.TargetLanguage!);
+        }
+        catch (Exception ex) when (IsMemoryReportable(ex))
+        {
+            ErrorMessage = $"Could not create {name}: {ex.Message}";
+            return;
+        }
+
+        ErrorMessage = null;
+        await UseTranslationMemoryAsync(memory);
+    }
+
+    [RelayCommand]
+    private async Task OpenTranslationMemoryAsync()
+    {
+        if (await dialogs.PickTranslationMemoryToOpenAsync() is not { } path)
+            return;
+
+        OpenTranslationMemory memory;
+        try
+        {
+            memory = OpenTranslationMemory.Open(path);
+        }
+        catch (Exception ex) when (IsMemoryReportable(ex))
+        {
+            ErrorMessage = $"Could not open {Path.GetFileName(path)}: {ex.Message}";
+            return;
+        }
+
+        ErrorMessage = null;
+        await UseTranslationMemoryAsync(memory);
+    }
+
+    [RelayCommand(CanExecute = nameof(HasTranslationMemory))]
+    private Task CloseTranslationMemoryAsync() => UseTranslationMemoryAsync(null);
+
+    /// <summary>Imports a TMX file into the open TM, in its languages and their regional variants; skipped units are reported.</summary>
+    [RelayCommand(CanExecute = nameof(HasTranslationMemory))]
+    private async Task ImportTmxAsync()
+    {
+        var memory = TranslationMemory!;
+        if (await dialogs.PickTmxToImportAsync() is not { } path)
+            return;
+
+        var name = Path.GetFileName(path);
+        TmxImport import;
+        try
+        {
+            // Off the UI thread: a TMX file can be hundreds of megabytes.
+            import = await Task.Run(async () =>
+            {
+                await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+                return await Tmx.ReadAsync(stream, memory.SourceLanguage, memory.TargetLanguage);
+            });
+            await memory.ImportAsync(import.Entries);
+        }
+        catch (Exception ex) when (IsMemoryReportable(ex))
+        {
+            ErrorMessage = $"Could not import {name}: {ex.Message}";
+            return;
+        }
+
+        Notice = $"Imported {Count(import.Entries.Count, "entry", "entries")} from {name} into {memory.Name}.{Skipped(import.Skipped, "unit")}";
+        MatchLookup = LookUpMatchesAsync();
+    }
+
+    /// <summary>Exports the open TM to a TMX file, written atomically; entries XML can't hold are skipped and reported.</summary>
+    [RelayCommand(CanExecute = nameof(HasTranslationMemory))]
+    private async Task ExportTmxAsync()
+    {
+        var memory = TranslationMemory!;
+        if (await dialogs.PickTmxToExportAsync(Path.ChangeExtension(memory.Name, ".tmx")) is not { } path)
+            return;
+
+        var name = Path.GetFileName(path);
+        TmxExport export;
+        try
+        {
+            var entries = await memory.EntriesAsync();
+            export = await Task.Run(() => WriteTmxAsync(path, entries, memory.SourceLanguage, memory.TargetLanguage));
+        }
+        catch (Exception ex) when (IsMemoryReportable(ex))
+        {
+            ErrorMessage = $"Could not export to {name}: {ex.Message}";
+            return;
+        }
+
+        Notice = $"Exported {Count(export.Written, "entry", "entries")} from {memory.Name} to {name}.{Skipped(export.Skipped, "entry")}";
+    }
+
+    // Like XliffSerializerExtensions.WriteFileAsync: a failed export leaves an existing file as it was.
+    private static async Task<TmxExport> WriteTmxAsync(string path, IReadOnlyList<TmEntry> entries, string sourceLanguage, string targetLanguage)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var tempPath = fullPath + ".tmp";
+        try
+        {
+            TmxExport export;
+            await using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true))
+                export = await Tmx.WriteAsync(stream, entries, sourceLanguage, targetLanguage);
+
+            File.Move(tempPath, fullPath, overwrite: true);
+            return export;
+        }
+        catch
+        {
+            File.Delete(tempPath);
+            throw;
+        }
+    }
+
+    private bool HasDocument() => _document is not null;
+
+    private bool HasTranslationMemory() => TranslationMemory is not null;
+
+    private void Remember(string? path)
+    {
+        if (settings is null)
+            return;
+
+        try
+        {
+            settings.Save(new AppSettings(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ErrorMessage = $"Could not remember the translation memory for next time: {ex.Message}";
+        }
+    }
+
+    private static string Count(int count, string one, string many) =>
+        $"{count.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)} {(count == 1 ? one : many)}";
+
+    // " Skipped 2 units: a; b." with the first three reasons.
+    private static string Skipped(IReadOnlyList<string> skipped, string what) => skipped.Count == 0
+        ? ""
+        : $" Skipped {Count(skipped.Count, what, what + "s")}: {string.Join("; ", skipped.Take(3))}{(skipped.Count > 3 ? "; …" : "")}";
+
+    // What a TM, a TMX file or the file system report for bad files or unavailable paths; anything else is a bug.
+    private static bool IsMemoryReportable(Exception ex) =>
+        ex is TmFormatException or DbException or IOException or UnauthorizedAccessException or ArgumentException
+            or ObjectDisposedException;
 
     private void ShowMatches(SegmentViewModel? segment, IReadOnlyList<TmMatch> fromMemory)
     {
