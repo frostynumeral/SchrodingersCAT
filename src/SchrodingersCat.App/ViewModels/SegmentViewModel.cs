@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using SchrodingersCat.App.Editing;
 using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Models;
+using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.ViewModels;
 
@@ -17,6 +18,7 @@ public sealed partial class SegmentViewModel : ObservableObject
     private readonly Segment _segment;
     private readonly Action _changed;
     private TargetEditModel? _editModel;
+    private IReadOnlyList<TmMatch>? _fileMatches;
     private IReadOnlyList<InlineCodeIssue> _issues = [];
 
     /// <param name="check">The unit's code check, shared with the unit's other segments.</param>
@@ -39,6 +41,21 @@ public sealed partial class SegmentViewModel : ObservableObject
     public TranslationUnit Unit => _unit;
 
     public string SourceText { get; }
+
+    /// <summary>The segment's source, for looking up matches.</summary>
+    public InlineContent Source => _segment.Source;
+
+    /// <summary>What the unit's source says about its codes.</summary>
+    public InlineCodeHints Hints => _check.Hints;
+
+    /// <summary>
+    /// The matches the XLIFF file carries for this segment (matches module, design section 5): those whose <c>ref</c>
+    /// points to it, and in a unit with only this segment to translate, also those that point elsewhere in it (e.g.
+    /// at an annotation). Read once.
+    /// </summary>
+    public IReadOnlyList<TmMatch> FileMatches => _fileMatches ??= [.. XliffMatches.Read(_unit)
+        .Where(m => m.SegmentId is { } id ? id == _segment.Id : _unit.TranslatableSegments.Count() == 1)
+        .Select(m => m.Match)];
 
     /// <summary>The source with codes as chips; codes missing from the target are marked as problems.</summary>
     public IReadOnlyList<ContentRun> SourceRuns =>
@@ -128,6 +145,22 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     /// <summary>Replaces the target with the source (Ctrl+Insert), as one undoable edit.</summary>
     public void CopySource() => EditStatus = EditModel.CopySource().Message;
+
+    /// <summary>
+    /// Replaces the target with a match's translation (Ctrl+1 … Ctrl+9, design section 6), with the codes transferred
+    /// onto this segment's, as one undoable edit. The status says which match went in, and whether codes are missing.
+    /// </summary>
+    public void InsertMatch(MatchViewModel match)
+    {
+        ArgumentNullException.ThrowIfNull(match);
+
+        var notes = new List<string> { $"Inserted the {match.Score} match." };
+        if (EditModel.ReplaceTarget(match.Target.Target).Message is { } message)
+            notes.Add(message);
+        if (!match.Target.AllCodesPlaced)
+            notes.Add("Not every code found its place: check the codes (F9 inserts the next missing one).");
+        EditStatus = string.Join(" ", notes);
+    }
 
     /// <summary>
     /// The target as text. Setting it replaces the target, through the edit model so it can be undone, as selecting

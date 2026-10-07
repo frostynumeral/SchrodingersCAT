@@ -157,8 +157,21 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      entries have no original data, and code transfer replaces a match's codes anyway.
    - A TMX unit the import can't use (no text in the language pair, an unknown element in `<seg>`, an `<ept>` without
      its `<bpt>`) is skipped and reported; a file that isn't safe, well-formed TMX fails as a whole.
-4. **Matches pane and inserting matches** (Ctrl+1 … Ctrl+9), with headless tests.
-5. **Learning and TM selection:** Ctrl+Enter stores, the Translation memory menu, and the decisions below.
+4. **Matches pane and inserting matches** *(Done 2026-10-07.)* (Ctrl+1 … Ctrl+9), with headless tests.
+   - The pane shows the file's matches (those whose `ref` points to the segment, or anywhere in a unit with only that
+     segment to translate) and the open TM's, best first, at most nine; among equal scores the TM's come first.
+   - The TM is looked up on a background thread, one lookup at a time (a SQLite connection can't be shared between
+     threads); moving on cancels a lookup that hasn't started and drops the result of one that has. A damaged TM shows
+     in the error banner, and the file's matches stay.
+   - Context for 101% matches is the plain text of the neighbouring segments in the list.
+   - The source differences (`SourceDiff`) are worked out on the words the score counts, but show what the score
+     forgives: case and numbers. Whitespace is never a difference.
+   - Inserting replaces the target through `TargetEditModel.ReplaceTarget`, with the rules of copying the source
+     (codes already in another segment's target stay out, protected codes stay in), as one undoable edit.
+   - Not in this step: opening a TM (step 5, so the app shows only the file's matches until then), and inserting
+     exact matches automatically on entering a segment, which moves to step 5 together with storing.
+5. **Learning and TM selection:** Ctrl+Enter stores, the Translation memory menu, auto-inserting exact matches, and
+   the decisions below.
 
 ## Open questions
 

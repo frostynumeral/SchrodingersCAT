@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SchrodingersCat.Core\SchrodingersCat.Core.csproj" />
+    <ProjectReference Include="..\SchrodingersCat.Memory\SchrodingersCat.Memory.csproj" />
   </ItemGroup>
 
   <ItemGroup>

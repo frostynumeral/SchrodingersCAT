@@ -35,6 +35,17 @@
             <Setter Property="FontSize" Value="11" />
         </Style>
 
+        <!-- In a match's source: codes the current source lacks, or has in addition (design section 6 of
+             docs/design/translation-memory.md). Text is styled in InlineContentBlock. -->
+        <Style Selector="Border.chip.removed">
+            <Setter Property="Opacity" Value="0.5" />
+            <Setter Property="BorderBrush" Value="#E53935" />
+        </Style>
+        <Style Selector="Border.chip.added">
+            <Setter Property="Background" Value="#5543A047" />
+            <Setter Property="BorderBrush" Value="#43A047" />
+        </Style>
+
         <!-- Annotation halves in the editor: very small brackets (design section 1). -->
         <Style Selector="Border.marker">
             <Setter Property="Margin" Value="1,0" />
@@ -74,9 +85,33 @@
         <Style Selector="Border.issueBadge.error TextBlock">
             <Setter Property="Foreground" Value="White" />
         </Style>
+
+        <!-- The matches pane: one row per match, its score in a badge, green for an exact (100% or 101%) match. -->
+        <Style Selector="Border.matchesPane">
+            <Setter Property="BorderBrush" Value="#40808080" />
+            <Setter Property="BorderThickness" Value="0,1,0,0" />
+            <Setter Property="Padding" Value="4,6,4,0" />
+        </Style>
+        <Style Selector="Border.match">
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Background" Value="#14808080" />
+        </Style>
+        <Style Selector="Border.matchScore">
+            <Setter Property="Padding" Value="6,0" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+            <Setter Property="Background" Value="#335B7FC7" />
+        </Style>
+        <Style Selector="Border.matchScore.exact">
+            <Setter Property="Background" Value="#7743A047" />
+        </Style>
     </Window.Styles>
 
-    <!-- The segment shortcuts (Ctrl+Enter, Ctrl+Up/Down, Ctrl+Shift+Down, Ctrl+Insert) are in MainWindow.axaml.cs. -->
+    <!-- The segment shortcuts (Ctrl+Enter, Ctrl+Up/Down, Ctrl+Shift+Down, Ctrl+Insert) and Ctrl+1 … Ctrl+9 (insert a match)
+         are in MainWindow.axaml.cs. -->
     <Window.KeyBindings>
         <KeyBinding Gesture="Ctrl+O" Command="{Binding OpenCommand}" />
         <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveCommand}" />
@@ -113,6 +148,39 @@
             </Grid>
             <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Margin="12,4" Text="{Binding SelectedSegment.EditStatus, FallbackValue={x:Null}}"
                        TextWrapping="Wrap" Foreground="#C75000" IsVisible="{Binding $self.Text, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            <!-- The selected segment's matches (design section 6 of docs/design/translation-memory.md). -->
+            <Border x:Name="MatchesPane" DockPanel.Dock="Bottom" Classes="matchesPane" Margin="8,4,8,0" Height="200">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="4,0,4,4">
+                        <TextBlock Text="Matches" FontWeight="SemiBold" />
+                        <TextBlock x:Name="MemoryName" Text="{Binding TranslationMemory.Name, FallbackValue={x:Null}}" Opacity="0.6" />
+                    </StackPanel>
+                    <TextBlock x:Name="MatchesStatus" DockPanel.Dock="Top" Margin="4,0" Opacity="0.6" Text="{Binding MatchesStatus}"
+                               IsVisible="{Binding MatchesStatus, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                    <ScrollViewer>
+                        <ItemsControl x:Name="MatchList" ItemsSource="{Binding Matches}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:MatchViewModel">
+                                    <Border Classes="match">
+                                        <Grid ColumnDefinitions="64,48,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8">
+                                            <!-- Not focusable: clicking it leaves the keyboard in the editor. -->
+                                            <Button Grid.RowSpan="2" Classes="insertMatch" Content="{Binding Shortcut}" Command="{Binding InsertCommand}"
+                                                    Focusable="False" VerticalAlignment="Top" FontSize="11" ToolTip.Tip="Insert this match into the target" />
+                                            <Border Grid.Column="1" Classes="matchScore" Classes.exact="{Binding IsExact}">
+                                                <TextBlock Text="{Binding Score}" FontSize="11" />
+                                            </Border>
+                                            <controls:InlineContentBlock Grid.Column="2" Classes="matchSource" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
+                                            <controls:InlineContentBlock Grid.Column="3" Classes="matchTarget" Runs="{Binding TargetRuns}" TextWrapping="Wrap" />
+                                            <TextBlock Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" Classes="matchDetails" Text="{Binding Details}"
+                                                       FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
             <ListBox x:Name="SegmentList" ItemsSource="{Binding Segments}" SelectedItem="{Binding SelectedSegment}">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:SegmentViewModel">

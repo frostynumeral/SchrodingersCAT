@@ -9,6 +9,7 @@ using Avalonia.Media.Immutable;
 using Avalonia.Threading;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.Core.Models;
+using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.Controls;
 
@@ -32,6 +33,10 @@ public sealed class InlineContentBlock : SelectableTextBlock
         new TextDecoration { Location = TextDecorationLocation.Underline, StrokeDashArray = new AvaloniaList<double>([1, 2]) },
     ];
 
+    private static readonly TextDecorationCollection RemovedStrikethrough = [new TextDecoration { Location = TextDecorationLocation.Strikethrough }];
+
+    private static readonly IBrush RemovedForeground = new ImmutableSolidColorBrush(Color.FromRgb(0xE5, 0x39, 0x35));
+    private static readonly IBrush AddedBackground = new ImmutableSolidColorBrush(Color.FromArgb(0x55, 0x43, 0xA0, 0x47));
     private static readonly IBrush CommentBackground = new ImmutableSolidColorBrush(Color.FromArgb(0x55, 0xFF, 0xD5, 0x4F));
     private static readonly IBrush NoTranslateBackground = new ImmutableSolidColorBrush(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
 
@@ -126,9 +131,24 @@ public sealed class InlineContentBlock : SelectableTextBlock
         return border;
     }
 
+    // In a match's source (design section 6): what the current source lacks is struck through, what it adds is
+    // highlighted. The difference wins over annotations, which a match's source doesn't show anyway.
     private static Run TextInline(TextRun text)
     {
         var run = new Run(text.Text);
+        if (text.Difference == DiffKind.Removed)
+        {
+            run.TextDecorations = RemovedStrikethrough;
+            run.Foreground = RemovedForeground;
+            return run;
+        }
+
+        if (text.Difference == DiffKind.Added)
+        {
+            run.Background = AddedBackground;
+            return run;
+        }
+
         if (text.Annotations.HasFlag(AnnotationStyle.Term))
             run.TextDecorations = TermUnderline;
         if (text.Annotations.HasFlag(AnnotationStyle.NoTranslate))
