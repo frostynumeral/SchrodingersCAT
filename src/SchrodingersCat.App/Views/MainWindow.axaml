@@ -163,38 +163,77 @@
             </Grid>
             <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Margin="12,4" Text="{Binding SelectedSegment.EditStatus, FallbackValue={x:Null}}"
                        TextWrapping="Wrap" Foreground="#C75000" IsVisible="{Binding $self.Text, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-            <!-- The selected segment's matches (design section 6 of docs/design/translation-memory.md). -->
-            <Border x:Name="MatchesPane" DockPanel.Dock="Bottom" Classes="matchesPane" Margin="8,4,8,0" Height="200">
-                <DockPanel>
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="4,0,4,4">
-                        <TextBlock Text="Matches" FontWeight="SemiBold" />
-                        <TextBlock x:Name="MemoryName" Text="{Binding MemoryLabel}" Opacity="0.6" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <TextBlock x:Name="MatchesStatus" DockPanel.Dock="Top" Margin="4,0" Opacity="0.6" Text="{Binding MatchesStatus}"
-                               IsVisible="{Binding MatchesStatus, Converter={x:Static ObjectConverters.IsNotNull}}" />
-                    <ScrollViewer>
-                        <ItemsControl x:Name="MatchList" ItemsSource="{Binding Matches}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:MatchViewModel">
-                                    <Border Classes="match">
-                                        <Grid ColumnDefinitions="64,48,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8">
-                                            <!-- Not focusable: clicking it leaves the keyboard in the editor. -->
-                                            <Button Grid.RowSpan="2" Classes="insertMatch" Content="{Binding Shortcut}" Command="{Binding InsertCommand}"
-                                                    Focusable="False" VerticalAlignment="Top" FontSize="11" ToolTip.Tip="Insert this match into the target" />
-                                            <Border Grid.Column="1" Classes="matchScore" Classes.exact="{Binding IsExact}">
-                                                <TextBlock Text="{Binding Score}" FontSize="11" />
+            <!-- The pane under the segments: the selected segment's matches (design section 6 of
+                 docs/design/translation-memory.md), and the concordance (searching the TM for a word or phrase). -->
+            <Border x:Name="MatchesPane" DockPanel.Dock="Bottom" Classes="matchesPane" Margin="8,4,8,0" Height="230">
+                <TabControl x:Name="PaneTabs" SelectedIndex="{Binding PaneTab}" Padding="0">
+                    <TabItem x:Name="MatchesTab" Header="Matches" FontSize="14">
+                        <DockPanel>
+                            <TextBlock x:Name="MemoryName" DockPanel.Dock="Top" Margin="4,0,4,4" Text="{Binding MemoryLabel}" Opacity="0.6" TextWrapping="Wrap" />
+                            <TextBlock x:Name="MatchesStatus" DockPanel.Dock="Top" Margin="4,0" Opacity="0.6" Text="{Binding MatchesStatus}"
+                                       IsVisible="{Binding MatchesStatus, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                            <ScrollViewer>
+                                <ItemsControl x:Name="MatchList" ItemsSource="{Binding Matches}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:MatchViewModel">
+                                            <Border Classes="match">
+                                                <Grid ColumnDefinitions="64,48,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8">
+                                                    <!-- Not focusable: clicking it leaves the keyboard in the editor. -->
+                                                    <Button Grid.RowSpan="2" Classes="insertMatch" Content="{Binding Shortcut}" Command="{Binding InsertCommand}"
+                                                            Focusable="False" VerticalAlignment="Top" FontSize="11" ToolTip.Tip="Insert this match into the target" />
+                                                    <Border Grid.Column="1" Classes="matchScore" Classes.exact="{Binding IsExact}">
+                                                        <TextBlock Text="{Binding Score}" FontSize="11" />
+                                                    </Border>
+                                                    <controls:InlineContentBlock Grid.Column="2" Classes="matchSource" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
+                                                    <controls:InlineContentBlock Grid.Column="3" Classes="matchTarget" Runs="{Binding TargetRuns}" TextWrapping="Wrap" />
+                                                    <TextBlock Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" Classes="matchDetails" Text="{Binding Details}"
+                                                               FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+                                                </Grid>
                                             </Border>
-                                            <controls:InlineContentBlock Grid.Column="2" Classes="matchSource" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
-                                            <controls:InlineContentBlock Grid.Column="3" Classes="matchTarget" Runs="{Binding TargetRuns}" TextWrapping="Wrap" />
-                                            <TextBlock Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" Classes="matchDetails" Text="{Binding Details}"
-                                                       FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </DockPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </TabItem>
+                    <TabItem x:Name="ConcordanceTab" Header="Concordance" FontSize="14">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="4,0,4,4">
+                                <CheckBox x:Name="SearchTargetsBox" DockPanel.Dock="Right" Margin="8,0,0,0" Content="Search translations"
+                                          IsChecked="{Binding Concordance.SearchTargets}" />
+                                <!-- Enter searches; Escape gives the keyboard back to the editor (MainWindow.axaml.cs). -->
+                                <TextBox x:Name="ConcordanceBox" Text="{Binding Concordance.Query}"
+                                         PlaceholderText="A word or phrase (Ctrl+K searches the selected text)">
+                                    <TextBox.KeyBindings>
+                                        <KeyBinding Gesture="Enter" Command="{Binding Concordance.SearchCommand}" />
+                                    </TextBox.KeyBindings>
+                                </TextBox>
+                            </DockPanel>
+                            <TextBlock x:Name="ConcordanceStatus" DockPanel.Dock="Top" Margin="4,0" Opacity="0.6" Text="{Binding Concordance.Status}"
+                                       IsVisible="{Binding Concordance.Status, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                            <ScrollViewer>
+                                <ItemsControl x:Name="ConcordanceList" ItemsSource="{Binding Concordance.Results}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ConcordanceResultViewModel">
+                                            <Border Classes="match">
+                                                <Grid ColumnDefinitions="64,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8">
+                                                    <!-- Not focusable: clicking it leaves the keyboard in the editor. -->
+                                                    <Button Grid.RowSpan="2" Classes="insertResult" Content="Insert" Focusable="False" VerticalAlignment="Top" FontSize="11"
+                                                            Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).Concordance.InsertCommand, FallbackValue={x:Null}}"
+                                                            CommandParameter="{Binding}" ToolTip.Tip="Insert this translation at the caret, as text" />
+                                                    <controls:InlineContentBlock Grid.Column="1" Classes="resultSource" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
+                                                    <controls:InlineContentBlock Grid.Column="2" Classes="resultTarget" Runs="{Binding TargetRuns}" TextWrapping="Wrap" />
+                                                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding Details}"
+                                                               FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </TabItem>
+                </TabControl>
             </Border>
             <ListBox x:Name="SegmentList" ItemsSource="{Binding Segments}" SelectedItem="{Binding SelectedSegment}">
                 <ListBox.ItemTemplate>

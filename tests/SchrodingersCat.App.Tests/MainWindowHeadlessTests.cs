@@ -633,6 +633,89 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal(tmPath, settings.Load().TranslationMemoryPath);
     }
 
+    [AvaloniaFact]
+    public async Task CtrlK_SearchesTheSelection_AndInsertKeepsTheKeyboardInTheEditor()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        var tm = new InMemoryTranslationMemory();
+        tm.Add(new TmEntry(InlineContent.FromText("Hello there."), InlineContent.FromText("Szia, helló.")));
+        tm.Add(new TmEntry(InlineContent.FromText("Goodbye, world."), InlineContent.FromText("Viszlát, világ.")));
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "TM", "en", "hu"));
+
+        // A selection in the source column: its sources are searched.
+        Click(window, TargetFrames(window)[0]);
+        var source = ContentBlocks(window, "source")[0];
+        source.SelectionStart = 0;
+        source.SelectionEnd = 5;
+        Press(window, PhysicalKey.K, RawInputModifiers.Control);
+        await WaitFor(() => vm.Concordance.SearchTask.IsCompleted);
+        Assert.Equal(1, window.FindControl<TabControl>("PaneTabs")!.SelectedIndex);
+        Assert.Equal(("Hello", false), (vm.Concordance.Query, vm.Concordance.SearchTargets));
+        var row = Assert.Single(ConcordanceRows(window));
+        var hit = Assert.Single(row.GetVisualDescendants().OfType<InlineContentBlock>().Single(b => b.Classes.Contains("resultSource")).Inlines!.OfType<Run>(), r => r.FontWeight == Avalonia.Media.FontWeight.Bold);
+        Assert.Equal("Hello", hit.Text);
+
+        // A selection in the editor: the translations are searched.
+        source.SelectionEnd = 0;
+        var editor = Assert.Single(VisibleEditors(window));
+        window.KeyTextInput("Szia világ");
+        Dispatcher.UIThread.RunJobs();
+        editor.Editor.Select(5, 5);
+        Press(window, PhysicalKey.K, RawInputModifiers.Control);
+        await WaitFor(() => vm.Concordance.SearchTask.IsCompleted);
+        Assert.Equal(("világ", true), (vm.Concordance.Query, vm.Concordance.SearchTargets));
+
+        // Insert goes in at the caret, the selected term stays, and the editor keeps the keyboard.
+        Click(window, Assert.Single(ConcordanceRows(window)).GetVisualDescendants().OfType<Button>().Single());
+        Assert.Equal("Szia világViszlát, világ.", vm.Segments[0].TargetText);
+        Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
+
+        // Ctrl+1 with the concordance showing only shows the matches.
+        var target = vm.Segments[0].TargetText;
+        Press(window, PhysicalKey.Digit1, RawInputModifiers.Control);
+        Assert.Equal(0, window.FindControl<TabControl>("PaneTabs")!.SelectedIndex);
+        Assert.Equal(target, vm.Segments[0].TargetText);
+    }
+
+    [AvaloniaFact]
+    public async Task CtrlK_WithoutASelection_OpensTheSearchBox_EnterSearches_EscapeReturns()
+    {
+        var path = _files.Write("sample.xlf", TestFiles.Sample);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        var tm = new InMemoryTranslationMemory();
+        tm.Add(new TmEntry(InlineContent.FromText("Save the file."), InlineContent.FromText("Mentsd a fájlt.")));
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "TM", "en", "hu"));
+        Click(window, TargetFrames(window)[0]);
+        var editor = Assert.Single(VisibleEditors(window));
+
+        Press(window, PhysicalKey.K, RawInputModifiers.Control);
+        var box = window.FindControl<TextBox>("ConcordanceBox")!;
+        await WaitFor(() => box.IsFocused);
+
+        window.KeyTextInput("fil");
+        Press(window, PhysicalKey.Enter);
+        await WaitFor(() => vm.Concordance.Results.Count == 1);
+        Assert.Equal("1 entry.", window.FindControl<TextBlock>("ConcordanceStatus")!.Text);
+
+        Press(window, PhysicalKey.Escape);
+        Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
+    }
+
+    private static List<InlineContentBlock> ContentBlocks(Window window, string role)
+    {
+        Dispatcher.UIThread.RunJobs();
+        return window.GetVisualDescendants().OfType<InlineContentBlock>().Where(b => b.Classes.Contains(role)).ToList();
+    }
+
+    private static List<Border> ConcordanceRows(Window window)
+    {
+        Dispatcher.UIThread.RunJobs();
+        return window.FindControl<ItemsControl>("ConcordanceList")!.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("match")).ToList();
+    }
+
     private static List<Border> MatchRows(Window window)
     {
         Dispatcher.UIThread.RunJobs();

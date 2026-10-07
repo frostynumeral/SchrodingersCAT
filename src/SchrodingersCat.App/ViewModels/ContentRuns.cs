@@ -10,6 +10,9 @@ public abstract record ContentRun
 {
     /// <summary>In a match's source: how this piece compares with the current source (design section 6).</summary>
     public DiffKind Difference { get; init; }
+
+    /// <summary>In a concordance result: part of a hit.</summary>
+    public bool IsHit { get; init; }
 }
 
 /// <summary>Text, styled by the annotations (<c>&lt;mrk&gt;</c>) it lies inside.</summary>
@@ -108,6 +111,31 @@ public static class ContentRuns
                 InlineCode code => MatchChip(code),
                 var other => throw new ArgumentException($"A diff has no {other.GetType().Name}.", nameof(parts)),
             }) with { Difference = p.Kind })];
+    }
+
+    /// <summary>
+    /// A concordance result's side (<see cref="Concordance"/>), with the hits marked. Its codes belong to another
+    /// sentence, so their chips say only what kind of code they are, like a match's own codes.
+    /// </summary>
+    public static IReadOnlyList<ContentRun> BuildHighlight(IReadOnlyList<HighlightPart> parts)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+
+        var runs = new List<ContentRun>();
+        foreach (var part in parts)
+        {
+            switch (part.Element)
+            {
+                case InlineText { Text.Length: > 0 } text:
+                    runs.Add(new TextRun(text.Text, AnnotationStyle.None) { IsHit = part.IsHit });
+                    break;
+                case InlineCode code:
+                    runs.Add(MatchChip(code));
+                    break;
+            }
+        }
+
+        return runs;
     }
 
     /// <summary>Marks the chips of the codes in <paramref name="problemCodes"/> as having a problem.</summary>

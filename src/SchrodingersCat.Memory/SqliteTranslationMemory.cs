@@ -255,6 +255,42 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
 
     public void Dispose() => _connection.Dispose();
 
+    // ---------------------------------------------------------------- concordance
+
+    // One side of every entry, for a concordance scan: only the searched column is read and decoded.
+    internal IEnumerable<(long Key, DateTimeOffset Changed, InlineContent Side)> ScanSide(ConcordanceSide side)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = side == ConcordanceSide.Source
+            ? "SELECT id, changed, source FROM entries ORDER BY id"
+            : "SELECT id, changed, target FROM entries ORDER BY id";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            InlineContent content;
+            try
+            {
+                content = TmContentFormat.Read((byte[])reader[2]);
+            }
+            catch (InvalidCastException ex)
+            {
+                throw new TmFormatException("A stored entry is damaged.", ex);
+            }
+
+            yield return (reader.GetInt64(0), new DateTimeOffset(reader.GetInt64(1), TimeSpan.Zero), content);
+        }
+    }
+
+    // A whole entry by its id, for the hits a scan kept.
+    internal TmEntry Load(long id)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = "SELECT id, source, target, previous_source, next_source, document, changed, changed_by FROM entries WHERE id = $id";
+        command.Parameters.AddWithValue("$id", id);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadEntry(reader) : throw new TmFormatException($"Entry {id} disappeared during a search.");
+    }
+
     // ---------------------------------------------------------------- storing
 
     private void Store(TmEntry entry)

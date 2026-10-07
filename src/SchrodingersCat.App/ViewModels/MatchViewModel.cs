@@ -53,16 +53,15 @@ public sealed class MatchViewModel
     public IReadOnlyList<ContentRun> TargetRuns { get; }
 
     /// <summary>Where the match comes from, in one line: the TM or the file's origin, the document, the date and the user.</summary>
-    public string Details
+    public string Details =>
+        DetailsOf(IsFromFile ? (Match.Origin is null ? "From the file" : $"From the file: {Match.Origin}") : Match.Origin, Match.Entry);
+
+    /// <summary>A TM entry's origin, document, date and user, in one line (also for concordance results).</summary>
+    internal static string DetailsOf(string? origin, TmEntry entry)
     {
-        get
-        {
-            var entry = Match.Entry;
-            var origin = IsFromFile ? (Match.Origin is null ? "From the file" : $"From the file: {Match.Origin}") : Match.Origin;
-            var date = entry.Changed == default ? null : entry.Changed.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            return string.Join(" · ", new[] { origin, entry.Document is null ? null : Path.GetFileName(entry.Document), date, entry.ChangedBy }
-                .Where(s => !string.IsNullOrEmpty(s)));
-        }
+        var date = entry.Changed == default ? null : entry.Changed.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        return string.Join(" · ", new[] { origin, entry.Document is null ? null : Path.GetFileName(entry.Document), date, entry.ChangedBy }
+            .Where(s => !string.IsNullOrEmpty(s)));
     }
 
     /// <summary>Inserts the match into its segment's target (what Ctrl+<see cref="Number"/> does).</summary>

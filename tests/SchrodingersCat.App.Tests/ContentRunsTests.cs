@@ -221,6 +221,19 @@ public class ContentRunsTests
         Assert.Equal((DiffKind.Added, true, "{0}"), (chip.Difference, chip.IsProtected, chip.Text));
     }
 
+    [Fact]
+    public void BuildHighlight_MarksTheHits_AndShowsTheEntrysCodesAsPlainChips()
+    {
+        var code = new InlineCode("7", InlineCodeKind.Standalone) { Disp = "{0}", CanDelete = false };
+
+        var runs = ContentRuns.BuildHighlight([
+            new HighlightPart(new InlineText("Delete "), false), new HighlightPart(new InlineText("files"), true),
+            new HighlightPart(code, false), new HighlightPart(new InlineMarker("m1", InlineMarkerKind.Opening), false)]);
+
+        Assert.Equal([("Delete ", false), ("files", true), ("{0}", false)], runs.Select(r => (r is TextRun t ? t.Text : ((ChipRun)r).Text, r.IsHit)));
+        Assert.Equal(("A code in the match", false), (((ChipRun)runs[2]).ToolTip, ((ChipRun)runs[2]).IsProtected));
+    }
+
     private static TranslationUnit Unit(InlineContent source)
     {
         var unit = new TranslationUnit { Id = "u1" };
