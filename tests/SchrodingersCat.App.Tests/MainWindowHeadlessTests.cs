@@ -15,6 +15,7 @@ using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.App.Views;
 using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Xliff;
+using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.Tests;
 
@@ -504,6 +505,55 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Press(window, PhysicalKey.V, RawInputModifiers.Control);
         await WaitFor(() => vm.Segments[2].TargetText == "Press ⟨1⟩OK⟨/1⟩.");
         Assert.False(vm.Segments[2].HasIssues);
+    }
+
+    [AvaloniaFact]
+    public async Task ThePane_ShowsTheMatches_AndCtrlNumberOrItsButtonInsertsOne()
+    {
+        var path = _files.Write("matches.xlf", MatchesTests.WithMatches);
+        var (window, vm) = Show(path);
+        await vm.LoadAsync(path);
+        var tm = new InMemoryTranslationMemory();
+        tm.Add(new TmEntry(InlineContent.FromText("Press OK."), InlineContent.FromText("Nyomd meg: OK.")));
+        vm.TranslationMemory = new OpenTranslationMemory(tm, "Project TM");
+        var status = window.FindControl<TextBlock>("MatchesStatus")!;
+        Assert.Equal("Select a segment to see its matches.", status.Text);
+
+        Click(window, TargetFrames(window)[2]);
+        await WaitFor(() => MatchRows(window).Count == 2);
+        Assert.False(status.IsVisible);
+        Assert.Equal("Project TM", window.FindControl<TextBlock>("MemoryName")!.Text);
+        Assert.Equal(["Ctrl+1 96%", "Ctrl+2 90%"], MatchRows(window).Select(r =>
+            $"{r.GetVisualDescendants().OfType<Button>().Single().Content} {r.GetVisualDescendants().OfType<Border>().Single(b => b.Classes.Contains("matchScore")).GetLogicalDescendants().OfType<TextBlock>().Single().Text}"));
+
+        // The file's match has a word the current source doesn't: struck through.
+        var fileMatchSource = MatchRows(window)[1].GetVisualDescendants().OfType<InlineContentBlock>().Single(b => b.Classes.Contains("matchSource"));
+        var removed = Assert.Single(fileMatchSource.Inlines!.OfType<Run>(), r => r.TextDecorations is not null);
+        Assert.Equal(" now", removed.Text);
+
+        // Ctrl+2 from inside the editor: the match goes in with the current codes, and the editor keeps the keyboard.
+        var editor = Assert.Single(VisibleEditors(window));
+        Press(window, PhysicalKey.Digit2, RawInputModifiers.Control);
+        Assert.Equal("Most nyomd meg: ⟨1⟩OK⟨/1⟩.", vm.Segments[2].TargetText);
+        Assert.Equal(2, EditorChips(editor).Count);
+        Assert.Equal("Inserted the 90% match.", window.FindControl<TextBlock>("StatusText")!.Text);
+        Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
+
+        // The button does the same, without taking the keyboard from the editor.
+        Click(window, MatchRows(window)[0].GetVisualDescendants().OfType<Button>().Single());
+        Assert.Equal("Nyomd meg: OK.", vm.Segments[2].TargetText);
+        Assert.StartsWith("Inserted the 96% match.", window.FindControl<TextBlock>("StatusText")!.Text, StringComparison.Ordinal);
+        Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
+
+        // Ctrl+Z undoes the insertion.
+        Press(window, PhysicalKey.Z, RawInputModifiers.Control);
+        Assert.Equal("Most nyomd meg: ⟨1⟩OK⟨/1⟩.", vm.Segments[2].TargetText);
+    }
+
+    private static List<Border> MatchRows(Window window)
+    {
+        Dispatcher.UIThread.RunJobs();
+        return window.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("match")).ToList();
     }
 
     // The real confirmation window, through the real dialog service.

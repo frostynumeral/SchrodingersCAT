@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
+using System.Data.Common;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SchrodingersCat.App.Services;
 using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Xliff;
+using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.ViewModels;
 
@@ -36,6 +38,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     {
         oldValue?.IsActive = false;
         newValue?.IsActive = true;
+        MatchLookup = LookUpMatchesAsync();
     }
 
     /// <summary>The column headers, with the document's languages.</summary>
@@ -224,6 +227,115 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
             return;
 
         segment.CopySource();
+    }
+
+    // ---------------------------------------------------------------- matches (translation memory, design section 6)
+
+    // Cancels the running lookup when the selection moves on. (The lookup owns and disposes its token source.)
+    private Action? _cancelLookup;
+
+    /// <summary>The selected segment's matches, best first: the open TM's and the file's, at most nine (Ctrl+1 … Ctrl+9).</summary>
+    public ObservableCollection<MatchViewModel> Matches { get; } = [];
+
+    /// <summary>The TM matches are looked up in; null if none is open (then only the file's matches are shown).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MatchesStatus))]
+    public partial OpenTranslationMemory? TranslationMemory { get; set; }
+
+    partial void OnTranslationMemoryChanged(OpenTranslationMemory? value) => MatchLookup = LookUpMatchesAsync();
+
+    /// <summary>A TM lookup for the selected segment is running.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MatchesStatus))]
+    public partial bool IsLookingUp { get; private set; }
+
+    /// <summary>What the matches pane says instead of matches; null when it has some.</summary>
+    public string? MatchesStatus => (SelectedSegment, Matches.Count, IsLookingUp, TranslationMemory) switch
+    {
+        (null, _, _, _) => "Select a segment to see its matches.",
+        (_, > 0, _, _) => null,
+        (_, _, true, _) => "Looking up matches…",
+        (_, _, _, null) => "No matches. No translation memory is open.",
+        _ => "No matches.",
+    };
+
+    /// <summary>The latest matches lookup; tests await it.</summary>
+    internal Task MatchLookup { get; private set; } = Task.CompletedTask;
+
+    /// <summary>Ctrl+1 … Ctrl+9: inserts the selected segment's nth match into its target.</summary>
+    [RelayCommand]
+    private void InsertMatch(int number)
+    {
+        if (SelectedSegment is not { } segment)
+            return;
+
+        if (number >= 1 && number <= Matches.Count)
+            segment.InsertMatch(Matches[number - 1]);
+        else
+            segment.EditStatus = Matches.Count == 0 ? "There are no matches to insert." : $"There is no match {number}.";
+    }
+
+    // The file's matches show straight away; the TM's follow from a background lookup, unless the selection has moved
+    // on by then.
+    private async Task LookUpMatchesAsync()
+    {
+        _cancelLookup?.Invoke();
+        _cancelLookup = null;
+        IsLookingUp = false;
+
+        var segment = SelectedSegment;
+        ShowMatches(segment, []);
+        if (segment is null || TranslationMemory is not { } memory)
+            return;
+
+        using var lookup = new CancellationTokenSource();
+        Action cancel = lookup.Cancel;
+        _cancelLookup = cancel;
+        IsLookingUp = true;
+        OnPropertyChanged(nameof(MatchesStatus));
+        try
+        {
+            var index = Segments.IndexOf(segment);
+            var previous = index > 0 ? Segments[index - 1].Source.ToPlainText() : null;
+            var next = index >= 0 && index < Segments.Count - 1 ? Segments[index + 1].Source.ToPlainText() : null;
+            var found = await memory.LookupAsync(segment.Source, previous, next, lookup.Token);
+            if (!lookup.IsCancellationRequested)
+                ShowMatches(segment, found);
+        }
+        catch (OperationCanceledException) when (lookup.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is TmFormatException or DbException or IOException)
+        {
+            // A damaged TM is shown like a damaged file; the translator can go on without matches.
+            ErrorMessage = $"Could not look up matches in {memory.Name}: {ex.Message}";
+        }
+        finally
+        {
+            if (_cancelLookup == cancel)
+            {
+                _cancelLookup = null;
+                IsLookingUp = false;
+            }
+        }
+    }
+
+    private void ShowMatches(SegmentViewModel? segment, IReadOnlyList<TmMatch> fromMemory)
+    {
+        Matches.Clear();
+        if (segment is not null)
+        {
+            // Best first; among equal scores the TM's first (OrderByDescending keeps their order).
+            var all = fromMemory.Select(m => (Match: m, FromFile: false))
+                .Concat(segment.FileMatches.Select(m => (Match: m, FromFile: true)))
+                .OrderByDescending(m => m.Match.Score)
+                .Take(9)
+                .ToList();
+            for (var i = 0; i < all.Count; i++)
+                Matches.Add(new MatchViewModel(i + 1, all[i].Match, all[i].FromFile, segment));
+        }
+
+        OnPropertyChanged(nameof(MatchesStatus));
     }
 
     private void Move(int step)

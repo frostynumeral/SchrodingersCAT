@@ -271,13 +271,22 @@ public sealed class TargetEditModel
     /// used in another segment's target are left out (annotation halves too, silently), and protected codes the target
     /// had are kept at the end.
     /// </summary>
-    public EditResult CopySource()
+    public EditResult CopySource() => ReplaceTarget(_segment.Source);
+
+    /// <summary>
+    /// Replaces the target with <paramref name="content"/>, as one undoable edit: what inserting a TM match does (its
+    /// codes already transferred onto this unit's). The rules of <see cref="CopySource"/> apply: code and annotation
+    /// halves already in another segment's target are left out, and protected codes the target had are kept.
+    /// </summary>
+    public EditResult ReplaceTarget(InlineContent content)
     {
+        ArgumentNullException.ThrowIfNull(content);
+
         var elsewhere = OtherTargets().SelectMany(c => c).OfType<InlineCode>().Select(c => (c.Id, c.Kind)).ToHashSet();
         var markersElsewhere = OtherTargets().SelectMany(c => c).OfType<InlineMarker>().Select(m => (m.Id, m.Kind)).ToHashSet();
         var copied = new List<Item>();
         var skipped = new List<string>();
-        foreach (var element in _segment.Source)
+        foreach (var element in content)
         {
             if (element is InlineText text)
                 copied.AddRange(text.Text.Select(c => new Item(c, null)));

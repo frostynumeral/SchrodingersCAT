@@ -2,6 +2,7 @@ using SchrodingersCat.App.Editing;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Models;
+using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.Tests;
 
@@ -187,6 +188,37 @@ public class ContentRunsTests
         Assert.True(choices[1].Matches("{0"));
         Assert.True(choices[1].Matches("A")); // the id, ignoring case
         Assert.False(choices[1].Matches("b"));
+    }
+
+    // A match's codes come from another sentence: their chips don't claim this unit's hints. Added codes are this unit's.
+    [Fact]
+    public void BuildDiff_MarksTheDifferences()
+    {
+        var current = new InlineCode("1", InlineCodeKind.Standalone) { Disp = "{0}", CanDelete = false };
+        var unit = Unit(new InlineContent([new InlineText("Delete "), current, new InlineText(" files?")]));
+        var fromMatch = new InlineCode("1", InlineCodeKind.Standalone) { Disp = "%s" };
+        var parts = SourceDiff.Compare(unit.Segments[0].Source, new InlineContent([new InlineText("Delete all "), fromMatch, new InlineText(" files?")]));
+
+        var runs = ContentRuns.BuildDiff(parts, unit, new InlineCodeHints(unit));
+
+        Assert.Equal(
+            [("Delete ", DiffKind.Same), ("all ", DiffKind.Removed), ("%s", DiffKind.Same), (" files?", DiffKind.Same)],
+            runs.Select(r => (r is TextRun t ? t.Text : ((ChipRun)r).Text, r.Difference)));
+        var chip = Assert.IsType<ChipRun>(runs[2]);
+        Assert.False(chip.IsProtected);
+        Assert.Equal("A code in the match", chip.ToolTip);
+    }
+
+    [Fact]
+    public void BuildDiff_AddedCodesAreThisUnitsChips()
+    {
+        var current = new InlineCode("1", InlineCodeKind.Standalone) { Disp = "{0}", CanDelete = false };
+        var unit = Unit(new InlineContent([new InlineText("Delete "), current]));
+        var parts = SourceDiff.Compare(unit.Segments[0].Source, InlineContent.FromText("Delete "));
+
+        var chip = Assert.IsType<ChipRun>(Assert.Single(ContentRuns.BuildDiff(parts, unit, new InlineCodeHints(unit)), r => r is ChipRun));
+
+        Assert.Equal((DiffKind.Added, true, "{0}"), (chip.Difference, chip.IsProtected, chip.Text));
     }
 
     private static TranslationUnit Unit(InlineContent source)

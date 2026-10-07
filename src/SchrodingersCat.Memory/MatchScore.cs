@@ -127,7 +127,7 @@ public static partial class MatchScore
         string.Join(' ', Nfc(text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     // Content can hold code points Normalize rejects (a lone surrogate, U+FFFF, from <cp>); such text is compared as it is.
-    private static string Nfc(string text)
+    internal static string Nfc(string text)
     {
         try
         {
@@ -141,5 +141,5 @@ public static partial class MatchScore
 
     // A number (with decimal or thousands separators), a word, or one punctuation mark.
     [GeneratedRegex(@"(?<number>\p{Nd}+(?:[.,]\p{Nd}+)*)(?![\p{L}\p{M}_])|[\p{L}\p{M}\p{N}_]+|[^\s\p{L}\p{M}\p{N}_]")]
-    private static partial Regex Tokens();
+    internal static partial Regex Tokens();
 }

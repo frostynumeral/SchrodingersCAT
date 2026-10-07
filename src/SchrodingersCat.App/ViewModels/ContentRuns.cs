@@ -1,11 +1,16 @@
 using System.Text;
 using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Models;
+using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.ViewModels;
 
 /// <summary>One piece of segment content as the read-only views show it: text or a code chip.</summary>
-public abstract record ContentRun;
+public abstract record ContentRun
+{
+    /// <summary>In a match's source: how this piece compares with the current source (design section 6).</summary>
+    public DiffKind Difference { get; init; }
+}
 
 /// <summary>Text, styled by the annotations (<c>&lt;mrk&gt;</c>) it lies inside.</summary>
 public sealed record TextRun(string Text, AnnotationStyle Annotations) : ContentRun;
@@ -81,6 +86,28 @@ public static class ContentRuns
         }
 
         return runs;
+    }
+
+    /// <summary>
+    /// A match's source compared with the current source (<see cref="SourceDiff"/>), for the matches pane. The match's
+    /// codes belong to another sentence, so their chips say only what kind of code they are; the current source's
+    /// codes (added) are chips as in the source column.
+    /// </summary>
+    public static IReadOnlyList<ContentRun> BuildDiff(IReadOnlyList<DiffPart> parts, TranslationUnit unit, InlineCodeHints hints)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        ArgumentNullException.ThrowIfNull(unit);
+        ArgumentNullException.ThrowIfNull(hints);
+
+        return [.. parts
+            .Where(p => p.Element is not InlineText { Text.Length: 0 })
+            .Select(p => (p.Element switch
+            {
+                InlineText text => (ContentRun)new TextRun(text.Text, AnnotationStyle.None),
+                InlineCode code when p.Kind == DiffKind.Added => Chip(code, unit, hints),
+                InlineCode code => MatchChip(code),
+                var other => throw new ArgumentException($"A diff has no {other.GetType().Name}.", nameof(parts)),
+            }) with { Difference = p.Kind })];
     }
 
     /// <summary>Marks the chips of the codes in <paramref name="problemCodes"/> as having a problem.</summary>
@@ -170,6 +197,14 @@ public static class ContentRuns
             },
         };
     }
+
+    // A code of a TM entry: its id and hints mean nothing in this unit.
+    private static ChipRun MatchChip(InlineCode code) => new(code.Id, code.Kind, Label(code), code.Kind switch
+    {
+        InlineCodeKind.Opening => "Start of a code in the match",
+        InlineCodeKind.Closing => "End of a code in the match",
+        _ => "A code in the match",
+    }, IsProtected: false);
 
     private static string ToolTip(InlineCode code, TranslationUnit unit, InlineCodeHints hints)
     {

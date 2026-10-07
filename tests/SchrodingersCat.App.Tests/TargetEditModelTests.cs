@@ -411,6 +411,40 @@ public class TargetEditModelTests
         Assert.Equal("a⟨2/⟩|", Show(model));
     }
 
+    [Fact]
+    public async Task ReplaceTarget_IsOneUndoableEdit()
+    {
+        var (model, unit) = await EditWithUnitAsync(Sample);
+        model.InsertText("Nyomd");
+        var source = unit.Segments[0].Source.ToList();
+
+        var result = model.ReplaceTarget(new InlineContent([source[1], new InlineText("OK"), source[3], new InlineText(" gomb "), source[5]]));
+
+        Assert.Equal(EditResult.Done, result);
+        Assert.Equal("⟨1⟩OK⟨/1⟩ gomb ⟨2/⟩|", Show(model));
+        Assert.Equal(model.ToContent(), unit.Segments[0].Target);
+        model.Undo();
+        Assert.Equal("Nyomd|", Show(model));
+    }
+
+    // The same rules as copying the source: code halves already in another segment's target stay out, protected codes stay in.
+    [Fact]
+    public async Task ReplaceTarget_LeavesOutCodesUsedElsewhere_AndKeepsProtectedCodes()
+    {
+        var unit = await ReadUnitAsync("""
+            <segment id="s1"><source>a<ph id="1"/></source><target>x<ph id="2"/></target></segment>
+            <segment id="s2"><source>b<ph id="2" canDelete="no"/><ph id="3"/></source><target>y<ph id="3"/></target></segment>
+            """);
+        var model = new TargetEditModel(unit, unit.Segments[0]);
+        var code3 = unit.Segments[1].Source.OfType<InlineCode>().Last();
+
+        var result = model.ReplaceTarget(new InlineContent([new InlineText("z"), code3]));
+
+        Assert.Equal("z⟨2/⟩|", Show(model));
+        Assert.Contains("'3'", result.Message);
+        Assert.Contains("Kept 1 code(s)", result.Message);
+    }
+
     // ---------------------------------------------------------------- undo
 
     [Fact]

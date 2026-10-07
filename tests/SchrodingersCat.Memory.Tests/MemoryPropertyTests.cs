@@ -67,6 +67,28 @@ public class MemoryPropertyTests
             }
         });
 
+    // The diff is the match's source with the current source's extra words: leaving out the added parts gives the
+    // match's source exactly (without annotations), leaving out the removed parts gives the current source (ignoring
+    // whitespace, and code ids, as the diff does).
+    [Fact]
+    public void Diffs_RebuildBothSources() =>
+        Gen.Select(Sources, Sources).Sample((a, b) =>
+        {
+            foreach (var (current, match) in a.Zip(b))
+            {
+                var parts = SourceDiff.Compare(current, match);
+
+                var matchSide = new InlineContent(parts.Where(p => p.Kind != DiffKind.Added).Select(p => p.Element));
+                Assert.Equal(string.Concat(match.OfType<InlineText>().Select(t => t.Text)), matchSide.ToPlainText());
+                Assert.Equal(match.OfType<InlineCode>(), matchSide.OfType<InlineCode>());
+
+                var currentSide = new InlineContent(parts.Where(p => p.Kind != DiffKind.Removed).Select(p => p.Element));
+                Assert.Equal(NoSpace(Strip(current)), NoSpace(Strip(currentSide)));
+            }
+        });
+
+    private static string NoSpace(string text) => string.Concat(text.Where(c => !char.IsWhiteSpace(c)));
+
     // What the score can't see: annotations, and code ids and attributes.
     private static string Strip(InlineContent content) => string.Concat(content.Select(e => e switch
     {

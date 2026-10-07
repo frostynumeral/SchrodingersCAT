@@ -23,12 +23,14 @@ A computer-assisted translation (CAT) tool written in C#/.NET.
 - Inline codes are shown as chips. Targets with codes are edited with the codes kept as chips: protected codes can't be deleted, and copies follow XLIFF's editing hints.
 - A code check runs as you type: each segment shows a badge for missing, unknown, unpaired or reordered codes, and the chips involved are outlined. Saving with code errors asks first.
 - Keyboard workflow (close to memoQ's): `F9` inserts the next missing code, `Ctrl+Shift+F9` picks one, `Ctrl+Insert` copies the source, `Ctrl+Enter` confirms and moves on, `Ctrl+Up`/`Ctrl+Down` move between segments, `Ctrl+Shift+Down` goes to the next segment with code problems. Copy and paste keep codes inside the app.
+- A matches pane under the segment list shows the selected segment's matches, with what differs from the current source marked; `Ctrl+1` … `Ctrl+9` insert one, with the current segment's codes. For now the matches come from the XLIFF file itself; opening a translation memory comes next.
 - Per-segment undo, Save (`Ctrl+S`) and Save as (`Ctrl+Shift+S`), and a prompt before unsaved changes would be lost. A file without a target language asks for it on the first save.
 
 ### Not supported yet
 
 - XLIFF 1.2.
-- Translation memory, terminology, search, and review workflows.
+- Opening a translation memory in the editor and storing confirmed segments in it (the TM itself, SQLite storage and TMX exchange exist in `SchrodingersCat.Memory`).
+- Terminology, search, and review workflows.
 
 ## Building
 
