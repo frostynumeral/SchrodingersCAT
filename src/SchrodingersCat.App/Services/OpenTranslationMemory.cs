@@ -88,6 +88,18 @@ public sealed class OpenTranslationMemory(ITranslationMemory memory, string name
         });
     }
 
+    /// <summary>
+    /// A concordance search (<see cref="Concordance.Search"/>). It holds the queue while it scans the TM, so cancelling
+    /// stops it at its next check, and the lookups and stores behind it don't wait for the end.
+    /// </summary>
+    public Task<ConcordanceResult> SearchAsync(
+        ConcordanceQuery query, ConcordanceSide side, int maxHits = Concordance.DefaultMaxHits, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        return Enqueue(() => Concordance.Search(Memory, query, side, maxHits, cancellationToken));
+    }
+
     /// <summary>Every entry, oldest first, read in the queue (for export).</summary>
     public Task<IReadOnlyList<TmEntry>> EntriesAsync() => Enqueue<IReadOnlyList<TmEntry>>(() => [.. Memory.Entries()]);
 

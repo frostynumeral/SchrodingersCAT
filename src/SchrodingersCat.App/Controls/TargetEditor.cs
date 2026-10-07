@@ -146,6 +146,9 @@ public sealed class TargetEditor : UserControl
             Dispatcher.UIThread.Post(() => Editor.TextArea.Focus(), DispatcherPriority.Input);
     }
 
+    /// <summary>Gives the keyboard to the editor (e.g. Escape in the concordance's search box).</summary>
+    public void FocusEditor() => Editor.TextArea.Focus();
+
     // An edit can come from outside the editor (a click on a source chip); typing should carry on here.
     private void OnModelEdited(object? sender, EventArgs e)
     {

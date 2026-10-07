@@ -82,6 +82,14 @@ public class Xliff20InlineWritingTests : Xliff20SerializerTestBase
     }
 
     [Fact]
+    public async Task Write_MarkerCrossingACode_FallsBackToSmEm()
+    {
+        var xml = await RoundTripAsync("""<segment><source><sm id="m1"/>a<pc id="1">b<em startRef="m1"/>c</pc></source></segment>""");
+
+        Assert.Contains("""<source><sm id="m1" />a<pc id="1">b<em startRef="m1" />c</pc></source>""", xml);
+    }
+
+    [Fact]
     public async Task Write_EncodesCharactersInvalidInXmlAsCp()
     {
         var xml = await RoundTripAsync("""
@@ -146,41 +154,57 @@ public class Xliff20InlineWritingTests : Xliff20SerializerTestBase
         Assert.Contains("""<source xml:space="preserve">Click <ph id="2" />  here</source>""", xml);
     }
 
-    public static TheoryData<InlineElement[]> InconsistentContent => new()
+    public static TheoryData<InlineElement[], string> InconsistentContent => new()
     {
-        { [new InlineCode("1", InlineCodeKind.Opening), new InlineText("a")] },
-        { [new InlineText("a"), new InlineCode("1", InlineCodeKind.Closing)] },
-        { [new InlineCode("1", InlineCodeKind.Closing), new InlineCode("1", InlineCodeKind.Opening)] },
-        { [new InlineMarker("m1", InlineMarkerKind.Opening)] },
-        { [new InlineCode("1", InlineCodeKind.Opening), new InlineMarker("1", InlineMarkerKind.Closing)] },
-        { [new InlineCode("1", InlineCodeKind.Standalone), new InlineCode("1", InlineCodeKind.Standalone)] },
-        { [new InlineCode("1", InlineCodeKind.Opening) { IsIsolated = true }, new InlineCode("1", InlineCodeKind.Closing)] },
-        { [new InlineCode("s1", InlineCodeKind.Standalone)] },
-        { [new InlineCode("1", InlineCodeKind.Standalone) { DataRef = "missing" }] },
+        { [new InlineCode("1", InlineCodeKind.Opening), new InlineText("a")], "the opening half of code '1' has no closing half" },
+        { [new InlineText("a"), new InlineCode("1", InlineCodeKind.Closing)], "the closing half of code '1' has no opening half before it" },
+        { [new InlineCode("1", InlineCodeKind.Closing), new InlineCode("1", InlineCodeKind.Opening)], "the closing half of code '1' has no opening half before it" },
+        { [new InlineMarker("m1", InlineMarkerKind.Opening)], "the opening half of marker 'm1' has no closing half" },
+        { [new InlineCode("1", InlineCodeKind.Opening), new InlineMarker("1", InlineMarkerKind.Closing)], "the closing half of marker '1' has no opening half before it" },
+        { [new InlineCode("1", InlineCodeKind.Standalone), new InlineCode("1", InlineCodeKind.Standalone)], "the id '1' is used more than once" },
+        { [new InlineCode("1", InlineCodeKind.Opening) { IsIsolated = true }, new InlineCode("1", InlineCodeKind.Closing)], "the closing half of code '1' has no opening half before it" },
+        { [new InlineCode("s1", InlineCodeKind.Standalone)], "the id 's1' is used more than once" },
+        { [new InlineCode("1", InlineCodeKind.Standalone) { DataRef = "missing" }], "dataRef 'missing' does not match any key in OriginalData" },
+        { [new InlineCode("1", (InlineCodeKind)42)], "code '1' has an undefined Kind or CanReorder" },
+        { [new InlineCode("1", InlineCodeKind.Standalone) { CanReorder = (CanReorder)42 }], "code '1' has an undefined Kind or CanReorder" },
+        { [new InlineMarker("m1", (InlineMarkerKind)42)], "marker 'm1' has an undefined Kind" },
     };
 
     [Theory]
     [MemberData(nameof(InconsistentContent))]
-    public async Task Write_RejectsContentTheReaderWouldReject(InlineElement[] content)
+    public async Task Write_RejectsContentTheReaderWouldReject(InlineElement[] content, string expectedMessage)
     {
-        await Assert.ThrowsAsync<InvalidOperationException>(() => WriteAsync(DocumentWith(content)));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => WriteAsync(DocumentWith(content)));
+        Assert.Contains(expectedMessage, exception.Message, StringComparison.Ordinal);
     }
 
-    public static TheoryData<InlineElement[]> UnrepresentableContent => new()
+    public static TheoryData<InlineElement[], string> UnrepresentableContent => new()
     {
-        { [new InlineCode("1", InlineCodeKind.Standalone) { Dir = "rtl" }] },
-        { [new InlineCode("1", InlineCodeKind.Standalone) { CanOverlap = true }] },
-        { [new InlineCode("1", InlineCodeKind.Standalone) { IsIsolated = true }] },
-        { [new InlineCode("1", InlineCodeKind.Opening), new InlineCode("1", InlineCodeKind.Closing) { Dir = "rtl" }] },
-        { [new InlineMarker("m1", InlineMarkerKind.Opening), new InlineMarker("m1", InlineMarkerKind.Closing) { Type = "term" }] },
-        { [new InlineCode("1", InlineCodeKind.Standalone) { ExtensionAttributes = [new ExtensionAttr("", "foo", "x")] }] },
+        { [new InlineCode("1", InlineCodeKind.Standalone) { Dir = "rtl" }], "Standalone code '1' has Dir, CanOverlap or IsIsolated set" },
+        { [new InlineCode("1", InlineCodeKind.Standalone) { CanOverlap = true }], "Standalone code '1' has Dir, CanOverlap or IsIsolated set" },
+        { [new InlineCode("1", InlineCodeKind.Standalone) { IsIsolated = true }], "Standalone code '1' has Dir, CanOverlap or IsIsolated set" },
+        { [new InlineCode("1", InlineCodeKind.Opening), new InlineCode("1", InlineCodeKind.Closing) { Dir = "rtl" }], "Closing code '1' has Dir set" },
+        { [new InlineMarker("m1", InlineMarkerKind.Opening), new InlineMarker("m1", InlineMarkerKind.Closing) { Type = "term" }], "The closing half of marker 'm1' has attributes set" },
+        {
+            [new InlineMarker("m1", InlineMarkerKind.Opening), new InlineMarker("m1", InlineMarkerKind.Closing) { ExtensionAttributes = [new ExtensionAttr(FsNamespace, "fs", "x")] }],
+            "The closing half of marker 'm1' has attributes set"
+        },
+        { [new InlineCode("1", InlineCodeKind.Standalone) { ExtensionAttributes = [new ExtensionAttr("", "foo", "x")] }], "Extension attribute 'foo' must be in a namespace other than" },
+        {
+            [new InlineCode("1", InlineCodeKind.Standalone) { ExtensionAttributes = [new ExtensionAttr("urn:oasis:names:tc:xliff:document:2.0", "foo", "x")] }],
+            "Extension attribute 'foo' must be in a namespace other than"
+        },
+        { [new InlineCode("1", InlineCodeKind.Standalone) { ExtensionAttributes = [new ExtensionAttr(FsNamespace, "1fs", "x")] }], "Extension attribute name '1fs' is not a valid XML name" },
+        { [new InlineCode("1", InlineCodeKind.Standalone) { Disp = "\u0001" }], "the disp attribute of <ph> in unit 'u1': it contains U+0001" },
+        { [new InlineMarker("m1", InlineMarkerKind.Opening) { Value = "\uFFFF" }, new InlineMarker("m1", InlineMarkerKind.Closing)], "the value attribute of <mrk> in unit 'u1': it contains U+FFFF" },
     };
 
     [Theory]
     [MemberData(nameof(UnrepresentableContent))]
-    public async Task Write_RejectsContentXliffCannotRepresent(InlineElement[] content)
+    public async Task Write_RejectsContentXliffCannotRepresent(InlineElement[] content, string expectedMessage)
     {
-        await Assert.ThrowsAsync<NotSupportedException>(() => WriteAsync(DocumentWith(content)));
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(() => WriteAsync(DocumentWith(content)));
+        Assert.Contains(expectedMessage, exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>Reads, writes and reads again; asserts nothing changed and returns the written XML.</summary>

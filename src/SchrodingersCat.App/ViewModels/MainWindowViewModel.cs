@@ -41,7 +41,18 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         newValue?.IsActive = true;
         Notice = null;
         MatchLookup = LookUpMatchesAsync();
+        Concordance.InsertCommand.NotifyCanExecuteChanged();
     }
+
+    /// <summary>The pane under the segments: 0 shows the matches, 1 the concordance.</summary>
+    [ObservableProperty]
+    public partial int PaneTab { get; set; }
+
+    /// <summary>The Concordance tab: searching the open TM for a word or phrase.</summary>
+    public ConcordanceViewModel Concordance => field ??= new ConcordanceViewModel(this);
+
+    /// <summary>Shows a failure in the error banner (for the concordance, which has no banner of its own).</summary>
+    internal void ReportError(string message) => ErrorMessage = message;
 
     /// <summary>
     /// The outcome of the last action that has no segment to report it in: a confirmed segment that wasn't stored, an
@@ -270,7 +281,11 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     [NotifyCanExecuteChangedFor(nameof(ExportTmxCommand))]
     public partial OpenTranslationMemory? TranslationMemory { get; private set; }
 
-    partial void OnTranslationMemoryChanged(OpenTranslationMemory? value) => MatchLookup = LookUpMatchesAsync();
+    partial void OnTranslationMemoryChanged(OpenTranslationMemory? value)
+    {
+        Concordance.Reset(); // before the old TM is closed, so closing doesn't wait for a search
+        MatchLookup = LookUpMatchesAsync();
+    }
 
     /// <summary>The open TM and its languages for the pane's header, and why it can't be used for this document.</summary>
     public string? MemoryLabel
@@ -321,12 +336,20 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     /// <summary>The latest matches lookup; tests await it.</summary>
     internal Task MatchLookup { get; private set; } = Task.CompletedTask;
 
-    /// <summary>Ctrl+1 … Ctrl+9: inserts the selected segment's nth match into its target.</summary>
+    /// <summary>
+    /// Ctrl+1 … Ctrl+9: inserts the selected segment's nth match into its target. With the Concordance tab showing, it
+    /// shows the matches instead, so a match the translator can't see never goes in.
+    /// </summary>
     [RelayCommand]
     private void InsertMatch(int number)
     {
         if (SelectedSegment is not { } segment)
             return;
+        if (PaneTab != 0)
+        {
+            PaneTab = 0;
+            return;
+        }
 
         if (number >= 1 && number <= Matches.Count)
             segment.InsertMatch(Matches[number - 1]);

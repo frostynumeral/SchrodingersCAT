@@ -124,8 +124,8 @@ any other edit.
 
 - Server or shared TMs, and several translators writing one TM at once.
 - Machine translation (the matches pane could show it later; it's a separate source).
-- Concordance search (searching the TM for a phrase) and TM maintenance (editing or deleting entries); both are
-  natural follow-ups once the storage exists.
+- TM maintenance (editing or deleting entries), a natural follow-up now that the storage exists. (Concordance
+  search, the other one, is done: see [Concordance](#concordance-follow-up).)
 - Subsegment matching (finding fragments of sentences).
 
 ## Implementation steps
@@ -190,6 +190,37 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - **Languages:** a TM that doesn't serve the document (decision 3, `TmLanguages`) is neither looked up nor stored
      in, and the pane's header says why; a TM for the base language serves a regional variant with every score one
      point lower, so a 100% isn't inserted automatically.
+
+## Concordance (follow-up)
+
+*(Done 2026-10-07.)* Searching the TM for a word or phrase: how was it translated before?
+
+- **Matching** (`Concordance`): the words `MatchScore` counts, without punctuation, folded (lower case, accents
+  removed, and ł ø đ æ œ ß spelled out). A hit is a run of words, with only codes, annotations, punctuation and
+  whitespace between them, each starting with the query's word at that place: `fájl` finds `fájlt`, `press ok` finds
+  `Press <b>OK</b>.`. Whole original words are highlighted.
+- **Order:** entries with a hit of whole words first, then the shorter text, then the newest, then the order stored;
+  the best 100, and how many entries had a hit.
+- **No index:** the word-bigram index of step 2 can't find single words, nor search translations, so the search
+  scans every entry. The SQLite TM reads only the searched column, prefilters with the folded text, and loads only the
+  kept hits; folding is per character, from a table, instead of normalizing every text. Measured on a 199,035-entry
+  TM (186 MB, Release, 15 queries each):
+
+  | Query | Sources, median / p95 | Translations, median / p95 |
+  |---|---|---|
+  | 1 common word (~24,000 hits) | 411 / 702 ms | 432 / 581 ms |
+  | 1 rare word | 313 / 343 ms | 313 / 339 ms |
+  | 1 word beginning | 303 / 331 ms | 321 / 410 ms |
+  | 2 words | 315 / 501 ms | 323 / 888 ms |
+  | 3 words | 320 / 342 ms | 313 / 451 ms |
+
+  Under the 1 s set for p95, so no word index (which would need format version 2 and a migration). Normalizing every
+  text instead of the per-character table cost about 200 ms more per search.
+- **In the editor:** a Concordance tab beside Matches. Ctrl+K searches the selected text (the editor's: translations;
+  a source's: sources), or opens the search box; Enter searches (never as you type), Escape returns to the editor.
+  A search runs in the TM's queue, and a new search or another TM cancels it. Insert puts a result's translation at
+  the caret as text (the selection stays; codes, which belong to another sentence, become their text or a space).
+  Ctrl+1 … Ctrl+9 with the Concordance tab showing switch to the matches first.
 
 ## Open questions
 
