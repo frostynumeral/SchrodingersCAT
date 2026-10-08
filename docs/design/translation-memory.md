@@ -124,7 +124,8 @@ any other edit.
 
 - Server or shared TMs, and several translators writing one TM at once.
 - Machine translation (the matches pane could show it later; it's a separate source).
-- TM maintenance (editing or deleting entries), a natural follow-up now that the storage exists. (Concordance
+- TM maintenance (editing or deleting entries), a natural follow-up now that the storage exists; proposed in
+  [TM maintenance](tm-maintenance.md). (Concordance
   search, the other one, is done: see [Concordance](#concordance-follow-up).)
 - Subsegment matching (finding fragments of sentences).
 
