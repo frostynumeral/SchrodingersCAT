@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text;
 using SchrodingersCat.Core.Models;
 
 namespace SchrodingersCat.Memory;
@@ -183,7 +181,7 @@ public static class Concordance
     // Cheap: the whole text, folded, must contain every query word, or there's no hit.
     private static bool MayContain(string text, ConcordanceQuery query)
     {
-        var folded = Fold(text);
+        var folded = Core.Text.Words.Fold(text);
         return query.Words.All(w => folded.Contains(w, StringComparison.Ordinal));
     }
 
@@ -223,83 +221,8 @@ public static class Concordance
         return words;
     }
 
-    internal static IEnumerable<Word> Words(string text)
-    {
-        foreach (System.Text.RegularExpressions.Match token in MatchScore.Tokens().Matches(text))
-        {
-            if (IsPunctuation(token.Value))
-                continue;
-
-            var folded = Fold(token.Value);
-            if (folded.Length > 0)
-                yield return new Word(0, token.Index, token.Length, folded);
-        }
-    }
-
-    // The tokenizer's third kind: one character that isn't a letter, mark, number or underscore.
-    private static bool IsPunctuation(string token) =>
-        token.Length == 1 && token[0] != '_' && CharUnicodeInfo.GetUnicodeCategory(token[0]) is not (
-            UnicodeCategory.UppercaseLetter or UnicodeCategory.LowercaseLetter or UnicodeCategory.TitlecaseLetter
-            or UnicodeCategory.ModifierLetter or UnicodeCategory.OtherLetter or UnicodeCategory.NonSpacingMark
-            or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark or UnicodeCategory.DecimalDigitNumber
-            or UnicodeCategory.LetterNumber or UnicodeCategory.OtherNumber);
-
-    // Each UTF-16 unit folded on its own (filled in as met): the same as folding the whole text, as decomposing,
-    // lower-casing and dropping marks work per character, but without normalizing every text of a scan.
-    private static readonly string?[] FoldedChars = new string?[char.MaxValue + 1];
-
-    // Lower case, accents removed, and letters that don't decompose spelled out. Never fails: a lone surrogate or
-    // U+FFFF (from <cp>), which Normalize rejects, stays as it is.
-    internal static string Fold(string text)
-    {
-        var folded = new StringBuilder(text.Length);
-        foreach (var c in text)
-        {
-            if (c < 0x80)
-                folded.Append(char.ToLowerInvariant(c));
-            else
-                folded.Append(FoldedChars[c] ??= FoldChar(c));
-        }
-
-        return folded.ToString();
-    }
-
-    private static string FoldChar(char c)
-    {
-        if (char.IsSurrogate(c) || c == '\uFFFF' || c == '\uFFFE')
-            return c.ToString();
-
-        string decomposed;
-        try
-        {
-            decomposed = c.ToString().Normalize(NormalizationForm.FormD);
-        }
-        catch (ArgumentException)
-        {
-            return c.ToString();
-        }
-
-        var folded = new StringBuilder();
-        foreach (var d in decomposed)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(d) == UnicodeCategory.NonSpacingMark)
-                continue;
-
-            var lower = char.ToLowerInvariant(d);
-            _ = lower switch
-            {
-                'ł' => folded.Append('l'),
-                'ø' => folded.Append('o'),
-                'đ' => folded.Append('d'),
-                'æ' => folded.Append("ae"),
-                'œ' => folded.Append("oe"),
-                'ß' => folded.Append("ss"),
-                _ => folded.Append(lower),
-            };
-        }
-
-        return folded.ToString();
-    }
+    internal static IEnumerable<Word> Words(string text) =>
+        Core.Text.Words.Find(text).Select(w => new Word(0, w.Start, w.Length, w.Folded));
 
     // ---------------------------------------------------------------- highlighting
 

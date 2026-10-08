@@ -14,7 +14,7 @@ namespace SchrodingersCat.Memory;
 /// per number that differs, and two per code that differs (a code missing, extra, or in another order). Only sources
 /// that are equal before normalisation score 100; a difference in case or whitespace alone scores 99.</para>
 /// </remarks>
-public static partial class MatchScore
+public static class MatchScore
 {
     /// <summary>The same source.</summary>
     public const int Exact = 100;
@@ -65,7 +65,7 @@ public static partial class MatchScore
                     case InlineText text:
                         var normalized = Nfc(text.Text);
                         key.Append(normalized);
-                        foreach (Match match in Tokens().Matches(normalized))
+                        foreach (Match match in Core.Text.Words.Tokens().Matches(normalized))
                             words.Add(new Word(match.Value.ToLower(CultureInfo.InvariantCulture), match.Groups["number"].Success));
                         break;
                     case InlineCode code:
@@ -153,8 +153,4 @@ public static partial class MatchScore
             return text;
         }
     }
-
-    // A number (with decimal or thousands separators), a word, or one punctuation mark.
-    [GeneratedRegex(@"(?<number>\p{Nd}+(?:[.,]\p{Nd}+)*)(?![\p{L}\p{M}_])|[\p{L}\p{M}\p{N}_]+|[^\s\p{L}\p{M}\p{N}_]")]
-    internal static partial Regex Tokens();
 }

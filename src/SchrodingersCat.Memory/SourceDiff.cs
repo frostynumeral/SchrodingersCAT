@@ -123,7 +123,7 @@ public static class SourceDiff
             {
                 case InlineText { Text: var text }:
                     var position = 0;
-                    foreach (System.Text.RegularExpressions.Match word in MatchScore.Tokens().Matches(text))
+                    foreach (System.Text.RegularExpressions.Match word in Core.Text.Words.Tokens().Matches(text))
                     {
                         if (word.Index > position)
                             tokens.Add(new Token(new InlineText(text[position..word.Index]), " "));
