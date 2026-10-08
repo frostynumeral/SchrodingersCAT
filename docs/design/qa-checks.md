@@ -1,7 +1,8 @@
 # Proposal: quality checks beyond codes
 
-**Status:** accepted (2026-10-08). All [open questions](#open-questions) are decided as proposed; implementation
-follows the [steps](#implementation-steps), starting with step 1.
+**Status:** implemented (2026-10-08). All [open questions](#open-questions) were decided as proposed, and all
+[implementation steps](#implementation-steps) are done; where the implementation departs from the proposal, the steps
+say so and why.
 
 ## Problem
 
@@ -187,7 +188,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      counts other segments ("translated 3 ways"), which can change while this target stays, and it finds at most one
      issue of its kind per segment.
    - F8 gives the report the keyboard: Up/Down move between entries (passing over the headings), Enter opens one.
-5. **Documentation:** CLAUDE.md, and mark this proposal implemented.
+5. **Documentation:** *(Done 2026-10-08.)* CLAUDE.md, and mark this proposal implemented.
 
 ## Open questions
 

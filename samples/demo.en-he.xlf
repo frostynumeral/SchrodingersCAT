@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xliff version="2.0" srcLang="en" trgLang="he" xmlns="urn:oasis:names:tc:xliff:document:2.0">
+  <file id="f1" original="Resources/Strings.resx">
+    <notes>
+      <note category="instructions">For the manual right-to-left checks (docs/testing/editor-manual-checks.md).</note>
+    </notes>
+    <unit id="save" name="Save">
+      <segment id="s1" state="translated">
+        <source>Save the file.</source>
+        <target>שמור את הקובץ.</target>
+      </segment>
+    </unit>
+    <unit id="press.ok" name="PressOk">
+      <originalData>
+        <data id="d1">&lt;b&gt;</data>
+        <data id="d2">&lt;/b&gt;</data>
+      </originalData>
+      <segment id="s1" state="translated">
+        <source>Press <pc id="1" dataRefStart="d1" dataRefEnd="d2">OK</pc> to continue.</source>
+        <target>לחץ על <pc id="1" dataRefStart="d1" dataRefEnd="d2">אישור</pc> כדי להמשיך.</target>
+      </segment>
+    </unit>
+    <unit id="files.count" name="FilesCount">
+      <originalData>
+        <data id="d1">{0}</data>
+      </originalData>
+      <segment id="s1">
+        <source>Copy <ph id="1" dataRef="d1"/> files to the USB drive.</source>
+      </segment>
+    </unit>
+    <unit id="mixed" name="Mixed">
+      <originalData>
+        <data id="d1">&lt;a href="https://example.com"&gt;</data>
+        <data id="d2">&lt;/a&gt;</data>
+      </originalData>
+      <segment id="s1">
+        <source>Read the <pc id="1" dataRefStart="d1" dataRefEnd="d2">SchrödingersCAT 2.0 guide</pc> first.</source>
+      </segment>
+    </unit>
+  </file>
+</xliff>
