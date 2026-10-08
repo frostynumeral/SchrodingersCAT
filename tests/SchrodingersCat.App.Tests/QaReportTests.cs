@@ -334,6 +334,31 @@ public sealed class QaReportTests : IDisposable
         window.Close();
     }
 
+    // The code picker keeps the keyboard: F8 runs the report, and Escape still closes the picker.
+    [AvaloniaFact]
+    public async Task F8WithTheCodePickerOpen_LeavesItTheKeyboard()
+    {
+        var (window, vm) = await ShowAsync(Document);
+        vm.SelectedSegment = vm.Segments[1];
+        Dispatcher.UIThread.RunJobs();
+        var editor = window.GetVisualDescendants().OfType<TargetEditor>().Single(t => t.IsEffectivelyVisible);
+        editor.FocusEditor();
+        Dispatcher.UIThread.RunJobs();
+        window.KeyPressQwerty(PhysicalKey.F9, RawInputModifiers.Control | RawInputModifiers.Shift);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(editor.CodePicker.IsOpen);
+
+        window.KeyPressQwerty(PhysicalKey.F8, RawInputModifiers.None);
+        await SettleAsync(); // long enough for F8's posted focus change, when there is one
+
+        Assert.Equal(2, vm.PaneTab);
+        Assert.False(window.FindControl<ListBox>("QaList")!.IsKeyboardFocusWithin);
+        window.KeyPressQwerty(PhysicalKey.Escape, RawInputModifiers.None);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(editor.CodePicker.IsOpen);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public async Task AClickBesideTheEntries_OpensNothing()
     {
@@ -436,6 +461,15 @@ public sealed class QaReportTests : IDisposable
         window.MouseDown(point, MouseButton.Left);
         window.MouseUp(point, MouseButton.Left);
         Dispatcher.UIThread.RunJobs();
+    }
+
+    private static async Task SettleAsync()
+    {
+        for (var i = 0; i < 20; i++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
     }
 
     private static async Task WaitFor(Func<bool> condition)

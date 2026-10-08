@@ -50,7 +50,9 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             viewModel.Qa.RunCommand.Execute(null);
-            FocusReportSoon();
+            // Not while the code picker is open: it has the keyboard, and would stay open without its keys.
+            if (!this.GetVisualDescendants().OfType<TargetEditor>().Any(t => t.CodePicker.IsOpen))
+                FocusReportSoon();
             return;
         }
 
