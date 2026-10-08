@@ -24,6 +24,10 @@ public sealed partial class SegmentViewModel : ObservableObject
     private IReadOnlyList<InlineCodeIssue> _codeIssues = [];
     private IReadOnlyList<SegmentIssue> _issues = [];
 
+    // Dismissed quality issues (check and message), and the target they were dismissed for: they last while it stays.
+    private readonly HashSet<(QaIssueKind Kind, string Message)> _dismissed = [];
+    private InlineContent? _dismissedFor;
+
     /// <param name="check">The unit's code check, shared with the unit's other segments.</param>
     public SegmentViewModel(UnitCheck check, Segment segment, Action changed)
     {
@@ -43,6 +47,9 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     /// <summary>The unit the segment belongs to.</summary>
     public TranslationUnit Unit => _unit;
+
+    /// <summary>The Core segment, for matching document-wide check results to their row.</summary>
+    internal Segment Segment => _segment;
 
     public string SourceText { get; }
 
@@ -94,9 +101,43 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     /// <summary>
     /// The issues that show up in this segment: the code check's, then the quality checks' (step 3 of
-    /// <c>docs/design/qa-checks.md</c>).
+    /// <c>docs/design/qa-checks.md</c>), without those dismissed.
     /// </summary>
     public IReadOnlyList<SegmentIssue> Issues => _issues;
+
+    /// <summary>All the issues, the dismissed ones included, for the report.</summary>
+    public IReadOnlyList<SegmentIssue> AllIssues { get; private set; } = [];
+
+    /// <summary>Whether a quality issue (by check and message) is dismissed for the current target.</summary>
+    public bool IsDismissed(QaIssueKind kind, string message) => _dismissed.Contains((kind, message));
+
+    /// <summary>
+    /// Dismisses a quality issue (step 4 of the QA design): it stops counting on the badge and in Ctrl+Shift+Down, and
+    /// shows greyed in the report, until the target changes (decision 4: for the session, while the target stays).
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanDismiss))]
+    private void Dismiss(SegmentIssue? issue)
+    {
+        if (issue?.Qa is { } qa)
+            SetDismissed(qa.Kind, issue.Message, dismissed: true);
+    }
+
+    private static bool CanDismiss(SegmentIssue? issue) => issue?.CanDismiss == true;
+
+    /// <summary>Dismisses or restores an issue by its check and message (the report's entries use it too).</summary>
+    public void SetDismissed(QaIssueKind kind, string message, bool dismissed)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        if (dismissed ? !_dismissed.Add((kind, message)) : !_dismissed.Remove((kind, message)))
+            return;
+        _dismissedFor = _segment.Target;
+        OnUnitChecked(this, EventArgs.Empty);
+        OnPropertyChanged(nameof(Dismissals));
+    }
+
+    /// <summary>Changes whenever a dismissal comes or goes; the report listens to it.</summary>
+    public int Dismissals => _dismissed.Count;
 
     public bool HasIssues => _issues.Count > 0;
 
@@ -248,6 +289,7 @@ public sealed partial class SegmentViewModel : ObservableObject
     {
         UpdateIssues();
         OnPropertyChanged(nameof(Issues));
+        OnPropertyChanged(nameof(AllIssues));
         OnPropertyChanged(nameof(HasIssues));
         OnPropertyChanged(nameof(HasErrors));
         OnPropertyChanged(nameof(HasWarnings));
@@ -259,8 +301,16 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     private void UpdateIssues()
     {
+        // A dismissal lasts while the target it was made for stays.
+        if (_dismissed.Count > 0 && _segment.Target != _dismissedFor)
+        {
+            _dismissed.Clear();
+            OnPropertyChanged(nameof(Dismissals));
+        }
+
         _codeIssues = [.. _check.CodeIssues.Where(i => ReferenceEquals(i.Segment, _segment))];
-        _issues = [.. _codeIssues.Select(SegmentIssue.From), .. _check.QaIssues.Where(i => ReferenceEquals(i.Segment, _segment)).Select(SegmentIssue.From)];
+        AllIssues = [.. _codeIssues.Select(SegmentIssue.From), .. _check.QaIssues.Where(i => ReferenceEquals(i.Segment, _segment)).Select(SegmentIssue.From)];
+        _issues = [.. AllIssues.Where(i => i.Qa is not { } qa || !_dismissed.Contains((qa.Kind, i.Message)))];
     }
 
     // Missing codes are outlined in the source, where they are; the other problems in the target.

@@ -14,6 +14,15 @@ public sealed record SegmentIssue(IssueSeverity Severity, string Message)
     /// <summary>The quality check's issue; null for the code check's.</summary>
     public QaIssue? Qa { get; private init; }
 
+    /// <summary>
+    /// Only a quality check's issue can be dismissed: code errors decide whether saving asks first and whether a
+    /// translation is stored, so they stay.
+    /// </summary>
+    public bool CanDismiss => Qa is not null;
+
+    /// <summary>The check that found it, in words, for the report's groups.</summary>
+    public string Check => Qa is { } qa ? QaChecks.Label(qa.Kind) : QaChecks.CodesLabel;
+
     public static SegmentIssue From(InlineCodeIssue issue)
     {
         ArgumentNullException.ThrowIfNull(issue);

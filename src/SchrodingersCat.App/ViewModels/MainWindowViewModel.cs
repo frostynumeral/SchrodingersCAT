@@ -45,10 +45,42 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         Concordance.InsertCommand.NotifyCanExecuteChanged();
     }
 
-    /// <summary>Which quality checks run on the segments (<c>docs/design/qa-checks.md</c>); all by default.</summary>
-    public QaOptions QaOptions { get; private set; } = QaOptions.Default;
+    /// <summary>
+    /// Which quality checks run on the segments (<c>docs/design/qa-checks.md</c>): all, but those switched off in the
+    /// settings. Changed through the QA tab's settings (<see cref="UseQaOptions"/>).
+    /// </summary>
+    public QaOptions QaOptions { get; private set; } = QaOptionsFrom(settings?.Load());
 
-    /// <summary>The pane under the segments: 0 shows the matches, 1 the concordance.</summary>
+    // The open document's unit checks, to run again when the quality checks change.
+    private readonly List<UnitCheck> _checks = [];
+
+    /// <summary>The QA tab: the document's report (F8), dismissing, and the settings.</summary>
+    public QaReportViewModel Qa => field ??= new QaReportViewModel(this, dialogs);
+
+    /// <summary>The open document; null before one is opened.</summary>
+    internal TranslationDocument? Document => _document;
+
+    /// <summary>
+    /// Switches quality checks on or off: every unit is checked again, the report too if it has run, and the choice
+    /// is remembered for next time.
+    /// </summary>
+    internal void UseQaOptions(QaOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        QaOptions = options;
+        OnPropertyChanged(nameof(QaOptions));
+        foreach (var check in _checks)
+            check.Run();
+        SaveSettings(s => s with { DisabledQaChecks = [.. QaChecks.All.Where(k => !options.IsEnabled(k)).Select(k => k.ToString())] },
+            "Could not remember the quality checks for next time");
+    }
+
+    private static QaOptions QaOptionsFrom(AppSettings? saved) => saved?.DisabledQaChecks is { Count: > 0 } names
+        ? new QaOptions { Disabled = names.Select(n => Enum.TryParse<QaIssueKind>(n, out var kind) ? kind : (QaIssueKind?)null).OfType<QaIssueKind>().ToHashSet() }
+        : QaOptions.Default;
+
+    /// <summary>The pane under the segments: 0 shows the matches, 1 the concordance, 2 the QA report.</summary>
     [ObservableProperty]
     public partial int PaneTab { get; set; }
 
@@ -124,9 +156,11 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         SelectedSegment = null;
         Segments.Clear();
         var toTranslate = document.UnitsToTranslate.ToHashSet();
+        _checks.Clear();
         foreach (var unit in document.Units)
         {
             var check = new UnitCheck(unit, () => QaOptions, toTranslate.Contains(unit));
+            _checks.Add(check);
             foreach (var segment in unit.TranslatableSegments)
                 Segments.Add(new SegmentViewModel(check, segment, () => IsDirty = true));
         }
@@ -138,6 +172,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         OnPropertyChanged(nameof(TargetHeader));
         OnPropertyChanged(nameof(MemoryLabel));
         NewTranslationMemoryCommand.NotifyCanExecuteChanged();
+        Qa.Clear();
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
@@ -823,18 +858,22 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
 
     private bool HasTranslationMemory() => TranslationMemory is not null;
 
-    private void Remember(string? path)
+    private void Remember(string? path) =>
+        SaveSettings(s => s with { TranslationMemoryPath = path }, "Could not remember the translation memory for next time");
+
+    // Changes one setting and keeps the others.
+    private void SaveSettings(Func<AppSettings, AppSettings> change, string failure)
     {
         if (settings is null)
             return;
 
         try
         {
-            settings.Save(new AppSettings(path));
+            settings.Save(change(settings.Load()));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            ErrorMessage = $"Could not remember the translation memory for next time: {ex.Message}";
+            ErrorMessage = $"{failure}: {ex.Message}";
         }
     }
 

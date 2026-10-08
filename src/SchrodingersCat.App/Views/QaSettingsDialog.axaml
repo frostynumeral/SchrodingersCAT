@@ -1,0 +1,22 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SchrodingersCat.App.ViewModels"
+        x:Class="SchrodingersCat.App.Views.QaSettingsDialog"
+        x:DataType="vm:QaSettingsViewModel"
+        Title="Quality checks" SizeToContent="WidthAndHeight" CanResize="False" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <StackPanel Margin="20" Spacing="12" MinWidth="320">
+        <TextBlock Text="Run these checks (the code check always runs):" />
+        <ItemsControl x:Name="Checks" ItemsSource="{Binding Choices}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:QaCheckChoice">
+                    <CheckBox Content="{Binding Label}" IsChecked="{Binding IsEnabled}" />
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+            <Button x:Name="OkButton" Classes="accent" Content="OK" IsDefault="True" Click="OnOk" />
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" Click="OnCancel" />
+        </StackPanel>
+    </StackPanel>
+</Window>

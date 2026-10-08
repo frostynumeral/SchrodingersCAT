@@ -2,7 +2,11 @@ namespace SchrodingersCat.App.Services;
 
 /// <summary>What the app remembers between sessions.</summary>
 /// <param name="TranslationMemoryPath">The TM that was open when the app last changed it (decision 1: one at a time, remembered).</param>
-public sealed record AppSettings(string? TranslationMemoryPath = null);
+/// <param name="DisabledQaChecks">
+/// The quality checks switched off (<c>QaIssueKind</c> names, so a check added later is on, and one removed is
+/// ignored); null or empty for all on.
+/// </param>
+public sealed record AppSettings(string? TranslationMemoryPath = null, IReadOnlyList<string>? DisabledQaChecks = null);
 
 /// <summary>Loads and saves <see cref="AppSettings"/>, so view models don't touch the file system for them and tests can keep them in memory.</summary>
 public interface ISettingsStore

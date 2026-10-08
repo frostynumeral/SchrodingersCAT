@@ -20,10 +20,17 @@ public partial class MainWindow : Window
         InitializeComponent();
         AddHandler(KeyDownEvent, OnShortcut, RoutingStrategies.Tunnel);
         ConcordanceBox.KeyDown += OnConcordanceBoxKeyDown;
+        QaList.Tapped += OnQaListTapped;
+        QaList.KeyDown += OnQaListKeyDown;
+        DataContextChanged += (_, _) =>
+        {
+            if (DataContext is MainWindowViewModel viewModel)
+                viewModel.Qa.EditorRequested += (_, _) => FocusEditorSoon();
+        };
     }
 
-    // The segment shortcuts (design section 4), Ctrl+1 … Ctrl+9 (insert a match) and Ctrl+Shift+1 … Ctrl+Shift+9
-    // (delete a match's entry) are seen before the editor:
+    // The segment shortcuts (design section 4), Ctrl+1 … Ctrl+9 (insert a match), Ctrl+Shift+1 … Ctrl+Shift+9
+    // (delete a match's entry) and F8 (check the document) are seen before the editor:
     // AvaloniaEdit would take Ctrl+Up/Down, Ctrl+Enter and Ctrl+Insert for itself, so they can't be window key
     // bindings, which only get unhandled keys.
     private void OnShortcut(object? sender, KeyEventArgs e)
@@ -45,6 +52,7 @@ public partial class MainWindow : Window
             (Key.Up, KeyModifiers.Control) => (viewModel.PreviousSegmentCommand, null),
             (Key.Down, KeyModifiers.Control | KeyModifiers.Shift) => (viewModel.NextSegmentWithIssuesCommand, null),
             (Key.Insert, KeyModifiers.Control) => (viewModel.CopySourceCommand, null),
+            (Key.F8, KeyModifiers.None) => (viewModel.Qa.RunCommand, null),
             ( >= Key.D1 and <= Key.D9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.D0),
             ( >= Key.NumPad1 and <= Key.NumPad9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.NumPad0),
             ( >= Key.D1 and <= Key.D9, KeyModifiers.Control | KeyModifiers.Shift) => (viewModel.DeleteMatchCommand, e.Key - Key.D0),
@@ -90,6 +98,34 @@ public partial class MainWindow : Window
         var content = ContentRuns.Slice(block.Runs ?? [], Math.Min(block.SelectionStart, block.SelectionEnd), Math.Max(block.SelectionStart, block.SelectionEnd));
         return (ConcordanceViewModel.TextOf(content), false);
     }
+
+    // A click on a report entry (not on its Dismiss button) opens its segment.
+    private void OnQaListTapped(object? sender, TappedEventArgs e)
+    {
+        if ((e.Source as Visual)?.FindAncestorOfType<Button>(includeSelf: true) is null)
+            OpenQaEntry();
+    }
+
+    private void OnQaListKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || e.KeyModifiers != KeyModifiers.None)
+            return;
+
+        e.Handled = true;
+        OpenQaEntry();
+    }
+
+    private void OpenQaEntry()
+    {
+        if (DataContext is MainWindowViewModel viewModel && QaList.SelectedItem is QaReportEntry entry)
+            viewModel.Qa.OpenCommand.Execute(entry);
+    }
+
+    // After the selection moved, the selected row's editor exists only once the list has laid it out.
+    private void FocusEditorSoon() =>
+        Dispatcher.UIThread.Post(
+            () => this.GetVisualDescendants().OfType<TargetEditor>().FirstOrDefault(t => t.IsEffectivelyVisible)?.FocusEditor(),
+            DispatcherPriority.Loaded);
 
     // Escape in the search box: back to typing the translation.
     private void OnConcordanceBoxKeyDown(object? sender, KeyEventArgs e)
