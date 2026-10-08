@@ -1,6 +1,6 @@
 # Proposal: editing targets with inline codes
 
-**Status:** implemented (2026-10-03). All [open questions](#open-questions) are decided and all [implementation steps](#implementation-steps) are done, except the manual IME, screen reader and RTL checks of step 3.
+**Status:** implemented (2026-10-03). All [open questions](#open-questions) are decided and all [implementation steps](#implementation-steps) are done, except the manual IME, screen reader and RTL checks of step 3, which need a person at each desktop: the checklist is [editor-manual-checks.md](../testing/editor-manual-checks.md).
 
 ## Problem
 
@@ -219,7 +219,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - A property test that `InlineContent` → model → `InlineContent` is exact.
    - Not yet wired to the UI.
 3. **Spike: AvaloniaEdit.** A throwaway branch or sample showing one target with chips: rendering, atomic caret, `Backspace` over a chip, and one headless test.
-   - Manual checks for IME, screen reader and RTL on the three desktops.
+   - Manual checks for IME, screen reader and RTL on the three desktops ([checklist](../testing/editor-manual-checks.md); not done yet).
    - Ends with a decision note in this document: C, or fall back to A.
 4. **Read-only chips** *(Done 2026-10-02.)* for the source column and inactive targets (`SelectableTextBlock` and `InlineUIContainer`), replacing the `⟨1⟩` placeholder text in the list. Headless tests check the chips' labels, tooltips and states.
    - The red outline for code check problems comes with the badges in step 6; for now a chip's state is its shape and the lock.
