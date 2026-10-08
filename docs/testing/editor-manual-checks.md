@@ -16,6 +16,16 @@ This is the checklist for that run.
 - If the app crashes, Help → Open log folder shows the log; attach `schrodingerscat.log` to the result.
 - In the checks, *the editor* is the active row's target (click a target, or Ctrl+Down to a segment). A *chip* is a
   code drawn as a small box (`⟨b`, `b⟩`, `{0}`).
+- Input methods and layouts are added in the system settings:
+  - Windows: Settings → Time & language → Language & region → add Japanese, Chinese, Hebrew or Arabic. Win+Space
+    switches between them.
+  - macOS: System Settings → Keyboard → Input Sources.
+  - Linux: fcitx5 or IBus (Mozc for Japanese, Pinyin for Chinese), and the desktop's keyboard settings for layouts.
+- Screen readers start with:
+  - Narrator: Ctrl+Win+Enter.
+  - NVDA: Ctrl+Alt+N.
+  - VoiceOver: Cmd+F5.
+  - Orca: Super+Alt+S on GNOME.
 
 ## 1. IME (Japanese or Chinese input)
 
@@ -51,6 +61,8 @@ Use a layout with dead keys:
 | 2.3 | macOS press-and-hold `e`, then choose `è`. | `è` replaces the `e`. |
 | 2.4 | Hungarian layout: `ő`, `ű`. | Both are inserted directly. |
 | 2.5 | A dead key right before a chip, then a letter. | The accented letter goes before the chip. |
+| 2.6 | Windows and Linux: characters that need AltGr, e.g. `@` (AltGr+V) and `{` (AltGr+B) on a Hungarian layout. | They are typed, not taken as shortcuts (AltGr is Ctrl+Alt on Windows). |
+| 2.7 | macOS: characters that need Option, e.g. `€` (Option+Shift+2 on a US layout). | They are typed, not taken as shortcuts. |
 
 ## 3. Screen reader
 
@@ -70,7 +82,7 @@ Screen readers to use:
 
 ## 4. Right-to-left text
 
-Open `samples/demo.en-he.xlf`.
+Open `samples/demo.en-he.xlf`. Typing Hebrew (4.5, 4.6) needs a Hebrew keyboard layout, and 4.8 an Arabic one.
 
 | # | Do | Expect |
 |---|---|---|
@@ -81,18 +93,36 @@ Open `samples/demo.en-he.xlf`.
 | 4.5 | In "FilesCount" (empty target), type `העתק`, insert the code with F9, then type `קבצים`. | The code sits between the two Hebrew words, in that order in the target. |
 | 4.6 | In "Mixed", type Hebrew with a Latin name inside (`קרא את מדריך SchrödingersCAT 2.0 קודם`). | Mixed-direction text is ordered correctly and the caret stays usable across the direction change. |
 | 4.7 | Ctrl+Enter, Save as…, reopen the file. | The targets read back exactly as typed (the QA tab with F8 reports no code errors). |
+| 4.8 | With an Arabic layout, type `مرحبا` into an empty target, then insert a code between two words. | The letters join (shaped forms, not isolated letters), also next to the chip, and the word order stays right. |
+
+## 5. Mouse and wrapping
+
+Any sample file.
+
+| # | Do | Expect |
+|---|---|---|
+| 5.1 | Click just before and just after a chip in the editor. | The caret lands before or after the chip, never inside it. |
+| 5.2 | Double-click a word next to a chip. | The word is selected, without the chip. |
+| 5.3 | Drag-select across one or more chips. | The selection covers whole chips, never half of one. |
+| 5.4 | Make the window narrow, so that a target's line wraps at a chip. | The chip wraps like a word, isn't clipped, and the caret moves across the wrap normally. |
 
 ## Recording the results
 
 Fill in one row per desktop:
 
-| Desktop (OS, version, desktop environment) | 1 IME | 2 Dead keys | 3 Screen reader | 4 RTL | Notes and findings |
-|---|---|---|---|---|---|
-| Windows | | | | | |
-| Linux | | | | | |
-| macOS | | | | | |
+| Desktop (OS, version, desktop environment) | 1 IME | 2 Dead keys, AltGr/Option | 3 Screen reader | 4 RTL | 5 Mouse, wrapping | Notes and findings |
+|---|---|---|---|---|---|---|
+| Windows | | | | | | |
+| Linux | | | | | | |
+| macOS | | | | | | |
+
+The decision rule, from step 3 of the design:
+- **AvaloniaEdit stays (option C)** if IME (1) and the screen reader (3.1–3.4) work on the desktops tested, and nothing
+  in 2, 4 or 5 is broken in a way the editor control can't work around.
+- **Fall back to a tokenised `TextBox` (option A)**, with the same `TargetEditModel` and its tests, if IME or the
+  screen reader fail.
 
 Then:
-- Add the outcome to step 3 of [inline-code-editing.md](../design/inline-code-editing.md) as its decision note: C (AvaloniaEdit) stands, or what falls back to A.
+- Add the outcome to step 3 of [inline-code-editing.md](../design/inline-code-editing.md): the desktops tested, and whether C stands.
 - Remove "Not handled yet: the manual IME, screen reader and RTL checks" from CLAUDE.md, or replace it with what is still open.
 - Open an issue for each finding with the check's number (e.g. "4.2: Right Arrow moves logically in RTL text").
