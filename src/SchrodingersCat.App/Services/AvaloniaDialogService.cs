@@ -110,4 +110,17 @@ public sealed class AvaloniaDialogService(Window owner) : IDialogService
 
         return file?.TryGetLocalPath();
     }
+
+    public async Task<bool> OpenFolderAsync(string path)
+    {
+        try
+        {
+            Directory.CreateDirectory(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+        return await owner.Launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(path));
+    }
 }
