@@ -15,7 +15,7 @@ public static class Ranking
         MatchScore.Normalized query,
         string? previousSource,
         string? nextSource,
-        IEnumerable<(TmEntry Entry, MatchScore.Normalized Source)> candidates,
+        IEnumerable<(TmEntryId Id, TmEntry Entry, MatchScore.Normalized Source)> candidates,
         int threshold,
         int maxMatches)
     {
@@ -27,7 +27,7 @@ public static class Ranking
                 if (score == MatchScore.Exact && hasContext
                     && MatchScore.SameContext(previousSource, c.Entry.PreviousSource) && MatchScore.SameContext(nextSource, c.Entry.NextSource))
                     score = MatchScore.Context;
-                return new TmMatch(c.Entry, score);
+                return new TmMatch(c.Entry, score) { EntryId = c.Id };
             })
             .Where(m => m.Score >= threshold)
             .OrderByDescending(m => m.Score)

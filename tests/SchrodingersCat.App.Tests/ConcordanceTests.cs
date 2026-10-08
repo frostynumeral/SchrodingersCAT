@@ -187,5 +187,21 @@ public sealed class ConcordanceTests : IAsyncDisposable
         public bool Remove(TmEntry entry) => throw new NotSupportedException();
 
         public void Replace(TmEntry previous, TmEntry entry) => throw new NotSupportedException();
+
+        public StoredEntry? Find(TmEntryId id) => throw new NotSupportedException();
+
+        public UpdateResult Update(TmEntryId id, InlineContent target, DateTimeOffset changed, string? changedBy) => throw new NotSupportedException();
+
+        public int Delete(IReadOnlyCollection<TmEntryId> ids) => throw new NotSupportedException();
+
+        public BrowseResult Browse(EntryFilter filter, TmEntryId? after = null, int pageSize = ITranslationMemory.DefaultPageSize) => throw new NotSupportedException();
+
+        public int DeleteMatching(EntryFilter filter) => throw new NotSupportedException();
+
+        public IReadOnlyList<string> Documents() => throw new NotSupportedException();
+
+        public IReadOnlyList<string> Users() => throw new NotSupportedException();
+
+        public bool Compact() => throw new NotSupportedException();
     }
 }

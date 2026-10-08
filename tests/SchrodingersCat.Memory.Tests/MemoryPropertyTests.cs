@@ -29,6 +29,15 @@ public class MemoryPropertyTests
             }
         });
 
+    // The key alone (for "several translations") is the key the full normalisation gives.
+    [Fact]
+    public void KeyOf_IsTheKeyOfTheFullNormalisation() =>
+        Sources.Sample(sources =>
+        {
+            foreach (var source in sources)
+                Assert.Equal(MatchScore.Normalized.Of(source).Key, MatchScore.Normalized.KeyOf(source));
+        });
+
     // Pairs that differ only in code ids are one entry (the newer one), so targets are compared as the TM does.
     [Fact]
     public void EveryStoredSegment_IsFoundAsAnExactMatch() =>
@@ -135,6 +144,86 @@ public class MemoryPropertyTests
                 File.Delete(path);
             }
         });
+
+    // A random script of stores, updates and deletes (some large enough for the bulk path) leaves both TMs with the
+    // same entries under the same ids and the same lookups, and the SQLite index is the one storing what's left gives.
+    [Fact]
+    public void MaintenanceScripts_KeepBothTmsEqual_AndTheIndexExact() =>
+        Gen.Select(XliffGen.Document, Gen.Int[0, 1_000_000].Array[1, 30]).Sample((document, script) =>
+        {
+            var segments = document.Units.SelectMany(u => u.Segments).Where(s => s.Target is not null).ToList();
+            if (segments.Count == 0)
+                return;
+
+            var path = Path.Combine(Path.GetTempPath(), $"schrodingerscat-{Guid.NewGuid():N}.sctm");
+            try
+            {
+                var memory = new InMemoryTranslationMemory();
+                using (var sqlite = SqliteTranslationMemory.Create(path, "en", "hu"))
+                {
+                    var minute = 0;
+                    foreach (var step in script)
+                    {
+                        var ids = memory.Browse(EntryFilter.All, pageSize: int.MaxValue).Entries.Select(e => e.Id).ToList();
+                        var segment = segments[step / 4 % segments.Count];
+                        var time = DateTimeOffset.UnixEpoch.AddMinutes(++minute);
+                        switch (ids.Count == 0 ? 0 : step % 4)
+                        {
+                            case 0:
+                                var entry = new TmEntry(segment.Source, segment.Target!) { Changed = time, Document = $"{step % 3}.xlf" };
+                                memory.Add(entry);
+                                sqlite.Add(entry);
+                                break;
+                            case 1:
+                                var id = ids[step / 7 % ids.Count];
+                                Assert.Equal(memory.Update(id, segment.Target!, time, "u"), sqlite.Update(id, segment.Target!, time, "u"));
+                                break;
+                            case 2:
+                                // Every nth entry: from all of them (the bulk path) to an eighth (one by one).
+                                List<TmEntryId> doomed = [.. ids.Where((_, i) => (i + step) % (1 + (step / 5 % 8)) == 0)];
+                                Assert.Equal(memory.Delete(doomed), sqlite.Delete(doomed));
+                                break;
+                            default:
+                                var filter = new EntryFilter { Document = $"{step % 3}.xlf", SeveralTranslations = step % 2 == 0 };
+                                Assert.Equal(memory.DeleteMatching(filter), sqlite.DeleteMatching(filter));
+                                break;
+                        }
+                    }
+
+                    var entries = memory.Browse(EntryFilter.All, pageSize: int.MaxValue);
+                    Assert.Equal(entries.Entries, sqlite.Browse(EntryFilter.All, pageSize: int.MaxValue).Entries);
+                    Assert.Equal(entries.Total, sqlite.Count);
+                    foreach (var segment in segments)
+                        Assert.Equal(memory.Lookup(segment.Source), sqlite.Lookup(segment.Source));
+
+                    var postings = entries.Entries
+                        .SelectMany(e => SqliteTranslationMemory.Features(MatchScore.Normalized.Of(e.Entry.Source)).Distinct().Select(f => (f, e.Id.Value)))
+                        .ToHashSet();
+                    Assert.Equal(postings, Rows(path, "SELECT feature, entry FROM postings").ToHashSet());
+                    Assert.Equal(
+                        postings.GroupBy(p => p.Item1).Select(g => (g.Key, (long)g.Count())).ToHashSet(),
+                        Rows(path, "SELECT feature, entries FROM features").ToHashSet());
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        });
+
+    private static List<(long, long)> Rows(string path, string sql)
+    {
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        using var reader = command.ExecuteReader();
+        var rows = new List<(long, long)>();
+        while (reader.Read())
+            rows.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        return rows;
+    }
 
     private sealed class HitComparer : IEqualityComparer<(TmEntry, IReadOnlyList<HighlightPart>, IReadOnlyList<HighlightPart>)>
     {
