@@ -9,7 +9,11 @@ using SchrodingersCat.Core.Models;
 namespace SchrodingersCat.App.ViewModels;
 
 /// <summary>A row of the QA report: a check's heading, or one issue.</summary>
-public abstract class QaReportRow : ObservableObject;
+public abstract class QaReportRow : ObservableObject
+{
+    /// <summary>An issue, which can be selected and opened, not a heading.</summary>
+    public bool IsEntry => this is QaReportEntry;
+}
 
 /// <summary>A check's heading in the report, with how many issues it found.</summary>
 public sealed class QaReportHeader(string check, int count) : QaReportRow
@@ -28,7 +32,6 @@ public sealed class QaReportHeader(string check, int count) : QaReportRow
 public sealed partial class QaReportEntry : QaReportRow
 {
     private readonly InlineContent? _targetAtRun;
-    private readonly bool _acrossSegments;
 
     /// <param name="kind">The quality check that found it; null for the code check.</param>
     /// <param name="acrossSegments">Found by a document check (untranslated, inconsistent), not on the segment's badge.</param>
@@ -38,9 +41,8 @@ public sealed partial class QaReportEntry : QaReportRow
         Severity = severity;
         Message = message ?? throw new ArgumentNullException(nameof(message));
         Kind = kind;
-        _acrossSegments = acrossSegments;
+        AcrossSegments = acrossSegments;
         _targetAtRun = segment.Target;
-        Update();
     }
 
     public SegmentViewModel Segment { get; }
@@ -50,6 +52,9 @@ public sealed partial class QaReportEntry : QaReportRow
     public string Message { get; }
 
     public QaIssueKind? Kind { get; }
+
+    /// <summary>Found by a document check, so not among the segment's own issues.</summary>
+    public bool AcrossSegments { get; }
 
     public bool IsError => Severity == IssueSeverity.Error;
 
@@ -65,12 +70,30 @@ public sealed partial class QaReportEntry : QaReportRow
     [ObservableProperty]
     public partial bool IsFixed { get; private set; }
 
-    internal void Update()
+    /// <param name="stillThere">For a segment's own issue: whether the segment still has it.</param>
+    internal void Update(bool stillThere)
     {
         IsDismissed = Kind is { } kind && Segment.IsDismissed(kind, Message);
-        IsFixed = _acrossSegments
+        IsFixed = AcrossSegments
             ? (Kind == QaIssueKind.Untranslated ? Segment.Target is not null : Segment.Target != _targetAtRun)
-            : !Segment.AllIssues.Any(i => i.Message == Message && (Kind is { } k ? i.Qa?.Kind == k : i.Code is not null));
+            : !stillThere;
+    }
+
+    /// <summary>
+    /// Updates a segment's entries. Identical issues (the same number missing twice) count one by one: as many entries
+    /// stay open as the segment still has such issues.
+    /// </summary>
+    internal static void UpdateAll(SegmentViewModel segment, IEnumerable<QaReportEntry> entries)
+    {
+        var left = segment.AllIssues.GroupBy(i => (i.Qa?.Kind, i.Message)).ToDictionary(g => g.Key, g => g.Count());
+        foreach (var entry in entries)
+        {
+            var key = (entry.Kind, entry.Message);
+            var stillThere = !entry.AcrossSegments && left.GetValueOrDefault(key) > 0;
+            if (stillThere)
+                left[key]--;
+            entry.Update(stillThere);
+        }
     }
 }
 
@@ -140,6 +163,8 @@ public sealed partial class QaReportViewModel(MainWindowViewModel owner, IDialog
             }
         }
 
+        foreach (var (segment, list) in _entries)
+            QaReportEntry.UpdateAll(segment, list);
         UpdateStatus();
     }
 
@@ -173,6 +198,8 @@ public sealed partial class QaReportViewModel(MainWindowViewModel owner, IDialog
             return;
 
         var ran = _entries.Count > 0 || Rows.Count > 0 || Status != Hint;
+        // The report runs again anyway: following every segment's re-check first would only cost time.
+        Clear();
         owner.UseQaOptions(choices.ToOptions());
         if (ran && owner.Document is not null)
             Run();
@@ -193,8 +220,7 @@ public sealed partial class QaReportViewModel(MainWindowViewModel owner, IDialog
         if (sender is not SegmentViewModel segment || e.PropertyName is not (nameof(SegmentViewModel.AllIssues) or nameof(SegmentViewModel.Dismissals) or nameof(SegmentViewModel.TargetText)))
             return;
 
-        foreach (var entry in _entries[segment])
-            entry.Update();
+        QaReportEntry.UpdateAll(segment, _entries[segment]);
         UpdateStatus();
     }
 

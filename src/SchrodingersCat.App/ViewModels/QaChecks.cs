@@ -24,6 +24,10 @@ public static class QaChecks
         QaIssueKind.Brackets,
     ];
 
+    /// <summary>A document check: found across segments, only in the report, at most one of its kind per segment.</summary>
+    public static bool IsDocumentCheck(QaIssueKind kind) =>
+        kind is QaIssueKind.Untranslated or QaIssueKind.InconsistentTranslation or QaIssueKind.InconsistentSource;
+
     public static string Label(QaIssueKind kind) => kind switch
     {
         QaIssueKind.Numbers => "Numbers",

@@ -183,7 +183,10 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - "Fixed" for a document check's entry: an untranslated segment that now has a target, or an inconsistent one
      whose target has changed since the report ran (whether that resolved it needs F8 again).
    - Dismissals are kept on the segment by check and message, for document checks' issues too (they show greyed in
-     the report); any change to the target drops them all.
+     the report); any change to the target drops them all. A document check's are kept by check alone: its message
+     counts other segments ("translated 3 ways"), which can change while this target stays, and it finds at most one
+     issue of its kind per segment.
+   - F8 gives the report the keyboard: Up/Down move between entries (passing over the headings), Enter opens one.
 5. **Documentation:** CLAUDE.md, and mark this proposal implemented.
 
 ## Open questions

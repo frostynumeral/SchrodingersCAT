@@ -21,7 +21,8 @@ public partial class MainWindow : Window
         AddHandler(KeyDownEvent, OnShortcut, RoutingStrategies.Tunnel);
         ConcordanceBox.KeyDown += OnConcordanceBoxKeyDown;
         QaList.Tapped += OnQaListTapped;
-        QaList.KeyDown += OnQaListKeyDown;
+        // The list item handles Enter itself (selecting), so a plain subscription would never see it.
+        QaList.AddHandler(KeyDownEvent, OnQaListKeyDown, RoutingStrategies.Bubble, handledEventsToo: true);
         DataContextChanged += (_, _) =>
         {
             if (DataContext is MainWindowViewModel viewModel)
@@ -30,7 +31,7 @@ public partial class MainWindow : Window
     }
 
     // The segment shortcuts (design section 4), Ctrl+1 … Ctrl+9 (insert a match), Ctrl+Shift+1 … Ctrl+Shift+9
-    // (delete a match's entry) and F8 (check the document) are seen before the editor:
+    // (delete a match's entry), Ctrl+K (concordance) and F8 (check the document) are seen before the editor:
     // AvaloniaEdit would take Ctrl+Up/Down, Ctrl+Enter and Ctrl+Insert for itself, so they can't be window key
     // bindings, which only get unhandled keys.
     private void OnShortcut(object? sender, KeyEventArgs e)
@@ -45,6 +46,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Key == Key.F8 && e.KeyModifiers == KeyModifiers.None)
+        {
+            e.Handled = true;
+            viewModel.Qa.RunCommand.Execute(null);
+            FocusReportSoon();
+            return;
+        }
+
         (ICommand? command, object? parameter) = (e.Key, e.KeyModifiers) switch
         {
             (Key.Enter, KeyModifiers.Control) => (viewModel.ConfirmSegmentCommand, null),
@@ -52,7 +61,6 @@ public partial class MainWindow : Window
             (Key.Up, KeyModifiers.Control) => (viewModel.PreviousSegmentCommand, null),
             (Key.Down, KeyModifiers.Control | KeyModifiers.Shift) => (viewModel.NextSegmentWithIssuesCommand, null),
             (Key.Insert, KeyModifiers.Control) => (viewModel.CopySourceCommand, null),
-            (Key.F8, KeyModifiers.None) => (viewModel.Qa.RunCommand, null),
             ( >= Key.D1 and <= Key.D9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.D0),
             ( >= Key.NumPad1 and <= Key.NumPad9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.NumPad0),
             ( >= Key.D1 and <= Key.D9, KeyModifiers.Control | KeyModifiers.Shift) => (viewModel.DeleteMatchCommand, e.Key - Key.D0),
@@ -99,27 +107,41 @@ public partial class MainWindow : Window
         return (ConcordanceViewModel.TextOf(content), false);
     }
 
-    // A click on a report entry (not on its Dismiss button) opens its segment.
+    // A click on a report entry (not on its Dismiss button) opens its segment; a click beside the entries, nothing.
     private void OnQaListTapped(object? sender, TappedEventArgs e)
     {
-        if ((e.Source as Visual)?.FindAncestorOfType<Button>(includeSelf: true) is null)
-            OpenQaEntry();
+        if (e.Source is Visual source && source.FindAncestorOfType<Button>(includeSelf: true) is null
+            && source.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext is QaReportEntry entry)
+            OpenQaEntry(entry);
     }
 
     private void OnQaListKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Enter || e.KeyModifiers != KeyModifiers.None)
+        if (e.Key != Key.Enter || e.KeyModifiers != KeyModifiers.None || QaList.SelectedItem is not QaReportEntry entry)
             return;
 
         e.Handled = true;
-        OpenQaEntry();
+        OpenQaEntry(entry);
     }
 
-    private void OpenQaEntry()
+    private void OpenQaEntry(QaReportEntry entry)
     {
-        if (DataContext is MainWindowViewModel viewModel && QaList.SelectedItem is QaReportEntry entry)
+        if (DataContext is MainWindowViewModel viewModel)
             viewModel.Qa.OpenCommand.Execute(entry);
     }
+
+    // F8: the keyboard goes to the report's first entry, so Up/Down and Enter work through it. The tab's content is
+    // attached only once the tab has switched.
+    private void FocusReportSoon() =>
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                if (QaList.Items.OfType<QaReportEntry>().FirstOrDefault() is not { } first)
+                    return;
+                QaList.SelectedItem = first;
+                QaList.ContainerFromItem(first)?.Focus(NavigationMethod.Directional);
+            },
+            DispatcherPriority.Loaded);
 
     // After the selection moved, the selected row's editor exists only once the list has laid it out.
     private void FocusEditorSoon() =>

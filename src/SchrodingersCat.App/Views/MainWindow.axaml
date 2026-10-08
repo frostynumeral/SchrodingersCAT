@@ -237,6 +237,13 @@
                                 <TextBlock x:Name="QaStatus" Text="{Binding Qa.Status}" Opacity="0.6" VerticalAlignment="Center" TextWrapping="Wrap" />
                             </DockPanel>
                             <ListBox x:Name="QaList" ItemsSource="{Binding Qa.Rows}">
+                                <ListBox.Styles>
+                                    <!-- A check's heading isn't an entry: Up/Down pass over it, and a click doesn't select it. -->
+                                    <Style Selector="ListBoxItem" x:DataType="vm:QaReportRow">
+                                        <Setter Property="Focusable" Value="{Binding IsEntry}" />
+                                        <Setter Property="IsHitTestVisible" Value="{Binding IsEntry}" />
+                                    </Style>
+                                </ListBox.Styles>
                                 <ListBox.DataTemplates>
                                     <DataTemplate x:DataType="vm:QaReportHeader">
                                         <TextBlock Classes="qaHeader" Text="{Binding Text}" FontWeight="SemiBold" FontSize="12" Margin="0,4,0,0" />
@@ -283,7 +290,7 @@
                                         IsVisible="{Binding HasIssues}" ToolTip.Tip="{Binding IssueSummary}">
                                     <!-- Right-click dismisses a quality issue (code issues can't be dismissed). -->
                                     <Border.ContextMenu>
-                                        <ContextMenu ItemsSource="{Binding Issues}">
+                                        <ContextMenu ItemsSource="{Binding DismissableIssues}" IsVisible="{Binding HasDismissableIssues}">
                                             <ContextMenu.ItemTemplate>
                                                 <DataTemplate x:DataType="vm:SegmentIssue">
                                                     <TextBlock Text="{Binding Message, StringFormat='Dismiss: {0}'}" />
