@@ -88,8 +88,9 @@ There's no termbase in the app, and building one is its own project. But files o
   zero or more `<gls:translation>`s, and a `ref` that may point to an annotation in the unit;
 - **term annotations** (`<mrk type="term">`), which say a span is a term but carry no translation.
 
-The check uses glossary entries that have a translation. If the entry points to an annotation, the term is that
-annotation's text, and only the segment with it is checked; otherwise every segment whose source contains the term
+The check uses glossary entries that have a translation. If the entry points to an annotation (`ref="#m1"`; a
+target annotation, `#t=m1`, doesn't count), the term is that annotation's text, and only the segment with it is
+checked; otherwise every segment whose source contains the term
 (by the folded word rule) is. The target passes if it contains any of the translations, by the same rule, so a
 Hungarian suffix (`Tabulátort`) still counts. `GlossaryReader` (Core, like `XliffMatches` in Memory) reads the
 entries from `ExtensionElements` and skips anything malformed, writing nothing back.
@@ -100,9 +101,13 @@ Some problems only show across segments. `DocumentChecker.Check(document, option
 
 | Check | Severity | Notes |
 |---|---|---|
-| **Untranslated** | Warning | A translatable segment without a target. Normal while working, so only in the report, never on a badge. |
+| **Untranslated** | Warning | A translatable segment without a target. Normal while working, so only in the report, never on a badge. Content marked `translate="no"` at file, group or unit level is never reported. |
 | **Inconsistent translation** | Info | The same source (compared as for an exact TM match) translated differently in the document. Each occurrence is listed with the others. |
-| **Inconsistent source** | Info | The same target for different sources: sometimes right, often a copy-paste slip. |
+| **Inconsistent source** | Info | The same target for different sources: sometimes right, often a copy-paste slip. Intentionally empty targets don't count. |
+
+Each document issue is a `QaIssue` too, with `Related`: the segments it disagrees with. Sources and targets are
+compared with the exact-match key (`ContentKey`: NFC, codes by kind), which moved from Memory into Core so the TM
+and the checks share it.
 
 ### 5. In the editor
 
@@ -142,7 +147,8 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    - Properties over `XliffGen` documents: the checker never throws on any target; a target equal to its source
      reports only "same as source" (when the source has enough letters) and nothing about numbers, terms or
      `translate="no"`.
-2. **Core: terminology and document checks.** `GlossaryReader`, the terminology check, `DocumentChecker`.
+2. **Core: terminology and document checks.** *(Done 2026-10-08.)* `GlossaryReader`, the terminology check,
+   `DocumentChecker`; the exact-match key (`ContentKey`) moved from Memory into Core with `Words`.
    - Examples with glossary entries with and without `ref`, several translations, a suffixed match; malformed
      glossaries skipped. Consistency with repetitions and near-repetitions.
 3. **App: issues on badges.** `SegmentIssue`, `UnitCheck` running both checkers, badges, tooltips and

@@ -19,6 +19,7 @@ public static class QaChecker
         new SpacesCheck(),
         new EndPunctuationCheck(),
         new BracketsCheck(),
+        new TerminologyCheck(),
     ];
 
     public static IReadOnlyList<QaIssue> Check(TranslationUnit unit, QaOptions? options = null)
