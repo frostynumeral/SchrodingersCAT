@@ -18,6 +18,8 @@ jobs:
 
       - run: dotnet restore
 
+      - run: dotnet format --verify-no-changes --no-restore
+
       - run: dotnet build --no-restore --configuration Release
 
       - run: dotnet test --no-build --configuration Release

@@ -13,11 +13,12 @@ Solution file is `SchrodingersCat.slnx` (the XML solution format).
 ```bash
 dotnet build
 dotnet test
+dotnet format --verify-no-changes                                                    # the formatting check CI runs
 dotnet test --filter "FullyQualifiedName~Xliff20SerializerTests.Read_RejectsXliff12"   # single test
 dotnet run --project src/SchrodingersCat.App                                         # start the editor
 ```
 
-Projects target `net10.0`. CI (`.github/workflows/ci.yml`) builds and tests the whole solution in Release on every push to `main` and on PRs. Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`: it checks the tag against `VersionPrefix` in `Directory.Build.props` (bump that first), tests, publishes the app self-contained for `win-x64`, `linux-x64`, `osx-x64` and `osx-arm64` (without SkiaSharp's native `.pdb`s), and creates a GitHub release with the zips; 0.x and `-suffix` tags are pre-releases. Tests use xUnit, and `Xunit` is a global using. `SchrodingersCat.Core.Tests` is on xunit v2. `SchrodingersCat.App.Tests` is on xunit v3, because `Avalonia.Headless.XUnit` 12 requires it; xunit v3 test projects are executables (`OutputType` `Exe`), and its analyzers want `TestContext.Current.CancellationToken` passed to async APIs.
+Projects target `net10.0`. CI (`.github/workflows/ci.yml`) checks formatting with `dotnet format --verify-no-changes`, then builds and tests the whole solution in Release, on every push to `main` and on PRs; run `dotnet format` before pushing. Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`: it checks the tag against `VersionPrefix` in `Directory.Build.props` (bump that first), tests, publishes the app self-contained for `win-x64`, `linux-x64`, `osx-x64` and `osx-arm64` (without SkiaSharp's native `.pdb`s), and creates a GitHub release with the zips; 0.x and `-suffix` tags are pre-releases. Tests use xUnit, and `Xunit` is a global using. `SchrodingersCat.Core.Tests` is on xunit v2. `SchrodingersCat.App.Tests` is on xunit v3, because `Avalonia.Headless.XUnit` 12 requires it; xunit v3 test projects are executables (`OutputType` `Exe`), and its analyzers want `TestContext.Current.CancellationToken` passed to async APIs.
 
 ### Property-based tests
 
