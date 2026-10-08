@@ -1,8 +1,8 @@
 # Proposal: translation memory maintenance
 
-**Status:** accepted (2026-10-08). A follow-up to [translation memory](translation-memory.md), which left
-maintenance out of scope "now that the storage exists". All [open questions](#open-questions) are decided as
-proposed; implementation follows the [steps](#implementation-steps), starting with step 1.
+**Status:** implemented (2026-10-08). A follow-up to [translation memory](translation-memory.md), which left
+maintenance out of scope "now that the storage exists". All [open questions](#open-questions) were decided as
+proposed; where the implementation departs from the proposal, the sections below say so and why.
 
 ## Problem
 
@@ -129,16 +129,21 @@ The common case: a match that's wrong right now.
 beside the editor:
 
 - **Filters** across the top: the text box with Sources/Translations (the concordance's query rules), Document and
-  User lists (`Documents()`, `Users()`), a date range, and "Several translations of the same source". The list
-  refreshes when Enter is pressed or a list or date changes, never as you type, like the concordance.
-- **List:** source and translation with chips and highlighted hits, plus document, date and user. It's virtualised
-  and loads pages of 200 as you scroll (`Browse`), and the header shows "1,234 of 198,000 entries".
+  User lists (`Documents()`, `Users()`, read when the window opens), a date range (whole local days, both
+  included), and "Sources with several translations". The list refreshes when Enter is pressed or a list, date or
+  check box changes, never as you type, like the concordance.
+- **List:** source and translation with chips and highlighted hits (`Concordance.Highlight`), plus document, date
+  and user, in the concordance's row view model. It's virtualised and loads pages of 200 as you scroll (`Browse`),
+  and the header shows "1,234 of 198,000 entries".
 - **Actions:** Edit (double-click or Enter, the same `EntryEditorDialog`), Delete (the Delete key, for the selected
-  rows), and "Delete all 1,234 matching…". Each delete confirms with the count. "Delete all" also suggests exporting
-  to TMX first, because there's no undo (see [open question 3](#open-questions)).
+  rows; a row's context menu has both), and "Delete all matching…", which deletes what the list shows, not what the
+  filter boxes may hold by then. Each delete confirms with the count. "Delete all" also suggests exporting to TMX
+  first, because there's no undo (see [open question 3](#open-questions)). After every delete in the window the TM
+  is asked to compact, which it does only once a quarter of its entries have gone; the status says so.
 - **Consistency with the editor:** the window and the main window share the one `OpenTranslationMemory` and its
-  queue. A change in either refreshes the other's matches or list. Closing the TM, or opening another, closes the
-  window.
+  queue. A change in either refreshes the other's matches or list (`MainWindowViewModel.EntriesChanged`): an edited
+  entry's row updates where it is, a deleted one goes, and a merge or a bulk delete refreshes the list. Translations
+  stored with Ctrl+Enter show at the next refresh. Closing the TM, or opening another, closes the window.
 
 ## Out of scope
 
@@ -201,9 +206,12 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    concordance searching again, stale ids, editing, merging, `StoredTarget` following an edit or a delete, the
    editor's refusals), and headless tests: a match's Edit and Delete buttons and Ctrl+Shift+1 in the real window, and
    the real `EntryEditorDialog` (chips, Ctrl+Enter, a refused save, Escape).
-3. **App: the maintenance window.** `TmEntriesWindow` with filters, paging, multi-select delete, delete-all and
-   compacting. Headless tests drive the window, and the main window's matches follow its changes.
-4. **Documentation:** CLAUDE.md, and mark this proposal implemented.
+3. **App: the maintenance window.** *(Done 2026-10-08.)* `TmEntriesWindow` with filters, paging, multi-select
+   delete, delete-all and compacting. View-model tests with real TM files (the window and its lists, paging, every
+   filter, deleting the selection and everything the filters find, an edit's row, a delete in the pane, closing the
+   TM), and headless tests that drive the window: Enter filters, the Delete key, Enter edits, scrolling loads the
+   next page, the dialog service shows one window and closes it with its TM.
+4. **Documentation:** *(Done 2026-10-08.)* CLAUDE.md, and mark this proposal implemented.
 
 ## Open questions
 

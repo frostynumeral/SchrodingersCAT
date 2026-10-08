@@ -8,7 +8,7 @@ public sealed class ConcordanceResultViewModel
 {
     /// <param name="editCommand">Edits a <see cref="StoredEntry"/> (the window's).</param>
     /// <param name="deleteCommand">Deletes a <see cref="StoredEntry"/> (the window's).</param>
-    public ConcordanceResultViewModel(ConcordanceHit hit, string origin, ICommand? editCommand = null, ICommand? deleteCommand = null)
+    public ConcordanceResultViewModel(ConcordanceHit hit, string? origin, ICommand? editCommand = null, ICommand? deleteCommand = null)
     {
         EditCommand = editCommand;
         DeleteCommand = deleteCommand;

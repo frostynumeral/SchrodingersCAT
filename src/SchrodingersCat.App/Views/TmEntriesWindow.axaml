@@ -1,0 +1,71 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SchrodingersCat.App.ViewModels"
+        xmlns:controls="using:SchrodingersCat.App.Controls"
+        x:Class="SchrodingersCat.App.Views.TmEntriesWindow"
+        x:DataType="vm:TmEntriesViewModel"
+        Title="{Binding Title}" Width="1000" Height="650" WindowStartupLocation="CenterOwner">
+
+    <Window.Styles>
+        <Style Selector="Border.entry">
+            <Setter Property="Padding" Value="2,4" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel Margin="12">
+        <!-- Filters (section 4 of docs/design/tm-maintenance.md): the list follows a change of the lists, dates and
+             check boxes at once, and the text on Enter, never as you type. -->
+        <StackPanel DockPanel.Dock="Top" Spacing="8">
+            <DockPanel>
+                <CheckBox x:Name="SearchTranslationsBox" DockPanel.Dock="Right" Margin="8,0,0,0" Content="Search translations"
+                          IsChecked="{Binding SearchTranslations}" />
+                <TextBox x:Name="SearchBox" Text="{Binding SearchText}" PlaceholderText="Words to find, in the sources (Enter searches)">
+                    <TextBox.KeyBindings>
+                        <KeyBinding Gesture="Enter" Command="{Binding RefreshCommand}" />
+                    </TextBox.KeyBindings>
+                </TextBox>
+            </DockPanel>
+            <WrapPanel ItemSpacing="8" LineSpacing="8">
+                <ComboBox x:Name="DocumentFilter" ItemsSource="{Binding Documents}" SelectedItem="{Binding SelectedDocument}" MinWidth="180" />
+                <ComboBox x:Name="UserFilter" ItemsSource="{Binding Users}" SelectedItem="{Binding SelectedUser}" MinWidth="140" />
+                <TextBlock Text="Changed from" VerticalAlignment="Center" />
+                <CalendarDatePicker x:Name="FromDate" SelectedDate="{Binding ChangedFrom}" PlaceholderText="any day" />
+                <TextBlock Text="to" VerticalAlignment="Center" />
+                <CalendarDatePicker x:Name="ToDate" SelectedDate="{Binding ChangedTo}" PlaceholderText="any day" />
+                <CheckBox x:Name="SeveralTranslationsBox" Content="Sources with several translations" IsChecked="{Binding SeveralTranslations}" />
+            </WrapPanel>
+        </StackPanel>
+
+        <DockPanel DockPanel.Dock="Top" Margin="0,12,0,6">
+            <Button x:Name="DeleteAllButton" DockPanel.Dock="Right" Content="Delete all matching…" Command="{Binding DeleteAllCommand}"
+                    ToolTip.Tip="Delete every entry the filters find" />
+            <TextBlock x:Name="HeaderText" Text="{Binding Header}" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock x:Name="StatusText" Text="{Binding Status}" Margin="12,0" Opacity="0.7" VerticalAlignment="Center" TextWrapping="Wrap" />
+        </DockPanel>
+
+        <TextBlock DockPanel.Dock="Bottom" Margin="0,6,0,0" Opacity="0.6" FontSize="12"
+                   Text="Double-click or Enter edits an entry's translation. Delete deletes the selected entries (Ctrl+click or Shift+click to select several)." />
+
+        <!-- Loaded a page at a time as you scroll (TmEntriesWindow.axaml.cs). The text blocks don't take clicks, so a
+             click selects the row. -->
+        <ListBox x:Name="EntryList" ItemsSource="{Binding Entries}" SelectionMode="Multiple">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:ConcordanceResultViewModel">
+                    <Border Classes="entry" Background="Transparent">
+                        <Border.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="_Edit translation…" Command="{Binding EditCommand}" CommandParameter="{Binding Stored}" />
+                                <MenuItem Header="_Delete entry…" Command="{Binding DeleteCommand}" CommandParameter="{Binding Stored}" />
+                            </ContextMenu>
+                        </Border.ContextMenu>
+                        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="12">
+                            <controls:InlineContentBlock Grid.Column="0" Classes="entrySource" Runs="{Binding SourceRuns}" TextWrapping="Wrap" IsHitTestVisible="False" />
+                            <controls:InlineContentBlock Grid.Column="1" Classes="entryTarget" Runs="{Binding TargetRuns}" TextWrapping="Wrap" IsHitTestVisible="False" />
+                            <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Details}" FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</Window>
