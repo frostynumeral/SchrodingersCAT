@@ -58,6 +58,9 @@ public sealed class AvaloniaDialogService(Window owner) : IDialogService
     public Task<bool> ConfirmAsync(string title, string message, string confirmLabel) =>
         new ConfirmDialog(title, message, confirmLabel).ShowDialog<bool>(owner);
 
+    public Task<bool> EditQaSettingsAsync(QaSettingsViewModel settings) =>
+        new QaSettingsDialog(settings).ShowDialog<bool>(owner);
+
     public Task<InlineContent?> EditEntryAsync(EntryEditorViewModel editor) =>
         new EntryEditorDialog(editor).ShowDialog<InlineContent?>(owner);
 

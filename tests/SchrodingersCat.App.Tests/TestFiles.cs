@@ -123,6 +123,15 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
         return Task.FromResult(TmxToExport);
     }
 
+    /// <summary>Answers the QA settings: what the translator changes in them, and whether they confirm (null = cancel).</summary>
+    public Func<QaSettingsViewModel, bool>? EditQaSettings { get; set; }
+
+    public Task<bool> EditQaSettingsAsync(QaSettingsViewModel settings)
+    {
+        Asked.Add("QA settings");
+        return Task.FromResult(EditQaSettings?.Invoke(settings) ?? false);
+    }
+
     /// <summary>The entries window last shown.</summary>
     public TmEntriesViewModel? ShownEntries { get; private set; }
 

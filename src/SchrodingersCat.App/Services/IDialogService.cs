@@ -51,6 +51,9 @@ public interface IDialogService
     /// </summary>
     void ShowTmEntries(TmEntriesViewModel entries);
 
+    /// <summary>Lets the user switch quality checks on and off; true if they confirmed (the choices are in <paramref name="settings"/>).</summary>
+    Task<bool> EditQaSettingsAsync(QaSettingsViewModel settings);
+
     /// <summary>The local path of the translation memory (<c>*.sctm</c>) the user picked to open, or null if they cancelled.</summary>
     Task<string?> PickTranslationMemoryToOpenAsync();
 

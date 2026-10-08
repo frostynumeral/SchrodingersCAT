@@ -24,6 +24,10 @@ public sealed partial class SegmentViewModel : ObservableObject
     private IReadOnlyList<InlineCodeIssue> _codeIssues = [];
     private IReadOnlyList<SegmentIssue> _issues = [];
 
+    // Dismissed quality issues (check and message), and the target they were dismissed for: they last while it stays.
+    private readonly HashSet<(QaIssueKind Kind, string Message)> _dismissed = [];
+    private InlineContent? _dismissedFor;
+
     /// <param name="check">The unit's code check, shared with the unit's other segments.</param>
     public SegmentViewModel(UnitCheck check, Segment segment, Action changed)
     {
@@ -43,6 +47,9 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     /// <summary>The unit the segment belongs to.</summary>
     public TranslationUnit Unit => _unit;
+
+    /// <summary>The Core segment, for matching document-wide check results to their row.</summary>
+    internal Segment Segment => _segment;
 
     public string SourceText { get; }
 
@@ -94,9 +101,54 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     /// <summary>
     /// The issues that show up in this segment: the code check's, then the quality checks' (step 3 of
-    /// <c>docs/design/qa-checks.md</c>).
+    /// <c>docs/design/qa-checks.md</c>), without those dismissed.
     /// </summary>
     public IReadOnlyList<SegmentIssue> Issues => _issues;
+
+    /// <summary>All the issues, the dismissed ones included, for the report.</summary>
+    public IReadOnlyList<SegmentIssue> AllIssues { get; private set; } = [];
+
+    /// <summary>The <see cref="Issues"/> that can be dismissed (quality issues): the badge's context menu.</summary>
+    public IReadOnlyList<SegmentIssue> DismissableIssues { get; private set; } = [];
+
+    public bool HasDismissableIssues => DismissableIssues.Count > 0;
+
+    /// <summary>Whether a quality issue (by check and message) is dismissed for the current target.</summary>
+    public bool IsDismissed(QaIssueKind kind, string message) => _dismissed.Contains(DismissalKey(kind, message));
+
+    // A document check's message counts other segments ("translated 3 ways"), which can change while this target
+    // stays; it finds at most one issue of its kind per segment, so the kind alone names the issue.
+    private static (QaIssueKind Kind, string Message) DismissalKey(QaIssueKind kind, string message) =>
+        QaChecks.IsDocumentCheck(kind) ? (kind, "") : (kind, message);
+
+    /// <summary>
+    /// Dismisses a quality issue (step 4 of the QA design): it stops counting on the badge and in Ctrl+Shift+Down, and
+    /// shows greyed in the report, until the target changes (decision 4: for the session, while the target stays).
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanDismiss))]
+    private void Dismiss(SegmentIssue? issue)
+    {
+        if (issue?.Qa is { } qa)
+            SetDismissed(qa.Kind, issue.Message, dismissed: true);
+    }
+
+    private static bool CanDismiss(SegmentIssue? issue) => issue?.CanDismiss == true;
+
+    /// <summary>Dismisses or restores an issue by its check and message (the report's entries use it too).</summary>
+    public void SetDismissed(QaIssueKind kind, string message, bool dismissed)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        var key = DismissalKey(kind, message);
+        if (dismissed ? !_dismissed.Add(key) : !_dismissed.Remove(key))
+            return;
+        _dismissedFor = _segment.Target;
+        OnUnitChecked(this, EventArgs.Empty);
+        OnPropertyChanged(nameof(Dismissals));
+    }
+
+    /// <summary>Changes whenever a dismissal comes or goes; the report listens to it.</summary>
+    public int Dismissals => _dismissed.Count;
 
     public bool HasIssues => _issues.Count > 0;
 
@@ -248,6 +300,9 @@ public sealed partial class SegmentViewModel : ObservableObject
     {
         UpdateIssues();
         OnPropertyChanged(nameof(Issues));
+        OnPropertyChanged(nameof(AllIssues));
+        OnPropertyChanged(nameof(DismissableIssues));
+        OnPropertyChanged(nameof(HasDismissableIssues));
         OnPropertyChanged(nameof(HasIssues));
         OnPropertyChanged(nameof(HasErrors));
         OnPropertyChanged(nameof(HasWarnings));
@@ -259,8 +314,17 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     private void UpdateIssues()
     {
+        // A dismissal lasts while the target it was made for stays.
+        if (_dismissed.Count > 0 && _segment.Target != _dismissedFor)
+        {
+            _dismissed.Clear();
+            OnPropertyChanged(nameof(Dismissals));
+        }
+
         _codeIssues = [.. _check.CodeIssues.Where(i => ReferenceEquals(i.Segment, _segment))];
-        _issues = [.. _codeIssues.Select(SegmentIssue.From), .. _check.QaIssues.Where(i => ReferenceEquals(i.Segment, _segment)).Select(SegmentIssue.From)];
+        AllIssues = [.. _codeIssues.Select(SegmentIssue.From), .. _check.QaIssues.Where(i => ReferenceEquals(i.Segment, _segment)).Select(SegmentIssue.From)];
+        _issues = [.. AllIssues.Where(i => i.Qa is not { } qa || !IsDismissed(qa.Kind, i.Message))];
+        DismissableIssues = [.. _issues.Where(i => i.CanDismiss)];
     }
 
     // Missing codes are outlined in the source, where they are; the other problems in the target.

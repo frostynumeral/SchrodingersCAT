@@ -176,8 +176,17 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      for the same plain words, or for one term spaced differently, now merge too.
    - Left as designed: a term matches by the beginning of a word, so `Datei` isn't found in `Textdatei`, and `tab`
      is found in `table`. Changing that is a design decision (compounds, a minimum term length), not a fix.
-4. **App: the QA tab.** F8, the grouped report, jumping to a segment, dismissing, the settings dialog. View-model and
-   headless tests.
+4. **App: the QA tab.** *(Done 2026-10-08.)* F8, the grouped report, jumping to a segment, dismissing, the settings
+   dialog. View-model and headless tests.
+   - The report lists the code check's issues too, as its first group ("Inline codes"): before delivery, the
+     translator wants one list. They can't be dismissed, as code errors decide the save prompt and the TM store.
+   - "Fixed" for a document check's entry: an untranslated segment that now has a target, or an inconsistent one
+     whose target has changed since the report ran (whether that resolved it needs F8 again).
+   - Dismissals are kept on the segment by check and message, for document checks' issues too (they show greyed in
+     the report); any change to the target drops them all. A document check's are kept by check alone: its message
+     counts other segments ("translated 3 ways"), which can change while this target stays, and it finds at most one
+     issue of its kind per segment.
+   - F8 gives the report the keyboard: Up/Down move between entries (passing over the headings), Enter opens one.
 5. **Documentation:** CLAUDE.md, and mark this proposal implemented.
 
 ## Open questions

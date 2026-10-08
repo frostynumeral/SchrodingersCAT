@@ -25,6 +25,20 @@
             <Setter Property="Foreground" Value="White" />
         </Style>
 
+        <!-- The QA report: a dismissed issue greyed, a fixed one struck through, until F8 runs again. -->
+        <Style Selector="Grid.qaEntry.dismissed">
+            <Setter Property="Opacity" Value="0.45" />
+        </Style>
+        <Style Selector="Grid.qaEntry.fixed TextBlock.qaMessage">
+            <Setter Property="TextDecorations" Value="Strikethrough" />
+        </Style>
+        <Style Selector="Button.dismissIssue">
+            <Setter Property="Content" Value="Dismiss" />
+        </Style>
+        <Style Selector="Grid.qaEntry.dismissed Button.dismissIssue">
+            <Setter Property="Content" Value="Restore" />
+        </Style>
+
         <!-- The matches pane: one row per match, its score in a badge, green for an exact (100% or 101%) match. -->
         <Style Selector="Border.matchesPane">
             <Setter Property="BorderBrush" Value="#40808080" />
@@ -211,6 +225,47 @@
                             </ScrollViewer>
                         </DockPanel>
                     </TabItem>
+                    <!-- The document's quality report (F8; step 4 of docs/design/qa-checks.md). Clicking an entry or
+                         Enter opens its segment (MainWindow.axaml.cs); the list stays until F8 runs again. -->
+                    <TabItem x:Name="QaTab" Header="QA" FontSize="14">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="4,0,4,4">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" Margin="8,0,0,0">
+                                    <Button x:Name="RunQaButton" Content="Check document (F8)" Command="{Binding Qa.RunCommand}" Focusable="False" FontSize="12" />
+                                    <Button x:Name="QaSettingsButton" Content="Settings…" Command="{Binding Qa.SettingsCommand}" FontSize="12" />
+                                </StackPanel>
+                                <TextBlock x:Name="QaStatus" Text="{Binding Qa.Status}" Opacity="0.6" VerticalAlignment="Center" TextWrapping="Wrap" />
+                            </DockPanel>
+                            <ListBox x:Name="QaList" ItemsSource="{Binding Qa.Rows}">
+                                <ListBox.Styles>
+                                    <!-- A check's heading isn't an entry: Up/Down pass over it, and a click doesn't select it. -->
+                                    <Style Selector="ListBoxItem" x:DataType="vm:QaReportRow">
+                                        <Setter Property="Focusable" Value="{Binding IsEntry}" />
+                                        <Setter Property="IsHitTestVisible" Value="{Binding IsEntry}" />
+                                    </Style>
+                                </ListBox.Styles>
+                                <ListBox.DataTemplates>
+                                    <DataTemplate x:DataType="vm:QaReportHeader">
+                                        <TextBlock Classes="qaHeader" Text="{Binding Text}" FontWeight="SemiBold" FontSize="12" Margin="0,4,0,0" />
+                                    </DataTemplate>
+                                    <DataTemplate x:DataType="vm:QaReportEntry">
+                                        <Grid Classes="qaEntry" Classes.dismissed="{Binding IsDismissed}" Classes.fixed="{Binding IsFixed}"
+                                              ColumnDefinitions="70,110,*,Auto" ColumnSpacing="8">
+                                            <Border Classes="issueBadge" Classes.warning="{Binding IsWarning}" Classes.error="{Binding IsError}" VerticalAlignment="Top">
+                                                <TextBlock Text="{Binding Severity}" FontSize="11" />
+                                            </Border>
+                                            <TextBlock Grid.Column="1" Text="{Binding Segment.Label}" Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="2" Classes="qaMessage" Text="{Binding Message}" FontSize="12" TextWrapping="Wrap" />
+                                            <!-- Not focusable, so clicking it doesn't take the keyboard from the list. -->
+                                            <Button Grid.Column="3" Classes="dismissIssue" Focusable="False" FontSize="11" Padding="6,1"
+                                                    Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).Qa.ToggleDismissedCommand, FallbackValue={x:Null}}"
+                                                    CommandParameter="{Binding}" IsVisible="{Binding CanDismiss}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.DataTemplates>
+                            </ListBox>
+                        </DockPanel>
+                    </TabItem>
                 </TabControl>
             </Border>
             <ListBox x:Name="SegmentList" ItemsSource="{Binding Segments}" SelectedItem="{Binding SelectedSegment}">
@@ -233,6 +288,22 @@
                                 <TextBlock Text="{Binding State}" Opacity="0.6" />
                                 <Border Classes="issueBadge" Classes.warning="{Binding HasWarnings}" Classes.error="{Binding HasErrors}"
                                         IsVisible="{Binding HasIssues}" ToolTip.Tip="{Binding IssueSummary}">
+                                    <!-- Right-click dismisses a quality issue (code issues can't be dismissed). -->
+                                    <Border.ContextMenu>
+                                        <ContextMenu ItemsSource="{Binding DismissableIssues}" IsVisible="{Binding HasDismissableIssues}">
+                                            <ContextMenu.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:SegmentIssue">
+                                                    <TextBlock Text="{Binding Message, StringFormat='Dismiss: {0}'}" />
+                                                </DataTemplate>
+                                            </ContextMenu.ItemTemplate>
+                                            <ContextMenu.Styles>
+                                                <Style Selector="MenuItem" x:DataType="vm:SegmentIssue">
+                                                    <Setter Property="Command" Value="{Binding $parent[ContextMenu].((vm:SegmentViewModel)DataContext).DismissCommand, FallbackValue={x:Null}}" />
+                                                    <Setter Property="CommandParameter" Value="{Binding}" />
+                                                </Style>
+                                            </ContextMenu.Styles>
+                                        </ContextMenu>
+                                    </Border.ContextMenu>
                                     <TextBlock Text="{Binding Issues.Count}" FontSize="11" />
                                 </Border>
                             </StackPanel>
