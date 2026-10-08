@@ -120,10 +120,15 @@ internal sealed class SameAsSourceCheck : IQaCheck
 
     public QaIssueKind Kind => QaIssueKind.SameAsSource;
 
+    // Letters marked translate="no" don't count: a source that is all protected text is meant to be copied.
     public IEnumerable<QaIssue> Check(QaSegment segment)
     {
-        var source = segment.Source.Text.Trim();
-        if (source.Count(char.IsLetter) >= MinimumLetters && string.Equals(source, segment.Target.Text.Trim(), StringComparison.Ordinal))
+        var translatable = segment.Source.Text.ToCharArray();
+        foreach (var (start, length) in segment.DoNotTranslate)
+            Array.Fill(translatable, ' ', start, length);
+
+        if (translatable.Count(char.IsLetter) >= MinimumLetters
+            && string.Equals(segment.Source.Text.Trim(), segment.Target.Text.Trim(), StringComparison.Ordinal))
             yield return new QaIssue(Kind, IssueSeverity.Warning, segment.Segment, "The target is the same as the source.");
     }
 }
@@ -316,9 +321,11 @@ internal sealed class BracketsCheck : IQaCheck
 }
 
 /// <summary>
-/// A term from the unit's glossary is in the source and none of its translations is in the target (section 3). An
-/// entry pointing to a term annotation is checked in that annotation's segment, with its text as the term; others
-/// wherever the source has the term. Words match by their beginning, folded, so a suffixed translation counts.
+/// A term from the unit's glossary is in the source and none of its translations is in the target (section 3).
+/// Entries for the same term count as one, with all their translations. An entry pointing to a term annotation is
+/// checked in that annotation's segment, with its text as the term; others wherever the source has the term. Terms
+/// and translations are found with <see cref="Words.FindTerm"/>: words match by their beginning, folded, so a
+/// suffixed translation counts; text without spaces between words (CJK, Thai) matches anywhere.
 /// </summary>
 internal sealed class TerminologyCheck : IQaCheck
 {
@@ -326,44 +333,42 @@ internal sealed class TerminologyCheck : IQaCheck
 
     public IEnumerable<QaIssue> Check(QaSegment segment)
     {
-        var sourceWords = Words.Find(segment.Source.Text).ToList();
-        var targetWords = Words.Find(segment.Target.Text).ToList();
-        var reported = new HashSet<string>(StringComparer.Ordinal);
+        // Each entry's term where it is in this segment's source: an annotation's text, or the entry's term found.
+        var found = new List<(string Key, string Term, (int Start, int Length) Range, IReadOnlyList<string> Translations)>();
         foreach (var entry in segment.Glossary.Where(e => e.Translations.Count > 0))
         {
-            int start, length;
-            string term;
-            if (entry.MarkerId is { } id && segment.Unit.Segments.Any(s => s.Source.OfType<Models.InlineMarker>().Any(m => m.Id == id)))
+            if (entry.MarkerId is { } id && segment.HasSourceMarker(id))
             {
-                // The term is what the annotation covers, in the segment where it is.
                 if (segment.MarkedRange(id) is not { } marked)
                     continue;
-                (start, length) = marked;
-                term = segment.Source.Text.Substring(start, length).Replace(QaText.CodeMark.ToString(), "", StringComparison.Ordinal).Trim();
-            }
-            else
-            {
-                var termWords = Words.Find(entry.Term).Select(w => w.Folded).ToList();
-                if (Words.FindPhrase(sourceWords, termWords) is not { } first)
-                    continue;
 
-                var last = sourceWords[first + termWords.Count - 1];
-                (start, length) = (sourceWords[first].Start, last.Start + last.Length - sourceWords[first].Start);
-                term = entry.Term;
+                var text = segment.Source.Text.Substring(marked.Start, marked.Length).Replace(QaText.CodeMark.ToString(), "", StringComparison.Ordinal).Trim();
+                found.Add((Key(text), text, marked, entry.Translations));
             }
-
-            if (term.Length == 0 || !reported.Add(term)
-                || entry.Translations.Any(t => Words.FindPhrase(targetWords, [.. Words.Find(t).Select(w => w.Folded)]) is not null))
+            else if (Words.FindTerm(segment.Source.Text, entry.Term) is { } range)
             {
+                found.Add((Key(entry.Term), entry.Term, range, entry.Translations));
+            }
+        }
+
+        // Entries for the same term are one term with all their translations, whichever way each was found.
+        foreach (var term in found.Where(f => f.Key.Length > 0).GroupBy(f => f.Key, StringComparer.Ordinal))
+        {
+            var translations = term.SelectMany(f => f.Translations).DistinctBy(Key, StringComparer.Ordinal).ToList();
+            if (translations.Any(t => Words.FindTerm(segment.Target.Text, t) is not null))
                 continue;
-            }
 
-            var translations = string.Join(" or ", entry.Translations.Select(t => $"“{t}”"));
-            yield return new QaIssue(Kind, IssueSeverity.Warning, segment.Segment, $"The glossary translates “{term}” as {translations}, which isn't in the target.")
+            var (_, text, (start, length), _) = term.First();
+            yield return new QaIssue(Kind, IssueSeverity.Warning, segment.Segment,
+                $"The glossary translates “{text}” as {string.Join(" or ", translations.Select(t => $"“{t}”"))}, which isn't in the target.")
             {
                 Span = segment.Source.SpanOf(start, length),
                 SpanInSource = true,
             };
         }
     }
+
+    // What makes two terms the same: folded, with whitespace collapsed.
+    private static string Key(string term) =>
+        Words.Fold(string.Join(' ', term.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)));
 }

@@ -81,6 +81,108 @@ public class QaTerminologyAndDocumentTests
         Assert.Empty(QaChecker.Check(unit));
     }
 
+    // Japanese and Chinese have no spaces between words, so a "word" is a whole clause: terms are found anywhere.
+    [Theory]
+    [InlineData("Save the file.", "このファイルを保存します。", "file", "ファイル", false)]
+    [InlineData("Save the file.", "この写真を保存します。", "file", "ファイル", true)]
+    [InlineData("このファイルを保存します。", "Save this file.", "ファイル", "file", false)]
+    [InlineData("このファイルを保存します。", "Save the photo.", "ファイル", "file", true)]
+    public void TermsInScriptsWithoutSpaces_AreFoundAnywhere(string source, string target, string term, string translation, bool reported)
+    {
+        var unit = UnitWithGlossary($"""<gls:glossEntry><gls:term>{term}</gls:term><gls:translation>{translation}</gls:translation></gls:glossEntry>""");
+        unit.Segments.Add(new Segment { Source = Text(source), Target = Text(target) });
+
+        Assert.Equal(reported, QaChecker.Check(unit).Any(i => i.Kind == QaIssueKind.Terminology));
+    }
+
+    // In mixed text, a Latin word stays a word: "file" isn't in このprofileを開く, but "Windows" is in このWindowsを開く.
+    [Theory]
+    [InlineData("Open the file.", "このprofileを開く", "file", "file", true)]
+    [InlineData("このprofileを開く", "Open the folder.", "file", "folder", false)]
+    [InlineData("Open Windows.", "このWindowsを開く", "Windows", "Windows", false)]
+    [InlineData("Show the card.", "ガードを表示", "card", "カード", true)] // ガ (ga) isn't カ (ka)
+    [InlineData("Show the card.", "カードを表示", "card", "カード", false)]
+    public void MixedScripts_KeepWordsApart_AndKanaVoicingCounts(string source, string target, string term, string translation, bool reported)
+    {
+        var unit = UnitWithGlossary($"""<gls:glossEntry><gls:term>{term}</gls:term><gls:translation>{translation}</gls:translation></gls:glossEntry>""");
+        unit.Segments.Add(new Segment { Source = Text(source), Target = Text(target) });
+
+        Assert.Equal(reported, QaChecker.Check(unit).Any(i => i.Kind == QaIssueKind.Terminology));
+    }
+
+    // The span takes in a combining mark at the term's end, so a highlight never splits a letter from its mark.
+    [Fact]
+    public void ATermsSpan_KeepsItsLastCombiningMark()
+    {
+        var unit = UnitWithGlossary("""<gls:glossEntry><gls:term>ไฟล์</gls:term><gls:translation>file</gls:translation></gls:glossEntry>""");
+        unit.Segments.Add(new Segment { Source = Text("บันทึกไฟล์"), Target = Text("Save the photo.") });
+
+        Assert.Equal(new TextSpan(0, 6, 4), Assert.Single(QaChecker.Check(unit)).Span);
+    }
+
+    // An entry for a term annotation and a plain entry for the same words are one term; so are terms spaced differently.
+    [Theory]
+    [InlineData("Törölje a dokumentumot.", true)]
+    [InlineData("Törölje az állományt.", false)]
+    [InlineData("Törölje a fájlt.", false)]
+    public void EntriesForAnAnnotationAndForItsWords_AreOneTerm(string target, bool reported)
+    {
+        var unit = UnitWithGlossary("""
+            <gls:glossEntry ref="#m1"><gls:term>file</gls:term><gls:translation>fájl</gls:translation></gls:glossEntry>
+            <gls:glossEntry><gls:term>file</gls:term><gls:translation>állomány</gls:translation></gls:glossEntry>
+            """);
+        unit.Segments.Add(new Segment
+        {
+            Source = new InlineContent([new InlineText("Delete the "), new InlineMarker("m1", InlineMarkerKind.Opening) { Type = "term" }, new InlineText("file"), new InlineMarker("m1", InlineMarkerKind.Closing), new InlineText(".")]),
+            Target = Text(target),
+        });
+
+        var issues = QaChecker.Check(unit);
+        Assert.Equal(reported ? 1 : 0, issues.Count);
+        if (reported)
+            Assert.Equal("The glossary translates “file” as “fájl” or “állomány”, which isn't in the target.", issues[0].Message);
+    }
+
+    [Fact]
+    public void TermsSpacedDifferently_AreOneTerm()
+    {
+        var unit = UnitWithGlossary("""
+            <gls:glossEntry><gls:term>TAB  key</gls:term><gls:translation>Tab billentyű</gls:translation></gls:glossEntry>
+            <gls:glossEntry><gls:term>tab key</gls:term><gls:translation>tabulátor</gls:translation></gls:glossEntry>
+            """);
+        unit.Segments.Add(new Segment { Source = Text("Press the TAB key."), Target = Text("Nyomd meg a tabulátort.") });
+
+        Assert.Empty(QaChecker.Check(unit));
+    }
+
+    // Two entries for one term are one term with both translations, whichever comes first.
+    [Theory]
+    [InlineData("fájl", "állomány")]
+    [InlineData("állomány", "fájl")]
+    public void EntriesForTheSameTerm_ShareTheirTranslations(string first, string second)
+    {
+        var unit = UnitWithGlossary($"""
+            <gls:glossEntry><gls:term>file</gls:term><gls:translation>{first}</gls:translation></gls:glossEntry>
+            <gls:glossEntry><gls:term>File</gls:term><gls:translation>{second}</gls:translation></gls:glossEntry>
+            """);
+        unit.Segments.Add(new Segment { Source = Text("Delete the file."), Target = Text("Törölje az állományt.") });
+        unit.Segments.Add(new Segment { Source = Text("Delete the file."), Target = Text("Törölje a dokumentumot.") });
+
+        var issue = Assert.Single(QaChecker.Check(unit));
+        Assert.Same(unit.Segments[1], issue.Segment);
+        Assert.Equal($"The glossary translates “file” as “{first}” or “{second}”, which isn't in the target.", issue.Message);
+    }
+
+    [Fact]
+    public void ATranslationOfSymbolsOnly_IsFoundAsItIs()
+    {
+        var unit = UnitWithGlossary("""<gls:glossEntry><gls:term>percent</gls:term><gls:translation>%</gls:translation></gls:glossEntry>""");
+        unit.Segments.Add(new Segment { Source = Text("Ten percent."), Target = Text("Tíz %.") });
+        unit.Segments.Add(new Segment { Source = Text("Ten percent."), Target = Text("Tíz százalék.") });
+
+        Assert.Equal([unit.Segments[1]], QaChecker.Check(unit).Select(i => i.Segment));
+    }
+
     // ---------------------------------------------------------------- document checks
 
     [Fact]
@@ -96,6 +198,38 @@ public class QaTerminologyAndDocumentTests
         var issue = Assert.Single(DocumentChecker.Check(document));
         Assert.Equal((QaIssueKind.Untranslated, IssueSeverity.Warning, "Save.", "The segment isn't translated."),
             (issue.Kind, issue.Severity, issue.Segment.Source.ToPlainText(), issue.Message));
+    }
+
+    [Fact]
+    public void AFileNotToTranslate_HasNothingUntranslated()
+    {
+        var document = Document(Unit("u1", ("Save.", null)));
+        document.Files[0].Translate = false;
+        var file = new TranslationFile { Id = "f2" };
+        var group = new TranslationGroup { Id = "g1", Translate = true }; // translate="yes" inside a file marked "no"
+        group.Items.Add(Unit("u2", ("Open.", null)));
+        file.Items.Add(group);
+        document.Files.Add(file);
+        document.Files[0].Items.Add(Unit("u3", ("Close.", null)));
+        document.Files[0].Items.Add(new TranslationGroup { Id = "g2", Translate = true });
+        ((TranslationGroup)document.Files[0].Items[^1]).Items.Add(Unit("u4", ("Print.", null)));
+
+        // f1 is marked "no": only its group marked "yes" counts. f2 isn't marked, so its unit counts. Document order.
+        Assert.Equal(["u4", "u2"], DocumentChecker.Check(document).Select(i => UnitOf(document, i.Segment)));
+        Assert.Equal(["u2", "u4"], document.UnitsToTranslate.Select(u => u.Id).Order());
+    }
+
+    // Sources are compared in NFC, as for an exact TM match; a near-repetition is another sentence.
+    [Fact]
+    public void Consistency_ComparesSourcesInNfc_AndIgnoresNearRepetitions()
+    {
+        var document = Document(
+            Unit("u1", ("Caf\u00E9 menu.", "Kávézó menü.")),
+            Unit("u2", ("Cafe\u0301 menu.", "Kávéház menü.")),
+            Unit("u3", ("Save the file.", "Mentsd a fájlt.")),
+            Unit("u4", ("Save the files.", "Mentsd a fájlokat.")));
+
+        Assert.Equal(["u1", "u2"], DocumentChecker.Check(document).Select(i => UnitOf(document, i.Segment)));
     }
 
     [Fact]
@@ -150,6 +284,16 @@ public class QaTerminologyAndDocumentTests
         var options = new QaOptions { Disabled = new HashSet<QaIssueKind> { QaIssueKind.Untranslated, QaIssueKind.InconsistentTranslation } };
 
         Assert.Empty(DocumentChecker.Check(document, options));
+    }
+
+    [Fact]
+    public void AUnitNotToTranslate_HasNoQualityIssues()
+    {
+        var unit = Unit("u1", ("Acme Cloud Server", "Acme Cloud Server"), ("Copy 3 files.", "Másolj 4 fájlt"));
+        Assert.NotEmpty(QaChecker.Check(unit));
+
+        unit.Translate = false;
+        Assert.Empty(QaChecker.Check(unit));
     }
 
     // ---------------------------------------------------------------- helpers

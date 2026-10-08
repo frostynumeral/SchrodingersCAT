@@ -302,11 +302,12 @@ public sealed class MainWindowHeadlessTests : IDisposable
         window.KeyTextInput("Szia ");
         Dispatcher.UIThread.RunJobs();
 
-        // Both codes are missing: the protected one is an error, and the source chips are outlined.
+        // Both codes are missing: the protected one is an error, and the source chips are outlined. The quality checks
+        // add two notes: a trailing space, and no full stop.
         var badge = IssueBadge(window);
         Assert.True(badge.IsVisible);
         Assert.Contains("error", badge.Classes);
-        Assert.Equal("2", Label(badge));
+        Assert.Equal("4", Label(badge));
         Assert.All(Chips(ContentBlock(window, "source")), c => Assert.Contains("problem", c.Classes));
 
         // Clicking a source chip inserts it at the caret, and the editor keeps the keyboard.
@@ -314,6 +315,8 @@ public sealed class MainWindowHeadlessTests : IDisposable
         window.KeyTextInput(", nyomd meg: ");
         Click(window, Chips(ContentBlock(window, "source"))[1]); // a pair: the caret goes between its halves
         window.KeyTextInput("OK");
+        Press(window, PhysicalKey.End);
+        window.KeyTextInput(".");
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], EditorChips(editor).Select(Label));
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
@@ -333,6 +336,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
             new InlineCode("2", InlineCodeKind.Opening) { SubType = "xlf:b", Type = "fmt", CanOverlap = false },
             new InlineText("OK"),
             new InlineCode("2", InlineCodeKind.Closing) { SubType = "xlf:b", Type = "fmt", CanOverlap = false },
+            new InlineText("."),
         ]), segment.Target);
         Assert.Equal(SegmentState.Translated, segment.State);
     }
@@ -457,7 +461,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
 
         Press(window, PhysicalKey.ArrowDown, RawInputModifiers.Control | RawInputModifiers.Shift);
         Assert.Same(vm.Segments[2], vm.SelectedSegment);
-        Assert.Equal("No segments with code errors or warnings below this one.", vm.Segments[2].EditStatus);
+        Assert.Equal("No segments with errors or warnings below this one.", vm.Segments[2].EditStatus);
     }
 
     [AvaloniaFact]
@@ -504,7 +508,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Click(window, Assert.Single(VisibleEditors(window)), onText: true);
         Press(window, PhysicalKey.V, RawInputModifiers.Control);
         await WaitFor(() => vm.Segments[2].TargetText == "Press ⟨1⟩OK⟨/1⟩.");
-        Assert.False(vm.Segments[2].HasIssues);
+        Assert.DoesNotContain(vm.Segments[2].Issues, i => i.Code is not null); // only "same as source"
     }
 
     [AvaloniaFact]

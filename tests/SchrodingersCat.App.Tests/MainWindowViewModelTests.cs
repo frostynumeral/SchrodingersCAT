@@ -110,8 +110,10 @@ public sealed class MainWindowViewModelTests : IDisposable
         tagged.EditModel.InsertText("Nyomd meg: ");
         tagged.EditModel.InsertNextMissingCode();
         tagged.EditModel.InsertText("OK");
+        tagged.EditModel.MoveCaret(tagged.EditModel.Length);
+        tagged.EditModel.InsertText(".");
 
-        Assert.Equal("Nyomd meg: ⟨1⟩OK⟨/1⟩", tagged.TargetText);
+        Assert.Equal("Nyomd meg: ⟨1⟩OK⟨/1⟩.", tagged.TargetText);
         Assert.Equal("Translated", tagged.State);
         Assert.True(vm.IsDirty);
         Assert.False(tagged.HasIssues);
@@ -127,7 +129,7 @@ public sealed class MainWindowViewModelTests : IDisposable
         tagged.TargetText = "Nyomja meg az OK gombot.";
 
         var issue = Assert.Single(tagged.Issues);
-        Assert.Equal(InlineCodeIssueKind.MissingCode, issue.Kind);
+        Assert.Equal(InlineCodeIssueKind.MissingCode, issue.Code!.Kind);
         Assert.True(tagged.HasWarnings);
         Assert.False(tagged.HasErrors);
         Assert.Equal("Warning: Code '1' is missing from the target.", tagged.IssueSummary);
@@ -180,7 +182,7 @@ public sealed class MainWindowViewModelTests : IDisposable
         second.EditModel.Delete(DeleteDirection.Backward);
 
         var issue = Assert.Single(first.Issues);
-        Assert.Equal(InlineCodeIssueKind.Unpaired, issue.Kind);
+        Assert.Equal(InlineCodeIssueKind.Unpaired, issue.Code!.Kind);
         Assert.True(first.HasErrors);
         Assert.Equal(["1"], first.TargetProblemCodes);
         Assert.True(Assert.IsType<ChipRun>(first.TargetRuns[0]).HasProblem);

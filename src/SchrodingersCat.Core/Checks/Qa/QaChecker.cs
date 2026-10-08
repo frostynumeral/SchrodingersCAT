@@ -22,15 +22,21 @@ public static class QaChecker
         new TerminologyCheck(),
     ];
 
+    /// <summary>
+    /// The unit's issues. A unit marked <c>translate="no"</c> has none: its content is meant to stay as it is. (One
+    /// whose file or group is marked so is the caller's to leave out; see
+    /// <see cref="TranslationDocument.UnitsToTranslate"/>.)
+    /// </summary>
     public static IReadOnlyList<QaIssue> Check(TranslationUnit unit, QaOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(unit);
         options ??= QaOptions.Default;
+        if (unit.Translate == false)
+            return [];
 
         var issues = new List<QaIssue>();
-        foreach (var segment in unit.Segments.Where(s => !s.IsIgnorable && s.Target is not null))
+        foreach (var qa in QaSegment.OfUnit(unit).Where(s => !s.Segment.IsIgnorable && s.Segment.Target is not null))
         {
-            var qa = QaSegment.Of(unit, segment);
             foreach (var check in Checks.Where(c => options.IsEnabled(c.Kind)))
                 issues.AddRange(check.Check(qa));
         }

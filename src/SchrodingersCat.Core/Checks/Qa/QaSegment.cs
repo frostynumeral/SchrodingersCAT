@@ -68,16 +68,29 @@ public sealed class QaText
 /// <summary>What a quality check sees of one segment: its source and target as text, and what mustn't be translated.</summary>
 public sealed class QaSegment
 {
-    private QaSegment(TranslationUnit unit, Segment segment, IReadOnlyList<(int Start, int Length)> doNotTranslate)
+    private readonly UnitContext _context;
+
+    private QaSegment(UnitContext context, Segment segment, IReadOnlyList<(int Start, int Length)> doNotTranslate)
     {
-        Unit = unit;
+        _context = context;
         Segment = segment;
         Source = QaText.Of(segment.Source);
         Target = QaText.Of(segment.Target ?? InlineContent.Empty);
         DoNotTranslate = doNotTranslate;
     }
 
-    public TranslationUnit Unit { get; }
+    /// <summary>What every segment of a unit shares, read once per unit: its glossary, and its source annotations.</summary>
+    internal sealed class UnitContext(TranslationUnit unit)
+    {
+        public TranslationUnit Unit { get; } = unit;
+
+        public IReadOnlyList<GlossaryEntry> Glossary => field ??= GlossaryReader.Read(Unit);
+
+        public IReadOnlySet<string> SourceMarkers => field ??=
+            Unit.Segments.SelectMany(s => s.Source).OfType<InlineMarker>().Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+    }
+
+    public TranslationUnit Unit => _context.Unit;
 
     public Segment Segment { get; }
 
@@ -88,8 +101,11 @@ public sealed class QaSegment
     /// <summary>The ranges of <see cref="Source"/>'s text inside a <c>translate="no"</c> annotation.</summary>
     public IReadOnlyList<(int Start, int Length)> DoNotTranslate { get; }
 
-    /// <summary>The unit's glossary entries (<see cref="GlossaryReader"/>), read when first asked for.</summary>
-    public IReadOnlyList<GlossaryEntry> Glossary => field ??= GlossaryReader.Read(Unit);
+    /// <summary>The unit's glossary entries (<see cref="GlossaryReader"/>), read once per unit.</summary>
+    public IReadOnlyList<GlossaryEntry> Glossary => _context.Glossary;
+
+    /// <summary>Whether an annotation with this id is in the unit's source, in any segment.</summary>
+    public bool HasSourceMarker(string markerId) => _context.SourceMarkers.Contains(markerId);
 
     /// <summary>
     /// What the annotation with this id covers in <see cref="Source"/>'s text, if it opens in this segment (to the
@@ -137,6 +153,26 @@ public sealed class QaSegment
         var open = new HashSet<string>(StringComparer.Ordinal);
         foreach (var earlier in unit.Segments.TakeWhile(s => !ReferenceEquals(s, segment)))
             Track(earlier.Source, open);
+        return Of(new UnitContext(unit), segment, open);
+    }
+
+    /// <summary>
+    /// Every segment of a unit in order, sharing one <see cref="UnitContext"/> and following the <c>translate="no"</c>
+    /// annotations along, so a unit's check reads it once rather than once per segment.
+    /// </summary>
+    internal static IEnumerable<QaSegment> OfUnit(TranslationUnit unit)
+    {
+        var context = new UnitContext(unit);
+        var open = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var segment in unit.Segments)
+        {
+            yield return Of(context, segment, [.. open]);
+            Track(segment.Source, open);
+        }
+    }
+
+    private static QaSegment Of(UnitContext context, Segment segment, HashSet<string> open)
+    {
 
         var ranges = new List<(int, int)>();
         var position = 0;
@@ -162,7 +198,7 @@ public sealed class QaSegment
 
         if (start is { } last)
             ranges.Add((last, position - last));
-        return new QaSegment(unit, segment, [.. ranges.Where(r => r.Item2 > 0)]);
+        return new QaSegment(context, segment, [.. ranges.Where(r => r.Item2 > 0)]);
     }
 
     private static void Track(IEnumerable<InlineElement> content, HashSet<string> open)

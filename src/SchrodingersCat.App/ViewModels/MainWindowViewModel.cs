@@ -3,6 +3,7 @@ using System.Data.Common;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SchrodingersCat.App.Services;
+using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Xliff;
 using SchrodingersCat.Memory;
@@ -43,6 +44,9 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         MatchLookup = LookUpMatchesAsync();
         Concordance.InsertCommand.NotifyCanExecuteChanged();
     }
+
+    /// <summary>Which quality checks run on the segments (<c>docs/design/qa-checks.md</c>); all by default.</summary>
+    public QaOptions QaOptions { get; private set; } = QaOptions.Default;
 
     /// <summary>The pane under the segments: 0 shows the matches, 1 the concordance.</summary>
     [ObservableProperty]
@@ -119,9 +123,10 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         _document = document;
         SelectedSegment = null;
         Segments.Clear();
+        var toTranslate = document.UnitsToTranslate.ToHashSet();
         foreach (var unit in document.Units)
         {
-            var check = new UnitCheck(unit);
+            var check = new UnitCheck(unit, () => QaOptions, toTranslate.Contains(unit));
             foreach (var segment in unit.TranslatableSegments)
                 Segments.Add(new SegmentViewModel(check, segment, () => IsDirty = true));
         }
@@ -219,7 +224,10 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     [RelayCommand]
     private void PreviousSegment() => Move(-1);
 
-    /// <summary>Ctrl+Shift+Down: the next segment with code errors or warnings (info is normal in translation).</summary>
+    /// <summary>
+    /// Ctrl+Shift+Down: the next segment with errors or warnings, from the code check or a quality check (info is
+    /// normal in translation).
+    /// </summary>
     [RelayCommand]
     private void NextSegmentWithIssues()
     {
@@ -228,7 +236,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         if (next is not null)
             SelectedSegment = next;
         else
-            SelectedSegment?.EditStatus = "No segments with code errors or warnings below this one.";
+            SelectedSegment?.EditStatus = "No segments with errors or warnings below this one.";
     }
 
     /// <summary>

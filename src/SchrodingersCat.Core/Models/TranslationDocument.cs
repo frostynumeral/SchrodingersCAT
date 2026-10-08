@@ -21,6 +21,29 @@ public sealed class TranslationDocument
     public IEnumerable<TranslationUnit> Units => Files.SelectMany(f => f.Units);
 
     public IEnumerable<Segment> TranslatableSegments => Units.SelectMany(u => u.TranslatableSegments);
+
+    /// <summary>
+    /// The units to translate: those not marked <c>translate="no"</c>, themselves or by their file or a group around
+    /// them (the attribute is inherited).
+    /// </summary>
+    public IEnumerable<TranslationUnit> UnitsToTranslate => Files.SelectMany(f => UnitsToTranslateIn(f.Items, f.Translate ?? true));
+
+    private static IEnumerable<TranslationUnit> UnitsToTranslateIn(IEnumerable<TranslationItem> items, bool translate)
+    {
+        foreach (var item in items)
+        {
+            var itemTranslate = item.Translate ?? translate;
+            if (item is TranslationGroup group)
+            {
+                foreach (var unit in UnitsToTranslateIn(group.Items, itemTranslate))
+                    yield return unit;
+            }
+            else if (item is TranslationUnit unit && itemTranslate)
+            {
+                yield return unit;
+            }
+        }
+    }
 }
 
 /// <summary>
