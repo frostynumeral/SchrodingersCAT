@@ -739,6 +739,22 @@ public sealed class MainWindowHeadlessTests : IDisposable
     }
 
     // The real confirmation window, through the real dialog service.
+    [AvaloniaFact]
+    public async Task OpenFolder_CreatesTheFolder_AndOneThatCantBeCreated_IsFalseNotACrash()
+    {
+        var owner = new Window();
+        owner.Show();
+        var dialogs = new AvaloniaDialogService(owner);
+        var nested = _files.PathOf(Path.Combine("logs", "deeper"));
+
+        // Whether a file manager opened is the platform's business (the headless one has none).
+        await dialogs.OpenFolderAsync(nested);
+
+        Assert.True(Directory.Exists(nested));
+        var underAFile = Path.Combine(_files.Write("a file", ""), "logs");
+        Assert.False(await dialogs.OpenFolderAsync(underAFile));
+    }
+
     [AvaloniaTheory]
     [InlineData("ConfirmButton", true)]
     [InlineData("CancelButton", false)]

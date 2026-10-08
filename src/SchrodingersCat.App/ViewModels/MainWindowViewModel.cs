@@ -221,13 +221,16 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
 
     /// <summary>
     /// Help → Open log folder: shows the log files in the system's file manager, so the user can send them in with a
-    /// crash report; if that can't be done, the notice says where they are.
+    /// crash report. The notice always says where they are: on Linux, opening counts as done once <c>xdg-open</c> has
+    /// started, even if it then fails.
     /// </summary>
     [RelayCommand]
     private async Task OpenLogFolderAsync()
     {
-        if (!await dialogs.OpenFolderAsync(LogFolder))
-            Notice = $"Couldn't open the log folder. The log files are in {LogFolder}";
+        var opened = await dialogs.OpenFolderAsync(LogFolder);
+        Notice = opened
+            ? $"The log files are in {LogFolder}"
+            : $"Couldn't open the log folder. The log files are in {LogFolder}";
     }
 
     // ---------------------------------------------------------------- keyboard workflow (design section 4)

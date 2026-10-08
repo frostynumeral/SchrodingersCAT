@@ -66,6 +66,9 @@ public interface IDialogService
     /// <summary>The local path to export TMX to (the user confirmed overwriting it), or null if they cancelled.</summary>
     Task<string?> PickTmxToExportAsync(string suggestedName);
 
-    /// <summary>Shows the folder in the system's file manager, creating it if needed; false if that couldn't be done.</summary>
+    /// <summary>
+    /// Shows the folder in the system's file manager, creating it if needed; false if that couldn't be done. True only
+    /// means it was tried: on Linux, Avalonia counts it as done once <c>xdg-open</c> has started, even if it then fails.
+    /// </summary>
     Task<bool> OpenFolderAsync(string path);
 }

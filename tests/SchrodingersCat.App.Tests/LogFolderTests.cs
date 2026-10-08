@@ -7,7 +7,7 @@ namespace SchrodingersCat.App.Tests;
 public sealed class LogFolderTests
 {
     [Fact]
-    public async Task OpenLogFolder_ShowsTheFolderOfTheLogFile()
+    public async Task OpenLogFolder_ShowsTheFolderOfTheLogFile_AndTheNoticeSaysWhereItIs()
     {
         var dialogs = new FakeDialogs(null);
         var vm = new MainWindowViewModel(new Xliff20Serializer(), dialogs);
@@ -15,7 +15,8 @@ public sealed class LogFolderTests
         await vm.OpenLogFolderCommand.ExecuteAsync(null);
 
         Assert.Equal([$"open folder: {Path.GetDirectoryName(RollingFileLoggerProvider.DefaultPath)}"], dialogs.Asked);
-        Assert.Null(vm.Notice);
+        // Opening may fail after the system said it worked (xdg-open), so the path is always there.
+        Assert.Equal($"The log files are in {MainWindowViewModel.LogFolder}", vm.Notice);
     }
 
     [Fact]
