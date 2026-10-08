@@ -1,5 +1,10 @@
 root = true
 
+[*]
+# LF everywhere, so dotnet format gives the same result on every platform (see .gitattributes).
+end_of_line = lf
+charset = utf-8
+
 [*.cs]
 indent_style = space
 indent_size = 4
