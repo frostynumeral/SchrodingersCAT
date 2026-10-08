@@ -48,9 +48,9 @@ public sealed record QaIssue(QaIssueKind Kind, IssueSeverity Severity, Segment S
 - `IssueSeverity` (Info, Warning, Error) is shared with the code check. No QA check reports an Error: an Error means
   the file breaks XLIFF's rules, which only codes can.
 - `QaIssueKind` names the check, so the report can group by it, and a dismissal or a disabled check can name it.
-- `Span` is element index plus offset into its text. It's optional, and not shown in the first version (see
-  [out of scope](#out-of-scope)), but checks that know where the problem is record it, so underlining can come
-  later without changing the checks.
+- `Span` is element index plus offset into its text, and `SpanInSource` says whether it's in the source (for
+  something missing). It's optional, and not shown in the first version (see [out of scope](#out-of-scope)), but
+  checks that know where the problem is record it, so underlining can come later without changing the checks.
 - The app wraps both kinds in one `SegmentIssue` view model (kind, severity, message, source), so badges, tooltips
   and navigation don't care which checker found an issue.
 
@@ -58,11 +58,13 @@ public sealed record QaIssue(QaIssueKind Kind, IssueSeverity Severity, Segment S
 
 `QaChecker.Check(unit, options)` in `Core/Checks`, per unit like the code check, and for the same segments: those
 translated and not ignorable. Each check compares one segment's target with its source; the text compared is the
-plain text with codes as their `equiv` or nothing, so a check never looks inside native code.
+plain text with each code as its `equiv` (standalone codes) or as U+FFFC (`QaText.CodeMark`), so a check never
+looks inside native code and words on either side of a code don't run together. (Proposed as `equiv` or nothing,
+but then `Line<br/>line` read as one word.)
 
 | Check | Severity | Notes |
 |---|---|---|
-| **Numbers** differ | Warning | Each number in the source must appear in the target, and the target has no others. Compared by value, so `1,000.5` (en) and `1 000,5` (hu) are equal (see [open question 2](#open-questions)). Numbers inside `translate="no"` spans are covered by that check instead. |
+| **Numbers** differ | Warning | Each number in the source must appear in the target, and the target has no others. Compared by value, so `1,000.5` (en) and `1 000,5` (hu) are equal (see [open question 2](#open-questions)); a space separates groups only before three digits, and a number no reading fits (`1.2.3`) is compared as written. Numbers inside `translate="no"` spans are covered by that check instead; an extra number in the target is still reported, as the check can't know it was meant for the protected text. |
 | **Target same as source** | Warning | Only when the source has letters, so `{0}`, `42` or `OK` copied over is fine if the source is that short (`OK` is skipped below 3 letters). |
 | **`translate="no"` text changed** | Warning | The text inside each `<mrk translate="no">` (or `<sm>`/`<em>`) in the source must appear unchanged in the target. Doesn't need the annotation itself in the target, only its text. |
 | **Terminology** | Warning | A source term from the file's glossary (below) is in the source, and none of its translations is in the target. |
@@ -132,8 +134,9 @@ Some problems only show across segments. `DocumentChecker.Check(document, option
 
 Each step ends with passing tests, zero warnings and green CI, and can be merged on its own.
 
-1. **Core: segment checks.** `QaIssue`, `QaIssueKind`, `QaOptions`, `IQaCheck` and the eight segment checks;
-   `Words` moved from Memory into Core.
+1. **Core: segment checks.** *(Done 2026-10-08.)* `QaIssue`, `QaIssueKind`, `QaOptions`, `IQaCheck` and the segment
+   checks but terminology (step 2); `Words` moved from Memory into Core (`Core/Text/Words`, internal; Memory sees it
+   through `InternalsVisibleTo`).
    - Examples per check, including what each must not report (a source repeating a word, `OK` copied, numbers in
      another locale's format).
    - Properties over `XliffGen` documents: the checker never throws on any target; a target equal to its source
