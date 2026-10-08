@@ -314,3 +314,56 @@ internal sealed class BracketsCheck : IQaCheck
         return null;
     }
 }
+
+/// <summary>
+/// A term from the unit's glossary is in the source and none of its translations is in the target (section 3). An
+/// entry pointing to a term annotation is checked in that annotation's segment, with its text as the term; others
+/// wherever the source has the term. Words match by their beginning, folded, so a suffixed translation counts.
+/// </summary>
+internal sealed class TerminologyCheck : IQaCheck
+{
+    public QaIssueKind Kind => QaIssueKind.Terminology;
+
+    public IEnumerable<QaIssue> Check(QaSegment segment)
+    {
+        var sourceWords = Words.Find(segment.Source.Text).ToList();
+        var targetWords = Words.Find(segment.Target.Text).ToList();
+        var reported = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in segment.Glossary.Where(e => e.Translations.Count > 0))
+        {
+            int start, length;
+            string term;
+            if (entry.MarkerId is { } id && segment.Unit.Segments.Any(s => s.Source.OfType<Models.InlineMarker>().Any(m => m.Id == id)))
+            {
+                // The term is what the annotation covers, in the segment where it is.
+                if (segment.MarkedRange(id) is not { } marked)
+                    continue;
+                (start, length) = marked;
+                term = segment.Source.Text.Substring(start, length).Replace(QaText.CodeMark.ToString(), "", StringComparison.Ordinal).Trim();
+            }
+            else
+            {
+                var termWords = Words.Find(entry.Term).Select(w => w.Folded).ToList();
+                if (Words.FindPhrase(sourceWords, termWords) is not { } first)
+                    continue;
+
+                var last = sourceWords[first + termWords.Count - 1];
+                (start, length) = (sourceWords[first].Start, last.Start + last.Length - sourceWords[first].Start);
+                term = entry.Term;
+            }
+
+            if (term.Length == 0 || !reported.Add(term)
+                || entry.Translations.Any(t => Words.FindPhrase(targetWords, [.. Words.Find(t).Select(w => w.Folded)]) is not null))
+            {
+                continue;
+            }
+
+            var translations = string.Join(" or ", entry.Translations.Select(t => $"“{t}”"));
+            yield return new QaIssue(Kind, IssueSeverity.Warning, segment.Segment, $"The glossary translates “{term}” as {translations}, which isn't in the target.")
+            {
+                Span = segment.Source.SpanOf(start, length),
+                SpanInSource = true,
+            };
+        }
+    }
+}

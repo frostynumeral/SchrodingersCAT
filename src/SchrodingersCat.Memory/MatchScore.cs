@@ -79,19 +79,7 @@ public static class MatchScore
         }
 
         /// <summary>Only the <see cref="Key"/>, without tokenizing (several times faster than <see cref="Of"/>).</summary>
-        public static string KeyOf(InlineContent content)
-        {
-            var key = new StringBuilder();
-            foreach (var element in content)
-            {
-                if (element is InlineText text)
-                    key.Append(Nfc(text.Text));
-                else if (element is InlineCode code)
-                    key.Append('\uE000').Append((int)code.Kind);
-            }
-
-            return key.ToString();
-        }
+        public static string KeyOf(InlineContent content) => Core.Text.ContentKey.Of(content);
     }
 
     internal readonly record struct Word(string Text, bool IsNumber);
@@ -142,15 +130,5 @@ public static class MatchScore
         string.Join(' ', Nfc(text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     // Content can hold code points Normalize rejects (a lone surrogate, U+FFFF, from <cp>); such text is compared as it is.
-    internal static string Nfc(string text)
-    {
-        try
-        {
-            return text.Normalize(NormalizationForm.FormC);
-        }
-        catch (ArgumentException)
-        {
-            return text;
-        }
-    }
+    internal static string Nfc(string text) => Core.Text.ContentKey.Nfc(text);
 }

@@ -25,6 +25,18 @@ public enum QaIssueKind
 
     /// <summary>A bracket or quote without its other half in the target.</summary>
     Brackets,
+
+    /// <summary>A term from the file's glossary is in the source, and none of its translations in the target.</summary>
+    Terminology,
+
+    /// <summary>A segment to translate has no target (document check; only in the report).</summary>
+    Untranslated,
+
+    /// <summary>The same source is translated differently in the document (document check).</summary>
+    InconsistentTranslation,
+
+    /// <summary>The same translation stands for different sources in the document (document check).</summary>
+    InconsistentSource,
 }
 
 /// <summary>
@@ -42,6 +54,9 @@ public sealed record QaIssue(QaIssueKind Kind, IssueSeverity Severity, Segment S
 
     /// <summary>Whether <see cref="Span"/> is in the source rather than the target.</summary>
     public bool SpanInSource { get; init; }
+
+    /// <summary>The other segments a document check found this one inconsistent with.</summary>
+    public IReadOnlyList<Segment> Related { get; init; } = [];
 }
 
 /// <summary>Which quality checks run. All do by default.</summary>

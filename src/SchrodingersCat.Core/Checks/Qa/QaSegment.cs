@@ -88,6 +88,37 @@ public sealed class QaSegment
     /// <summary>The ranges of <see cref="Source"/>'s text inside a <c>translate="no"</c> annotation.</summary>
     public IReadOnlyList<(int Start, int Length)> DoNotTranslate { get; }
 
+    /// <summary>The unit's glossary entries (<see cref="GlossaryReader"/>), read when first asked for.</summary>
+    public IReadOnlyList<GlossaryEntry> Glossary => field ??= GlossaryReader.Read(Unit);
+
+    /// <summary>
+    /// What the annotation with this id covers in <see cref="Source"/>'s text, if it opens in this segment (to the
+    /// segment's end if it closes in a later one); null if it doesn't open here.
+    /// </summary>
+    public (int Start, int Length)? MarkedRange(string markerId)
+    {
+        ArgumentNullException.ThrowIfNull(markerId);
+
+        var position = 0;
+        int? start = null;
+        foreach (var element in Segment.Source)
+        {
+            if (element is InlineMarker marker && marker.Id == markerId)
+            {
+                if (marker.Kind == InlineMarkerKind.Opening)
+                    start = position;
+                else if (start is { } from)
+                    return (from, position - from);
+            }
+            else
+            {
+                position += QaText.Of(new InlineContent([element])).Text.Length;
+            }
+        }
+
+        return start is { } open ? (open, position - open) : null;
+    }
+
     /// <summary>The texts of <see cref="DoNotTranslate"/>, trimmed, without code marks; empty ones left out.</summary>
     public IEnumerable<string> DoNotTranslateTexts => DoNotTranslate
         .Select(r => Source.Text.Substring(r.Start, r.Length).Replace(QaText.CodeMark.ToString(), "", StringComparison.Ordinal).Trim())

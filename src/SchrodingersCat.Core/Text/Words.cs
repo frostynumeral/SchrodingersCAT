@@ -35,6 +35,27 @@ internal static partial class Words
         }
     }
 
+    /// <summary>
+    /// Where a phrase (folded words) first is among words: each word starting with the phrase's word at that place,
+    /// so <c>fájl</c> finds <c>fájlt</c>. Null if it isn't there, or the phrase has no words.
+    /// </summary>
+    internal static int? FindPhrase(IReadOnlyList<WordToken> words, IReadOnlyList<string> phrase)
+    {
+        if (phrase.Count == 0)
+            return null;
+
+        for (var i = 0; i + phrase.Count <= words.Count; i++)
+        {
+            var all = true;
+            for (var j = 0; j < phrase.Count && all; j++)
+                all = words[i + j].Folded.StartsWith(phrase[j], StringComparison.Ordinal);
+            if (all)
+                return i;
+        }
+
+        return null;
+    }
+
     /// <summary>The tokenizer's third kind: one character that isn't a letter, mark, number or underscore.</summary>
     internal static bool IsPunctuation(string token) =>
         token.Length == 1 && token[0] != '_' && CharUnicodeInfo.GetUnicodeCategory(token[0]) is not (
