@@ -1,3 +1,6 @@
+using SchrodingersCat.App.ViewModels;
+using SchrodingersCat.Core.Models;
+
 namespace SchrodingersCat.App.Services;
 
 /// <summary>What the user wants to do with unsaved changes.</summary>
@@ -35,6 +38,12 @@ public interface IDialogService
 
     /// <summary>Asks for confirmation; true only if the user chose <paramref name="confirmLabel"/>.</summary>
     Task<bool> ConfirmAsync(string title, string message, string confirmLabel);
+
+    /// <summary>
+    /// Lets the user edit a TM entry's translation. The new translation (one <see cref="EntryEditorViewModel.TrySave"/>
+    /// accepted), or null if they cancelled.
+    /// </summary>
+    Task<InlineContent?> EditEntryAsync(EntryEditorViewModel editor);
 
     /// <summary>The local path of the translation memory (<c>*.sctm</c>) the user picked to open, or null if they cancelled.</summary>
     Task<string?> PickTranslationMemoryToOpenAsync();

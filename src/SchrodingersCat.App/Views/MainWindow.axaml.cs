@@ -21,7 +21,8 @@ public partial class MainWindow : Window
         ConcordanceBox.KeyDown += OnConcordanceBoxKeyDown;
     }
 
-    // The segment shortcuts (design section 4) and Ctrl+1 … Ctrl+9 (insert a match) are seen before the editor:
+    // The segment shortcuts (design section 4), Ctrl+1 … Ctrl+9 (insert a match) and Ctrl+Shift+1 … Ctrl+Shift+9
+    // (delete a match's entry) are seen before the editor:
     // AvaloniaEdit would take Ctrl+Up/Down, Ctrl+Enter and Ctrl+Insert for itself, so they can't be window key
     // bindings, which only get unhandled keys.
     private void OnShortcut(object? sender, KeyEventArgs e)
@@ -45,6 +46,7 @@ public partial class MainWindow : Window
             (Key.Insert, KeyModifiers.Control) => (viewModel.CopySourceCommand, null),
             ( >= Key.D1 and <= Key.D9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.D0),
             ( >= Key.NumPad1 and <= Key.NumPad9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.NumPad0),
+            ( >= Key.D1 and <= Key.D9, KeyModifiers.Control | KeyModifiers.Shift) => (viewModel.DeleteMatchCommand, e.Key - Key.D0),
             _ => ((ICommand?)null, (object?)null),
         };
         if (command is null)

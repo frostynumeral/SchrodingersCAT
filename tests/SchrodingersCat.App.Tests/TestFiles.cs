@@ -1,4 +1,6 @@
 using SchrodingersCat.App.Services;
+using SchrodingersCat.App.ViewModels;
+using SchrodingersCat.Core.Models;
 
 namespace SchrodingersCat.App.Tests;
 
@@ -119,5 +121,14 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
     {
         Asked.Add($"export TMX (suggested {suggestedName})");
         return Task.FromResult(TmxToExport);
+    }
+
+    /// <summary>Answers the entry editor: what the translator does in it, and the translation to store (null = cancelled).</summary>
+    public Func<EntryEditorViewModel, InlineContent?>? EditEntry { get; set; }
+
+    public Task<InlineContent?> EditEntryAsync(EntryEditorViewModel editor)
+    {
+        Asked.Add($"edit entry: {editor.Entry.Source.ToPlainText()}");
+        return Task.FromResult(EditEntry?.Invoke(editor));
     }
 }

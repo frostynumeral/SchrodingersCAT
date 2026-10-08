@@ -279,6 +279,8 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     [NotifyCanExecuteChangedFor(nameof(CloseTranslationMemoryCommand))]
     [NotifyCanExecuteChangedFor(nameof(ImportTmxCommand))]
     [NotifyCanExecuteChangedFor(nameof(ExportTmxCommand))]
+    [NotifyCanExecuteChangedFor(nameof(EditEntryCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteEntryCommand))]
     public partial OpenTranslationMemory? TranslationMemory { get; private set; }
 
     partial void OnTranslationMemoryChanged(OpenTranslationMemory? value)
@@ -471,6 +473,116 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
             ErrorMessage = $"Could not store {segment.Label} in {memory.Name}: {ex.Message}";
         }
     }
+
+    // ---------------------------------------------------------------- editing and deleting entries (TM maintenance, step 2)
+
+    /// <summary>
+    /// Ctrl+Shift+1 … Ctrl+Shift+9: deletes the entry behind the selected segment's nth match, asking first. With the
+    /// Concordance tab showing, it shows the matches instead, as Ctrl+1 … Ctrl+9 do.
+    /// </summary>
+    [RelayCommand]
+    private async Task DeleteMatchAsync(int number)
+    {
+        if (SelectedSegment is not { } segment)
+            return;
+        if (PaneTab != 0)
+        {
+            PaneTab = 0;
+            return;
+        }
+
+        if (number < 1 || number > Matches.Count)
+            segment.EditStatus = Matches.Count == 0 ? "There are no matches to delete." : $"There is no match {number}.";
+        else if (Matches[number - 1].Stored is not { } stored)
+            segment.EditStatus = $"Match {number} comes with the file, not from a translation memory, so there is no entry to delete.";
+        else
+            await DeleteEntryAsync(stored);
+    }
+
+    /// <summary>Edits the translation of a TM entry (a match's or a concordance hit's) in the entry editor.</summary>
+    [RelayCommand(CanExecute = nameof(CanChangeEntry))]
+    private async Task EditEntryAsync(StoredEntry? stored)
+    {
+        if (stored is null || TranslationMemory is not { } memory)
+            return;
+
+        var target = await dialogs.EditEntryAsync(new EntryEditorViewModel(stored.Entry, memory.Name));
+        if (target is null || target == stored.Entry.Target)
+            return;
+
+        UpdateResult result;
+        try
+        {
+            result = await memory.UpdateAsync(stored.Id, target, DateTimeOffset.UtcNow, Environment.UserName);
+        }
+        catch (Exception ex) when (IsMemoryReportable(ex))
+        {
+            ErrorMessage = $"Could not update the entry in {memory.Name}: {ex.Message}";
+            return;
+        }
+
+        Notice = result switch
+        {
+            UpdateResult.NotFound => $"The entry is no longer in {memory.Name}, so it wasn't updated.",
+            UpdateResult.Merged => $"Updated the entry in {memory.Name}. It now has the same translation as another entry of that source, which was removed.",
+            _ => $"Updated the entry in {memory.Name}.",
+        };
+        if (result != UpdateResult.NotFound)
+            FollowStoredTarget(stored.Entry, target);
+        AfterEntryChanged();
+    }
+
+    /// <summary>Deletes a TM entry (a match's or a concordance hit's), asking first: there is no undo (decision 3).</summary>
+    [RelayCommand(CanExecute = nameof(CanChangeEntry))]
+    private async Task DeleteEntryAsync(StoredEntry? stored)
+    {
+        if (stored is null || TranslationMemory is not { } memory)
+            return;
+
+        var pair = $"“{Shorten(stored.Entry.Source.ToPlainText())}” → “{Shorten(stored.Entry.Target.ToPlainText())}”";
+        if (!await dialogs.ConfirmAsync("Delete entry", $"Delete {pair} from {memory.Name}? This can't be undone.", "Delete"))
+            return;
+
+        int removed;
+        try
+        {
+            removed = await memory.DeleteAsync([stored.Id]);
+        }
+        catch (Exception ex) when (IsMemoryReportable(ex))
+        {
+            ErrorMessage = $"Could not delete the entry from {memory.Name}: {ex.Message}";
+            return;
+        }
+
+        Notice = removed == 0 ? $"The entry is no longer in {memory.Name}." : $"Deleted the entry from {memory.Name}.";
+        FollowStoredTarget(stored.Entry, null);
+        AfterEntryChanged();
+    }
+
+    private bool CanChangeEntry(StoredEntry? stored) => stored is not null && TranslationMemory is not null;
+
+    // A segment of the open document whose stored translation is this entry follows the edit (or forgets a deleted
+    // entry), so confirming the segment again replaces the corrected entry instead of adding another beside it.
+    private void FollowStoredTarget(TmEntry stored, InlineContent? target)
+    {
+        if (FilePath is null || stored.Document != Path.GetFileName(FilePath))
+            return;
+
+        foreach (var segment in Segments)
+        {
+            if (segment.StoredTarget is { } storedTarget && Ranking.IsSamePair(new TmEntry(segment.Source, storedTarget), stored))
+                segment.StoredTarget = target;
+        }
+    }
+
+    // The pane and the concordance show what the TM holds now.
+    private void AfterEntryChanged()
+    {
+        MatchLookup = LookUpMatchesAsync();
+        Concordance.Refresh();
+    }
+
+    private static string Shorten(string text) => text.Length <= 60 ? text : string.Concat(text.AsSpan(0, 59), "…");
 
     // ---------------------------------------------------------------- the Translation memory menu (TM design, step 5)
 
@@ -687,7 +799,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
                 .Take(9)
                 .ToList();
             for (var i = 0; i < all.Count; i++)
-                Matches.Add(new MatchViewModel(i + 1, all[i].Match, all[i].FromFile, segment));
+                Matches.Add(new MatchViewModel(i + 1, all[i].Match, all[i].FromFile, segment, EditEntryCommand, DeleteEntryCommand));
         }
 
         OnPropertyChanged(nameof(MatchesStatus));

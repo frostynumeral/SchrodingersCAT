@@ -8,67 +8,6 @@
         Width="1100" Height="700">
 
     <Window.Styles>
-        <!-- Code chips (design section 1). The shape shows pairing: an opening half points right, a closing half left. -->
-        <Style Selector="Border.chip">
-            <Setter Property="Padding" Value="5,0" />
-            <Setter Property="Margin" Value="3,0" />
-            <Setter Property="Background" Value="#335B7FC7" />
-            <Setter Property="BorderBrush" Value="#5B7FC7" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
-        </Style>
-        <Style Selector="Border.chip.opening">
-            <Setter Property="CornerRadius" Value="2,8,8,2" />
-        </Style>
-        <Style Selector="Border.chip.closing">
-            <Setter Property="CornerRadius" Value="8,2,2,8" />
-        </Style>
-        <Style Selector="Border.chip.protected">
-            <Setter Property="BorderBrush" Value="DarkOrange" />
-        </Style>
-        <!-- A code the code check reports a problem with (design section 3). -->
-        <Style Selector="Border.chip.problem">
-            <Setter Property="BorderBrush" Value="#E53935" />
-            <Setter Property="BorderThickness" Value="2" />
-        </Style>
-        <Style Selector="Border.chip TextBlock">
-            <Setter Property="FontSize" Value="11" />
-        </Style>
-
-        <!-- In a match's source: codes the current source lacks, or has in addition (design section 6 of
-             docs/design/translation-memory.md). Text is styled in InlineContentBlock. -->
-        <Style Selector="Border.chip.removed">
-            <Setter Property="Opacity" Value="0.5" />
-            <Setter Property="BorderBrush" Value="#E53935" />
-        </Style>
-        <Style Selector="Border.chip.added">
-            <Setter Property="Background" Value="#5543A047" />
-            <Setter Property="BorderBrush" Value="#43A047" />
-        </Style>
-
-        <!-- Annotation halves in the editor: very small brackets (design section 1). -->
-        <Style Selector="Border.marker">
-            <Setter Property="Margin" Value="1,0" />
-        </Style>
-        <Style Selector="Border.marker TextBlock">
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="Opacity" Value="0.6" />
-        </Style>
-
-        <!-- Targets: the active segment's in the editor, the others as read-only chips in the same frame. -->
-        <Style Selector="Border.targetFrame">
-            <Setter Property="Padding" Value="10,6" />
-            <Setter Property="CornerRadius" Value="4" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="BorderBrush" Value="#40808080" />
-            <Setter Property="MinHeight" Value="32" />
-        </Style>
-        <Style Selector="Border.targetFrame.editing">
-            <Setter Property="BorderBrush" Value="{DynamicResource SystemAccentColor}" />
-            <Setter Property="BorderThickness" Value="2" />
-            <Setter Property="Padding" Value="9,5" />
-        </Style>
-
         <!-- Code check badge: the number of issues in the segment, coloured by the worst one. -->
         <Style Selector="Border.issueBadge">
             <Setter Property="Padding" Value="6,0" />
@@ -177,6 +116,12 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:MatchViewModel">
                                             <Border Classes="match">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu IsVisible="{Binding Stored, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                                        <MenuItem Header="_Edit entry…" Command="{Binding EditCommand}" CommandParameter="{Binding Stored}" />
+                                                        <MenuItem Header="_Delete entry…" Command="{Binding DeleteCommand}" CommandParameter="{Binding Stored}" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
                                                 <Grid ColumnDefinitions="64,48,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8">
                                                     <!-- Not focusable: clicking it leaves the keyboard in the editor. -->
                                                     <Button Grid.RowSpan="2" Classes="insertMatch" Content="{Binding Shortcut}" Command="{Binding InsertCommand}"
@@ -186,8 +131,19 @@
                                                     </Border>
                                                     <controls:InlineContentBlock Grid.Column="2" Classes="matchSource" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
                                                     <controls:InlineContentBlock Grid.Column="3" Classes="matchTarget" Runs="{Binding TargetRuns}" TextWrapping="Wrap" />
-                                                    <TextBlock Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" Classes="matchDetails" Text="{Binding Details}"
-                                                               FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+                                                    <!-- Editing and deleting the TM entry (not focusable, like the insert button); none for a file's match. -->
+                                                    <DockPanel Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2">
+                                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" Margin="8,2,0,0"
+                                                                    IsVisible="{Binding Stored, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                                            <Button Classes="editEntry" Content="Edit" Focusable="False" FontSize="11" Padding="6,1"
+                                                                    Command="{Binding EditCommand}" CommandParameter="{Binding Stored}"
+                                                                    ToolTip.Tip="Edit this entry's translation in the translation memory" />
+                                                            <Button Classes="deleteEntry" Content="Delete" Focusable="False" FontSize="11" Padding="6,1"
+                                                                    Command="{Binding DeleteCommand}" CommandParameter="{Binding Stored}"
+                                                                    ToolTip.Tip="{Binding DeleteShortcut, StringFormat='Delete this entry from the translation memory ({0})'}" />
+                                                        </StackPanel>
+                                                        <TextBlock Classes="matchDetails" Text="{Binding Details}" FontSize="11" Opacity="0.6" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                                    </DockPanel>
                                                 </Grid>
                                             </Border>
                                         </DataTemplate>
@@ -216,6 +172,12 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:ConcordanceResultViewModel">
                                             <Border Classes="match">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu IsVisible="{Binding Stored, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                                        <MenuItem Header="_Edit entry…" Command="{Binding EditCommand}" CommandParameter="{Binding Stored}" />
+                                                        <MenuItem Header="_Delete entry…" Command="{Binding DeleteCommand}" CommandParameter="{Binding Stored}" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
                                                 <Grid ColumnDefinitions="64,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8">
                                                     <!-- Not focusable: clicking it leaves the keyboard in the editor. -->
                                                     <Button Grid.RowSpan="2" Classes="insertResult" Content="Insert" Focusable="False" VerticalAlignment="Top" FontSize="11"
@@ -223,8 +185,19 @@
                                                             CommandParameter="{Binding}" ToolTip.Tip="Insert this translation at the caret, as text" />
                                                     <controls:InlineContentBlock Grid.Column="1" Classes="resultSource" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
                                                     <controls:InlineContentBlock Grid.Column="2" Classes="resultTarget" Runs="{Binding TargetRuns}" TextWrapping="Wrap" />
-                                                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding Details}"
-                                                               FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+                                                    <!-- Editing and deleting the TM entry (not focusable, like the insert button); none for a file's match. -->
+                                                    <DockPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2">
+                                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" Margin="8,2,0,0"
+                                                                    IsVisible="{Binding Stored, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                                            <Button Classes="editEntry" Content="Edit" Focusable="False" FontSize="11" Padding="6,1"
+                                                                    Command="{Binding EditCommand}" CommandParameter="{Binding Stored}"
+                                                                    ToolTip.Tip="Edit this entry's translation in the translation memory" />
+                                                            <Button Classes="deleteEntry" Content="Delete" Focusable="False" FontSize="11" Padding="6,1"
+                                                                    Command="{Binding DeleteCommand}" CommandParameter="{Binding Stored}"
+                                                                    ToolTip.Tip="Delete this entry from the translation memory" />
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding Details}" FontSize="11" Opacity="0.6" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                                    </DockPanel>
                                                 </Grid>
                                             </Border>
                                         </DataTemplate>

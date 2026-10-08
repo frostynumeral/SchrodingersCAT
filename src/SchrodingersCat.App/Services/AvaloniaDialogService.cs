@@ -1,6 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.App.Views;
+using SchrodingersCat.Core.Models;
 
 namespace SchrodingersCat.App.Services;
 
@@ -55,6 +57,9 @@ public sealed class AvaloniaDialogService(Window owner) : IDialogService
 
     public Task<bool> ConfirmAsync(string title, string message, string confirmLabel) =>
         new ConfirmDialog(title, message, confirmLabel).ShowDialog<bool>(owner);
+
+    public Task<InlineContent?> EditEntryAsync(EntryEditorViewModel editor) =>
+        new EntryEditorDialog(editor).ShowDialog<InlineContent?>(owner);
 
     private async Task<string?> PickToOpenAsync(string title, FilePickerFileType type)
     {

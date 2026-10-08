@@ -524,7 +524,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.False(status.IsVisible);
         Assert.Equal("Project TM (en → hu)", window.FindControl<TextBlock>("MemoryName")!.Text);
         Assert.Equal(["Ctrl+1 96%", "Ctrl+2 90%"], MatchRows(window).Select(r =>
-            $"{r.GetVisualDescendants().OfType<Button>().Single().Content} {r.GetVisualDescendants().OfType<Border>().Single(b => b.Classes.Contains("matchScore")).GetLogicalDescendants().OfType<TextBlock>().Single().Text}"));
+            $"{r.GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("insertMatch")).Content} {r.GetVisualDescendants().OfType<Border>().Single(b => b.Classes.Contains("matchScore")).GetLogicalDescendants().OfType<TextBlock>().Single().Text}"));
 
         // The file's match has a word the current source doesn't: struck through.
         var fileMatchSource = MatchRows(window)[1].GetVisualDescendants().OfType<InlineContentBlock>().Single(b => b.Classes.Contains("matchSource"));
@@ -540,7 +540,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
 
         // The button does the same, without taking the keyboard from the editor.
-        Click(window, MatchRows(window)[0].GetVisualDescendants().OfType<Button>().Single());
+        Click(window, MatchRows(window)[0].GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("insertMatch")));
         Assert.Equal("Nyomd meg: OK.", vm.Segments[2].TargetText);
         Assert.StartsWith("Inserted the 96% match.", window.FindControl<TextBlock>("StatusText")!.Text, StringComparison.Ordinal);
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
@@ -668,7 +668,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal(("világ", true), (vm.Concordance.Query, vm.Concordance.SearchTargets));
 
         // Insert goes in at the caret, the selected term stays, and the editor keeps the keyboard.
-        Click(window, Assert.Single(ConcordanceRows(window)).GetVisualDescendants().OfType<Button>().Single());
+        Click(window, Assert.Single(ConcordanceRows(window)).GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("insertResult")));
         Assert.Equal("Szia világViszlát, világ.", vm.Segments[0].TargetText);
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
 
