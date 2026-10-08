@@ -37,6 +37,7 @@ public sealed class InlineContentBlock : SelectableTextBlock
 
     private static readonly IBrush RemovedForeground = new ImmutableSolidColorBrush(Color.FromRgb(0xE5, 0x39, 0x35));
     private static readonly IBrush AddedBackground = new ImmutableSolidColorBrush(Color.FromArgb(0x55, 0x43, 0xA0, 0x47));
+    private static readonly IBrush HitBackground = new ImmutableSolidColorBrush(Color.FromArgb(0x66, 0xFF, 0xC1, 0x07));
     private static readonly IBrush CommentBackground = new ImmutableSolidColorBrush(Color.FromArgb(0x55, 0xFF, 0xD5, 0x4F));
     private static readonly IBrush NoTranslateBackground = new ImmutableSolidColorBrush(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
 
@@ -136,6 +137,13 @@ public sealed class InlineContentBlock : SelectableTextBlock
     private static Run TextInline(TextRun text)
     {
         var run = new Run(text.Text);
+        if (text.IsHit)
+        {
+            run.FontWeight = FontWeight.Bold;
+            run.Background = HitBackground;
+            return run;
+        }
+
         if (text.Difference == DiffKind.Removed)
         {
             run.TextDecorations = RemovedStrikethrough;

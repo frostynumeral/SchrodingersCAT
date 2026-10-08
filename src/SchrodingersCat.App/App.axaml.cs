@@ -18,8 +18,11 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var window = new MainWindow();
-            window.DataContext = new MainWindowViewModel(new Xliff20Serializer(), new AvaloniaDialogService(window));
+            var viewModel = new MainWindowViewModel(
+                new Xliff20Serializer(), new AvaloniaDialogService(window), new JsonSettingsStore(JsonSettingsStore.DefaultPath));
+            window.DataContext = viewModel;
             desktop.MainWindow = window;
+            viewModel.RestoreTranslationMemory(); // the TM that was open last time (decision 1)
         }
 
         base.OnFrameworkInitializationCompleted();

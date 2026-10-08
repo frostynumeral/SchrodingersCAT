@@ -35,4 +35,19 @@ public interface IDialogService
 
     /// <summary>Asks for confirmation; true only if the user chose <paramref name="confirmLabel"/>.</summary>
     Task<bool> ConfirmAsync(string title, string message, string confirmLabel);
+
+    /// <summary>The local path of the translation memory (<c>*.sctm</c>) the user picked to open, or null if they cancelled.</summary>
+    Task<string?> PickTranslationMemoryToOpenAsync();
+
+    /// <summary>
+    /// The local path for a new translation memory, or null if they cancelled. It doesn't ask about replacing an
+    /// existing file: the caller refuses existing files rather than lose a TM.
+    /// </summary>
+    Task<string?> PickTranslationMemoryToCreateAsync(string suggestedName);
+
+    /// <summary>The local path of the TMX file the user picked to import, or null if they cancelled.</summary>
+    Task<string?> PickTmxToImportAsync();
+
+    /// <summary>The local path to export TMX to (the user confirmed overwriting it), or null if they cancelled.</summary>
+    Task<string?> PickTmxToExportAsync(string suggestedName);
 }

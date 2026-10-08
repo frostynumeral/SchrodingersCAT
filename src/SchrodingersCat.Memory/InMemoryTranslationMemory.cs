@@ -19,7 +19,7 @@ public sealed class InMemoryTranslationMemory : ITranslationMemory
     // Where each pair is in _entries, so storing it again replaces it in place without a scan.
     private readonly Dictionary<(string SourceKey, string TargetKey), int> _positions = [];
 
-    public IReadOnlyList<TmEntry> Entries => [.. _entries.Select(e => e.Entry)];
+    public IEnumerable<TmEntry> Entries() => [.. _entries.Select(e => e.Entry)];
 
     public int Count => _entries.Count;
 
@@ -38,6 +38,39 @@ public sealed class InMemoryTranslationMemory : ITranslationMemory
             _positions[pair] = _entries.Count;
             _entries.Add((entry, source));
         }
+    }
+
+    public void AddRange(IEnumerable<TmEntry> entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        foreach (var entry in entries)
+            Add(entry);
+    }
+
+    public bool Remove(TmEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        if (!_positions.TryGetValue((MatchScore.Normalized.Of(entry.Source).Key, Ranking.TargetKey(entry)), out var position))
+            return false;
+
+        // Rebuilt rather than patched, so the entries keep the order they were stored in (it breaks ties in Ranking).
+        _entries.RemoveAt(position);
+        _positions.Clear();
+        for (var i = 0; i < _entries.Count; i++)
+            _positions[(_entries[i].Source.Key, Ranking.TargetKey(_entries[i].Entry))] = i;
+        return true;
+    }
+
+    public void Replace(TmEntry previous, TmEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(previous);
+        ArgumentNullException.ThrowIfNull(entry);
+
+        if (_positions.TryGetValue((MatchScore.Normalized.Of(previous.Source).Key, Ranking.TargetKey(previous)), out var position)
+            && _entries[position].Entry.Document == previous.Document)
+            Remove(previous);
+        Add(entry);
     }
 
     public IReadOnlyList<TmMatch> Lookup(

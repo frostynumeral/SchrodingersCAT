@@ -144,41 +144,137 @@ public class Xliff20InlineReadingTests : Xliff20SerializerTestBase
         Assert.Equal([new ExtensionAttr(FsNamespace, "fs", "b")], codes[1].ExtensionAttributes);
     }
 
-    [Theory]
-    [InlineData("""<segment><source><ph id="1"/><ph id="1"/></source></segment>""")]
-    [InlineData("""<segment id="1"><source><ph id="1"/></source></segment>""")]
-    [InlineData("""<segment><source><ph id="1"/></source></segment><ignorable><source><ph id="1"/></source></ignorable>""")]
-    [InlineData("""<segment id="s"><source>a</source></segment><segment id="s"><source>b</source></segment>""")]
-    [InlineData("""<originalData><data id="d1">a</data><data id="d1">b</data></originalData><segment><source>x</source></segment>""")]
-    [InlineData("""<segment><source><ph id="1" dataRef="d1"/></source></segment>""")]
-    public async Task Read_RejectsDuplicateOrDanglingIds(string unitContent)
+    [Fact]
+    public async Task Read_PcSplitsStartAndEndAttributesBetweenItsHalves()
     {
-        await Assert.ThrowsAsync<XliffFormatException>(() => ReadUnitAsync(unitContent));
+        var codes = await ReadCodesAsync("""
+            <pc id="1" dir="rtl" fs:fs="b" dispStart="[b]" dispEnd="[/b]" equivStart="(" equivEnd=")" subFlowsStart="u2" subFlowsEnd="u3">x</pc>
+            """);
+
+        Assert.Equal(
+            new InlineCode("1", InlineCodeKind.Opening)
+            {
+                CanOverlap = false,
+                Dir = "rtl",
+                Disp = "[b]",
+                Equiv = "(",
+                SubFlows = "u2",
+                ExtensionAttributes = [new ExtensionAttr(FsNamespace, "fs", "b")],
+            },
+            codes[0]);
+        Assert.Equal(
+            new InlineCode("1", InlineCodeKind.Closing) { CanOverlap = false, Disp = "[/b]", Equiv = ")", SubFlows = "u3" },
+            codes[1]);
+    }
+
+    [Fact]
+    public async Task Read_PcRepeatsPairLevelAttributesOnItsClosingHalf()
+    {
+        var codes = await ReadCodesAsync("""
+            <ph id="0"/><pc id="1" type="fmt" subType="xlf:i" copyOf="0" canCopy="no" canDelete="no" canReorder="no" canOverlap="yes">x</pc>
+            """);
+
+        Assert.All(codes.Skip(1), c =>
+        {
+            Assert.Equal("fmt", c.Type);
+            Assert.Equal("xlf:i", c.SubType);
+            Assert.Equal("0", c.CopyOf);
+            Assert.False(c.CanCopy);
+            Assert.False(c.CanDelete);
+            Assert.Equal(CanReorder.No, c.CanReorder);
+            Assert.True(c.CanOverlap);
+        });
+    }
+
+    [Fact]
+    public async Task Read_MapsMarkerAttributes()
+    {
+        var markers = await ReadMarkersAsync("""
+            <mrk id="m1" type="comment" value="Check this" fs:fs="i">a</mrk> <sm id="m2" type="term" ref="#t1" translate="yes"/>b<em startRef="m2"/>
+            """);
+
+        Assert.Equal(
+            [
+                new InlineMarker("m1", InlineMarkerKind.Opening)
+                {
+                    Type = "comment",
+                    Value = "Check this",
+                    ExtensionAttributes = [new ExtensionAttr(FsNamespace, "fs", "i")],
+                },
+                new InlineMarker("m1", InlineMarkerKind.Closing),
+                new InlineMarker("m2", InlineMarkerKind.Opening) { Type = "term", Ref = "#t1", Translate = true },
+                new InlineMarker("m2", InlineMarkerKind.Closing),
+            ],
+            markers);
+    }
+
+    [Fact]
+    public async Task Read_NestedPcAndMrkFlattenInDocumentOrder()
+    {
+        var source = await ReadSourceAsync("""<pc id="1">a<mrk id="m1" translate="no">b<ph id="2"/></mrk></pc>""");
+
+        Assert.Equal(new InlineContent(
+        [
+            new InlineCode("1", InlineCodeKind.Opening) { CanOverlap = false },
+            new InlineText("a"),
+            new InlineMarker("m1", InlineMarkerKind.Opening) { Translate = false },
+            new InlineText("b"),
+            new InlineCode("2", InlineCodeKind.Standalone),
+            new InlineMarker("m1", InlineMarkerKind.Closing),
+            new InlineCode("1", InlineCodeKind.Closing) { CanOverlap = false },
+        ]), source);
     }
 
     [Theory]
-    [InlineData("""<sc id="1"/>""")]
-    [InlineData("""<ec startRef="1"/>""")]
-    [InlineData("""<sc id="1" isolated="yes"/><ec startRef="1"/>""")]
-    [InlineData("""<sm id="1"/>""")]
-    [InlineData("""<em startRef="1"/>""")]
-    public async Task Read_RejectsUnmatchedPairs(string sourceContent)
+    [InlineData("""<segment><source><ph id="1"/><ph id="1"/></source></segment>""", "Duplicate id '1' in the source")]
+    [InlineData("""<segment id="1"><source><ph id="1"/></source></segment>""", "Duplicate id '1' in the source")]
+    [InlineData("""<segment><source><ph id="1"/></source></segment><ignorable><source><ph id="1"/></source></ignorable>""", "Duplicate id '1' in the source")]
+    [InlineData("""<segment id="s"><source>a</source></segment><segment id="s"><source>b</source></segment>""", "Duplicate segment id 's'")]
+    [InlineData("""<originalData><data id="d1">a</data><data id="d1">b</data></originalData><segment><source>x</source></segment>""", "Duplicate <data> id 'd1'")]
+    [InlineData("""<segment><source><ph id="1" dataRef="d1"/></source></segment>""", "dataRef 'd1' in unit 'u1' does not match any <data>")]
+    [InlineData("""<segment><source><pc id="1" dataRefEnd="d1">x</pc></source></segment>""", "dataRef 'd1' in unit 'u1' does not match any <data>")]
+    [InlineData("""<segment><source><mrk id="1">a</mrk><ph id="1"/></source></segment>""", "Duplicate id '1' in the source")]
+    public async Task Read_RejectsDuplicateOrDanglingIds(string unitContent, string expectedMessage)
     {
-        await Assert.ThrowsAsync<XliffFormatException>(() => ReadSourceAsync(sourceContent));
+        var exception = await Assert.ThrowsAsync<XliffFormatException>(() => ReadUnitAsync(unitContent));
+        Assert.Contains(expectedMessage, exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
-    [InlineData("""<b>x</b>""")]
-    [InlineData("""<ph/>""")]
-    [InlineData("""<ph id="1">x</ph>""")]
-    [InlineData("""<ph id="1" foo="x"/>""")]
-    [InlineData("""<ph id="1" canCopy="maybe"/>""")]
-    [InlineData("""<sc id="1"/><ec startRef="1" dir="rtl"/>""")]
-    [InlineData("""<cp hex="zz"/>""")]
-    [InlineData("""<cp hex="110000"/>""")]
-    public async Task Read_RejectsInvalidInlineMarkup(string sourceContent)
+    [InlineData("""<sc id="1"/>""", """<sc id="1"> in the source of unit 'u1' has no matching <ec>""")]
+    [InlineData("""<ec startRef="1"/>""", """<ec startRef="1"> in the source of unit 'u1' has no matching <sc>""")]
+    [InlineData("""<sc id="1" isolated="yes"/><ec startRef="1"/>""", """<ec startRef="1"> in the source of unit 'u1' has no matching <sc>""")]
+    [InlineData("""<sm id="1"/>""", """<sm id="1"> in the source of unit 'u1' has no matching <em>""")]
+    [InlineData("""<em startRef="1"/>""", """<em startRef="1"> in the source of unit 'u1' has no matching <sm>""")]
+    [InlineData("""<em startRef="1"/><sm id="1"/>""", """<em startRef="1"> in the source of unit 'u1' has no matching <sm>""")]
+    [InlineData("""<sc id="1"/><ec startRef="2"/>""", """<ec startRef="2"> in the source of unit 'u1' has no matching <sc>""")]
+    public async Task Read_RejectsUnmatchedPairs(string sourceContent, string expectedMessage)
     {
-        await Assert.ThrowsAsync<XliffFormatException>(() => ReadSourceAsync(sourceContent));
+        var exception = await Assert.ThrowsAsync<XliffFormatException>(() => ReadSourceAsync(sourceContent));
+        Assert.Contains(expectedMessage, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("""<b>x</b>""", "contains <b> in its source")]
+    [InlineData("""<ph/>""", "missing the required 'id' attribute")]
+    [InlineData("""<ph id="1">x</ph>""", "<ph> in unit 'u1' must be empty")]
+    [InlineData("""<ph id="1" foo="x"/>""", "Unsupported attribute 'foo' on <ph>")]
+    [InlineData("""<ph id="1" canCopy="maybe"/>""", "Invalid canCopy value 'maybe'")]
+    [InlineData("""<sc id="1"/><ec startRef="1" dir="rtl"/>""", "Unsupported attribute 'dir' on <ec>")]
+    [InlineData("""<pc>x</pc>""", "missing the required 'id' attribute")]
+    [InlineData("""<pc id="1" disp="x">x</pc>""", "Unsupported attribute 'disp' on <pc>")]
+    [InlineData("""<sc id="1" dispStart="x"/><ec startRef="1"/>""", "Unsupported attribute 'dispStart' on <sc>")]
+    [InlineData("""<ec isolated="yes"/>""", "missing the required 'id' attribute")]
+    [InlineData("""<ph id="1" canReorder="sometimes"/>""", "Invalid canReorder value 'sometimes'")]
+    [InlineData("""<mrk id="1" translate="maybe">x</mrk>""", "Invalid translate value 'maybe'")]
+    [InlineData("""<sm id="1"/><em startRef="1" type="term"/>""", "Unsupported attribute 'type' on <em>")]
+    [InlineData("""<cp hex="41">x</cp>""", "<cp> in unit 'u1' must be empty")]
+    [InlineData("""<cp hex="zz"/>""", """Invalid <cp hex="zz">""")]
+    [InlineData("""<cp hex="110000"/>""", """Invalid <cp hex="110000">""")]
+    public async Task Read_RejectsInvalidInlineMarkup(string sourceContent, string expectedMessage)
+    {
+        var exception = await Assert.ThrowsAsync<XliffFormatException>(() => ReadSourceAsync(sourceContent));
+        Assert.Contains(expectedMessage, exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>Reads a unit with a single segment and returns that segment's source.</summary>
@@ -187,4 +283,7 @@ public class Xliff20InlineReadingTests : Xliff20SerializerTestBase
 
     private async Task<List<InlineCode>> ReadCodesAsync(string sourceContent) =>
         (await ReadSourceAsync(sourceContent)).OfType<InlineCode>().ToList();
+
+    private async Task<List<InlineMarker>> ReadMarkersAsync(string sourceContent) =>
+        (await ReadSourceAsync(sourceContent)).OfType<InlineMarker>().ToList();
 }

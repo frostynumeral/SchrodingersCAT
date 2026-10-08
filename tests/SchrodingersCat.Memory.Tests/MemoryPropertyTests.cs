@@ -87,6 +87,63 @@ public class MemoryPropertyTests
             }
         });
 
+    // A query made of the beginnings of an entry's own consecutive words finds that entry; every hit's parts rebuild
+    // its content exactly; and the SQLite TM finds what the in-memory TM finds.
+    [Fact]
+    public void Concordance_FindsTheEntryAQueryCameFrom_AndItsPartsRebuildIt() =>
+        Gen.Select(XliffGen.Document, Gen.Int[0, 1_000_000]).Sample((document, choice) =>
+        {
+            var entries = document.Units.SelectMany(u => u.Segments).Where(s => s.Target is not null)
+                .Select((s, i) => new TmEntry(s.Source, s.Target!) { Changed = DateTimeOffset.UnixEpoch.AddMinutes(i) }).ToList();
+            var memory = new InMemoryTranslationMemory();
+            memory.AddRange(entries);
+            var stored = memory.Entries().ToList();
+            if (stored.Count == 0)
+                return;
+
+            var side = choice % 2 == 0 ? ConcordanceSide.Source : ConcordanceSide.Target;
+            var from = stored[choice % stored.Count];
+            var content = side == ConcordanceSide.Source ? from.Source : from.Target;
+            var words = content.OfType<InlineText>().SelectMany(t => Concordance.Words(t.Text).Select(w => t.Text.Substring(w.Start, w.Length))).ToList();
+            if (words.Count == 0)
+                return;
+            var first = choice / 2 % words.Count;
+            var query = ConcordanceQuery.Parse(string.Join(" ", words.Skip(first).Take(2).Select(w => w[..(1 + (choice % w.Length))])));
+            if (query.IsEmpty)
+                return;
+
+            var result = Concordance.Search(memory, query, side, maxHits: stored.Count);
+            Assert.Contains(result.Hits, h => h.Entry == from);
+            Assert.Equal(result.Total, result.Hits.Count);
+            foreach (var hit in result.Hits)
+            {
+                Assert.Equal(hit.Entry.Source, new InlineContent(hit.Source.Select(p => p.Element)));
+                Assert.Equal(hit.Entry.Target, new InlineContent(hit.Target.Select(p => p.Element)));
+                Assert.Contains(side == ConcordanceSide.Source ? hit.Source : hit.Target, p => p.IsHit);
+            }
+
+            var path = Path.Combine(Path.GetTempPath(), $"schrodingerscat-{Guid.NewGuid():N}.sctm");
+            try
+            {
+                using var sqlite = SqliteTranslationMemory.Create(path, "en", "hu");
+                sqlite.AddRange(stored);
+                var fromSqlite = Concordance.Search(sqlite, query, side, maxHits: stored.Count);
+                Assert.Equal(result.Hits.Select(h => (h.Entry, h.Source, h.Target)), fromSqlite.Hits.Select(h => (h.Entry, h.Source, h.Target)), new HitComparer());
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        });
+
+    private sealed class HitComparer : IEqualityComparer<(TmEntry, IReadOnlyList<HighlightPart>, IReadOnlyList<HighlightPart>)>
+    {
+        public bool Equals((TmEntry, IReadOnlyList<HighlightPart>, IReadOnlyList<HighlightPart>) x, (TmEntry, IReadOnlyList<HighlightPart>, IReadOnlyList<HighlightPart>) y) =>
+            x.Item1 == y.Item1 && x.Item2.SequenceEqual(y.Item2) && x.Item3.SequenceEqual(y.Item3);
+
+        public int GetHashCode((TmEntry, IReadOnlyList<HighlightPart>, IReadOnlyList<HighlightPart>) obj) => obj.Item1.GetHashCode();
+    }
+
     private static string NoSpace(string text) => string.Concat(text.Where(c => !char.IsWhiteSpace(c)));
 
     // What the score can't see: annotations, and code ids and attributes.

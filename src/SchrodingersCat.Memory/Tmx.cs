@@ -132,7 +132,7 @@ public static class Tmx
         static string? Lang(XElement tuv) => (string?)tuv.Attribute(XmlNs + "lang") ?? (string?)tuv.Attribute("lang");
 
         return tuvs.FirstOrDefault(t => string.Equals(Lang(t), language, StringComparison.OrdinalIgnoreCase))
-            ?? tuvs.FirstOrDefault(t => Lang(t) is { } lang && lang.StartsWith(language + "-", StringComparison.OrdinalIgnoreCase));
+            ?? tuvs.FirstOrDefault(t => Lang(t) is { } lang && TmLanguages.Serves(lang, language));
     }
 
     private static string? Prop(List<XElement> props, string type) =>

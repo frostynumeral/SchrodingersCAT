@@ -19,6 +19,8 @@ public sealed partial class SegmentViewModel : ObservableObject
     private readonly Action _changed;
     private TargetEditModel? _editModel;
     private IReadOnlyList<TmMatch>? _fileMatches;
+    private bool _keepState;
+    private bool _autoFilled;
     private IReadOnlyList<InlineCodeIssue> _issues = [];
 
     /// <param name="check">The unit's code check, shared with the unit's other segments.</param>
@@ -30,6 +32,7 @@ public sealed partial class SegmentViewModel : ObservableObject
         _unit = check.Unit;
 
         Label = segment.Id is null ? _unit.Id : $"{_unit.Id} / {segment.Id}";
+        StoredTarget = segment.State >= SegmentState.Translated ? segment.Target : null;
         SourceText = InlineFormatter.Format(segment.Source);
         UpdateIssues();
         _check.Checked += OnUnitChecked;
@@ -44,6 +47,21 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     /// <summary>The segment's source, for looking up matches.</summary>
     public InlineContent Source => _segment.Source;
+
+    /// <summary>The segment's target; null while it isn't translated.</summary>
+    public InlineContent? Target => _segment.Target;
+
+    /// <summary>
+    /// The translation of this segment the TM is assumed to hold: what Ctrl+Enter stored last, or, for a segment that
+    /// was already confirmed when the file was opened, its target then. Storing a corrected translation replaces it.
+    /// </summary>
+    public InlineContent? StoredTarget { get; set; }
+
+    /// <summary>
+    /// The segment can take an exact match automatically (decision 2): it has no target, and hasn't had one inserted
+    /// automatically yet, so undoing an automatic insertion sticks.
+    /// </summary>
+    public bool CanAutoInsert => _segment.Target is null && !_autoFilled;
 
     /// <summary>What the unit's source says about its codes.</summary>
     public InlineCodeHints Hints => _check.Hints;
@@ -150,12 +168,27 @@ public sealed partial class SegmentViewModel : ObservableObject
     /// Replaces the target with a match's translation (Ctrl+1 … Ctrl+9, design section 6), with the codes transferred
     /// onto this segment's, as one undoable edit. The status says which match went in, and whether codes are missing.
     /// </summary>
-    public void InsertMatch(MatchViewModel match)
+    /// <param name="automatic">
+    /// Inserted on entering the segment (decision 2): the segment stays Initial until the translator confirms it.
+    /// </param>
+    public void InsertMatch(MatchViewModel match, bool automatic = false)
     {
         ArgumentNullException.ThrowIfNull(match);
 
-        var notes = new List<string> { $"Inserted the {match.Score} match." };
-        if (EditModel.ReplaceTarget(match.Target.Target).Message is { } message)
+        var notes = new List<string> { automatic ? $"Inserted the {match.Score} match automatically. Confirm it with Ctrl+Enter." : $"Inserted the {match.Score} match." };
+        _autoFilled |= automatic;
+        _keepState = automatic;
+        EditResult result;
+        try
+        {
+            result = EditModel.ReplaceTarget(match.Target.Target);
+        }
+        finally
+        {
+            _keepState = false;
+        }
+
+        if (result.Message is { } message)
             notes.Add(message);
         if (!match.Target.AllCodesPlaced)
             notes.Add("Not every code found its place: check the codes (F9 inserts the next missing one).");
@@ -192,10 +225,11 @@ public sealed partial class SegmentViewModel : ObservableObject
         EditStatus = EditModel.InsertCode(chip.CodeId).Message;
     }
 
-    // The first translation moves the segment from Initial to Translated; nothing moves it back (decision 8).
+    // The first translation moves the segment from Initial to Translated; nothing moves it back (decision 8). An exact
+    // match inserted automatically doesn't count: the translator hasn't looked at it yet.
     private void OnTargetEdited(object? sender, EventArgs e)
     {
-        if (_segment.Target is not null && _segment.State == SegmentState.Initial)
+        if (!_keepState && _segment.Target is not null && _segment.State == SegmentState.Initial)
         {
             _segment.State = SegmentState.Translated;
             OnPropertyChanged(nameof(State));

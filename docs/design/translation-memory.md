@@ -124,8 +124,8 @@ any other edit.
 
 - Server or shared TMs, and several translators writing one TM at once.
 - Machine translation (the matches pane could show it later; it's a separate source).
-- Concordance search (searching the TM for a phrase) and TM maintenance (editing or deleting entries); both are
-  natural follow-ups once the storage exists.
+- TM maintenance (editing or deleting entries), a natural follow-up now that the storage exists. (Concordance
+  search, the other one, is done: see [Concordance](#concordance-follow-up).)
 - Subsegment matching (finding fragments of sentences).
 
 ## Implementation steps
@@ -170,8 +170,57 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      (codes already in another segment's target stay out, protected codes stay in), as one undoable edit.
    - Not in this step: opening a TM (step 5, so the app shows only the file's matches until then), and inserting
      exact matches automatically on entering a segment, which moves to step 5 together with storing.
-5. **Learning and TM selection:** Ctrl+Enter stores, the Translation memory menu, auto-inserting exact matches, and
-   the decisions below.
+5. **Learning and TM selection** *(Done 2026-10-07.)*: Ctrl+Enter stores, the Translation memory menu, auto-inserting
+   exact matches, and the decisions below.
+   - **Menu:** New…, Open…, Close, Import TMX…, Export TMX…. A new TM takes the open document's languages (asking for
+     the target language if the file has none) and never replaces an existing file. The open TM is remembered in
+     the user's settings (`settings.json`); at startup a damaged one is forgotten, a missing one only reported (it may
+     be on a drive that isn't plugged in). Closing the window keeps it remembered; the menu's Close forgets it.
+   - **Storing:** Ctrl+Enter stores the confirmed segment with its neighbours' plain text, the file name, the time and
+     the user. A target with code errors is confirmed but not stored, and a notice says so. Re-confirming a corrected
+     segment replaces the pair it stored before, or, for a segment already confirmed when the file was opened, its
+     target then; only if that pair was stored from the same document, so the same translation from another file or
+     an import stays (`ITranslationMemory.Replace`, one transaction). A file without `trgLang` takes the TM's target
+     language when it first stores.
+   - **One queue:** every TM operation runs in order on a background thread, so the store Ctrl+Enter queues is done
+     before the next segment's lookup, and a repetition right below gets the translation.
+   - **Auto-insert:** the best match, if it's a TM's 100% or 101%, goes into an empty target once per segment, and the
+     segment stays Initial until confirmed. A file's 100% matches aren't inserted, as they may be machine translation.
+     Redoing an undone automatic insertion counts as an edit (the segment becomes Translated).
+   - **Languages:** a TM that doesn't serve the document (decision 3, `TmLanguages`) is neither looked up nor stored
+     in, and the pane's header says why; a TM for the base language serves a regional variant with every score one
+     point lower, so a 100% isn't inserted automatically.
+
+## Concordance (follow-up)
+
+*(Done 2026-10-07.)* Searching the TM for a word or phrase: how was it translated before?
+
+- **Matching** (`Concordance`): the words `MatchScore` counts, without punctuation, folded (lower case, accents
+  removed, and ł ø đ æ œ ß spelled out). A hit is a run of words, with only codes, annotations, punctuation and
+  whitespace between them, each starting with the query's word at that place: `fájl` finds `fájlt`, `press ok` finds
+  `Press <b>OK</b>.`. Whole original words are highlighted.
+- **Order:** entries with a hit of whole words first, then the shorter text, then the newest, then the order stored;
+  the best 100, and how many entries had a hit.
+- **No index:** the word-bigram index of step 2 can't find single words, nor search translations, so the search
+  scans every entry. The SQLite TM reads only the searched column, prefilters with the folded text, and loads only the
+  kept hits; folding is per character, from a table, instead of normalizing every text. Measured on a 199,035-entry
+  TM (186 MB, Release, 15 queries each):
+
+  | Query | Sources, median / p95 | Translations, median / p95 |
+  |---|---|---|
+  | 1 common word (~24,000 hits) | 411 / 702 ms | 432 / 581 ms |
+  | 1 rare word | 313 / 343 ms | 313 / 339 ms |
+  | 1 word beginning | 303 / 331 ms | 321 / 410 ms |
+  | 2 words | 315 / 501 ms | 323 / 888 ms |
+  | 3 words | 320 / 342 ms | 313 / 451 ms |
+
+  Under the 1 s set for p95, so no word index (which would need format version 2 and a migration). Normalizing every
+  text instead of the per-character table cost about 200 ms more per search.
+- **In the editor:** a Concordance tab beside Matches. Ctrl+K searches the selected text (the editor's: translations;
+  a source's: sources), or opens the search box; Enter searches (never as you type), Escape returns to the editor.
+  A search runs in the TM's queue, and a new search or another TM cancels it. Insert puts a result's translation at
+  the caret as text (the selection stays; codes, which belong to another sentence, become their text or a space).
+  Ctrl+1 … Ctrl+9 with the Concordance tab showing switch to the matches first.
 
 ## Open questions
 

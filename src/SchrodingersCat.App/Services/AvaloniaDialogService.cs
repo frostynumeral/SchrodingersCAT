@@ -8,6 +8,8 @@ namespace SchrodingersCat.App.Services;
 public sealed class AvaloniaDialogService(Window owner) : IDialogService
 {
     private static readonly FilePickerFileType Xliff = new("XLIFF files") { Patterns = ["*.xlf", "*.xliff"] };
+    private static readonly FilePickerFileType TranslationMemory = new("Translation memories") { Patterns = ["*.sctm"] };
+    private static readonly FilePickerFileType Tmx = new("TMX files") { Patterns = ["*.tmx"] };
 
     public async Task<string?> PickFileToOpenAsync()
     {
@@ -35,6 +37,16 @@ public sealed class AvaloniaDialogService(Window owner) : IDialogService
         return file?.TryGetLocalPath();
     }
 
+    public Task<string?> PickTranslationMemoryToOpenAsync() => PickToOpenAsync("Open translation memory", TranslationMemory);
+
+    public Task<string?> PickTranslationMemoryToCreateAsync(string suggestedName) =>
+        PickToSaveAsync("New translation memory", suggestedName, "sctm", TranslationMemory, overwritePrompt: false);
+
+    public Task<string?> PickTmxToImportAsync() => PickToOpenAsync("Import TMX", Tmx);
+
+    public Task<string?> PickTmxToExportAsync(string suggestedName) =>
+        PickToSaveAsync("Export TMX", suggestedName, "tmx", Tmx, overwritePrompt: true);
+
     public Task<UnsavedChangesChoice> AskToSaveChangesAsync(string fileName) =>
         new UnsavedChangesDialog(fileName).ShowDialog<UnsavedChangesChoice>(owner);
 
@@ -43,4 +55,30 @@ public sealed class AvaloniaDialogService(Window owner) : IDialogService
 
     public Task<bool> ConfirmAsync(string title, string message, string confirmLabel) =>
         new ConfirmDialog(title, message, confirmLabel).ShowDialog<bool>(owner);
+
+    private async Task<string?> PickToOpenAsync(string title, FilePickerFileType type)
+    {
+        var files = await owner.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = title,
+            AllowMultiple = false,
+            FileTypeFilter = [type, FilePickerFileTypes.All],
+        });
+
+        return files.Count == 0 ? null : files[0].TryGetLocalPath();
+    }
+
+    private async Task<string?> PickToSaveAsync(string title, string suggestedName, string extension, FilePickerFileType type, bool overwritePrompt)
+    {
+        var file = await owner.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = title,
+            SuggestedFileName = suggestedName,
+            DefaultExtension = extension,
+            FileTypeChoices = [type],
+            ShowOverwritePrompt = overwritePrompt,
+        });
+
+        return file?.TryGetLocalPath();
+    }
 }
