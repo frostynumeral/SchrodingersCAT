@@ -65,4 +65,7 @@ public interface IDialogService
 
     /// <summary>The local path to export TMX to (the user confirmed overwriting it), or null if they cancelled.</summary>
     Task<string?> PickTmxToExportAsync(string suggestedName);
+
+    /// <summary>Shows the folder in the system's file manager, creating it if needed; false if that couldn't be done.</summary>
+    Task<bool> OpenFolderAsync(string path);
 }

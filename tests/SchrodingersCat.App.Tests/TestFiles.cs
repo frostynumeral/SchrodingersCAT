@@ -140,4 +140,13 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
         Asked.Add($"edit entry: {editor.Entry.Source.ToPlainText()}");
         return Task.FromResult(EditEntry?.Invoke(editor));
     }
+
+    /// <summary>Whether the system's file manager manages to show a folder.</summary>
+    public bool FolderOpens { get; set; } = true;
+
+    public Task<bool> OpenFolderAsync(string path)
+    {
+        Asked.Add($"open folder: {path}");
+        return Task.FromResult(FolderOpens);
+    }
 }

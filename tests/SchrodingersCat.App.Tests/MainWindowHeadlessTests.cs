@@ -555,6 +555,18 @@ public sealed class MainWindowHeadlessTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task HelpOpenLogFolder_SaysWhereTheLogsAre_WhenTheFolderCantBeShown()
+    {
+        var (window, vm) = Show(new FakeDialogs(null) { FolderOpens = false });
+
+        window.FindControl<MenuItem>("OpenLogFolderItem")!.Command!.Execute(null);
+        await WaitFor(() => vm.Notice is not null);
+
+        Assert.Equal("_Help", window.FindControl<MenuItem>("HelpMenu")!.Header);
+        Assert.EndsWith(MainWindowViewModel.LogFolder, window.FindControl<SelectableTextBlock>("NoticeText")!.Text, StringComparison.Ordinal);
+    }
+
+    [AvaloniaFact]
     public async Task TheMenu_OpensATm_AndCtrlEnterFeedsTheRepetitionBelow()
     {
         var path = _files.Write("repetitions.xlf", """

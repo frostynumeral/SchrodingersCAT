@@ -214,6 +214,22 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     [RelayCommand]
     private void DismissError() => ErrorMessage = null;
 
+    // ---------------------------------------------------------------- the Help menu
+
+    /// <summary>Where the app's log files are (<see cref="RollingFileLoggerProvider.DefaultPath"/>).</summary>
+    public static string LogFolder => Path.GetDirectoryName(RollingFileLoggerProvider.DefaultPath)!;
+
+    /// <summary>
+    /// Help → Open log folder: shows the log files in the system's file manager, so the user can send them in with a
+    /// crash report; if that can't be done, the notice says where they are.
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenLogFolderAsync()
+    {
+        if (!await dialogs.OpenFolderAsync(LogFolder))
+            Notice = $"Couldn't open the log folder. The log files are in {LogFolder}";
+    }
+
     // ---------------------------------------------------------------- keyboard workflow (design section 4)
 
     /// <summary>Ctrl+Down: the next segment (the first if none is selected).</summary>
