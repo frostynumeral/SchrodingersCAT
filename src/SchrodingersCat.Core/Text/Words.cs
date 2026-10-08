@@ -56,6 +56,89 @@ internal static partial class Words
         return null;
     }
 
+    /// <summary>
+    /// Where a term (or a translation) is in a text, as a range of the text; null if it isn't there. Words match by
+    /// their beginning, folded (<see cref="FindPhrase"/>), so <c>fájl</c> finds <c>fájlt</c>. In scripts written
+    /// without spaces (Chinese, Japanese, Thai, …) a "word" is a whole clause, so a term in such a script, and a term
+    /// with no words (only symbols), is found as a folded substring instead; and in the text, runs of such a script
+    /// are kept apart from the words around them, so <c>このprofileを開く</c> has the word <c>profile</c>, not <c>file</c>.
+    /// </summary>
+    internal static (int Start, int Length)? FindTerm(string text, string term)
+    {
+        var termWords = Find(term).Select(w => w.Folded).ToList();
+        if (termWords.Count == 0 || NoSpaces().IsMatch(term))
+            return FindFolded(text, term);
+
+        var words = WordsAndRuns(text);
+        if (FindPhrase(words, termWords) is not { } first)
+            return null;
+
+        var last = words[first + termWords.Count - 1];
+        return (words[first].Start, last.Start + last.Length - words[first].Start);
+    }
+
+    // The text's words, each split where it changes between a script without spaces and any other.
+    private static List<WordToken> WordsAndRuns(string text)
+    {
+        var words = new List<WordToken>();
+        foreach (var word in Find(text))
+        {
+            var start = word.Start;
+            var end = word.Start + word.Length;
+            var runStart = start;
+            for (var i = start + 1; i < end; i++)
+            {
+                // The second half of a surrogate pair belongs with the first.
+                if (char.IsLowSurrogate(text[i]) || IsNoSpaces(text, i) == IsNoSpaces(text, i - 1))
+                    continue;
+
+                words.Add(new WordToken(runStart, i - runStart, Fold(text[runStart..i])));
+                runStart = i;
+            }
+
+            words.Add(new WordToken(runStart, end - runStart, Fold(text[runStart..end])));
+        }
+
+        return words;
+    }
+
+    private static bool IsNoSpaces(string text, int index) =>
+        !char.IsSurrogate(text[index]) ? NoSpaces().IsMatch(text.AsSpan(index, 1))
+            : index + 1 < text.Length && char.IsHighSurrogate(text[index]) && char.IsLowSurrogate(text[index + 1])
+                && char.ConvertToUtf32(text[index], text[index + 1]) is >= 0x20000 and <= 0x3FFFF; // CJK extensions B–H
+
+    // The term as a folded substring of the text. Folding is per character, so each folded character knows the
+    // character it came from; the range takes in combining marks that fold to nothing after its end.
+    private static (int Start, int Length)? FindFolded(string text, string term)
+    {
+        var needle = Fold(term.Trim());
+        if (needle.Length == 0)
+            return null;
+
+        var folded = new StringBuilder(text.Length);
+        var origin = new List<int>(text.Length);
+        for (var i = 0; i < text.Length; i++)
+        {
+            var piece = Fold(text[i].ToString());
+            folded.Append(piece);
+            origin.AddRange(Enumerable.Repeat(i, piece.Length));
+        }
+
+        var at = folded.ToString().IndexOf(needle, StringComparison.Ordinal);
+        if (at < 0)
+            return null;
+
+        var start = origin[at];
+        var end = origin[at + needle.Length - 1] + 1;
+        while (end < text.Length && Fold(text[end].ToString()).Length == 0)
+            end++;
+        return (start, end - start);
+    }
+
+    // Scripts written without spaces between words.
+    [GeneratedRegex(@"[\p{IsHiragana}\p{IsKatakana}\p{IsKatakanaPhoneticExtensions}\p{IsCJKUnifiedIdeographs}\p{IsCJKUnifiedIdeographsExtensionA}\p{IsCJKCompatibilityIdeographs}\uFF66-\uFF9F\p{IsThai}\p{IsLao}\p{IsKhmer}\p{IsMyanmar}\p{IsTibetan}]")]
+    private static partial Regex NoSpaces();
+
     /// <summary>The tokenizer's third kind: one character that isn't a letter, mark, number or underscore.</summary>
     internal static bool IsPunctuation(string token) =>
         token.Length == 1 && token[0] != '_' && CharUnicodeInfo.GetUnicodeCategory(token[0]) is not (
@@ -65,7 +148,8 @@ internal static partial class Words
             or UnicodeCategory.LetterNumber or UnicodeCategory.OtherNumber);
 
     /// <summary>
-    /// Lower case, accents removed, and letters that don't decompose spelled out (ł, ø, đ, æ, œ, ß). Never fails: a
+    /// Lower case, accents removed (but not the kana voicing marks), and letters that don't decompose spelled out (ł, ø,
+    /// đ, æ, œ, ß). Never fails: a
     /// lone surrogate or U+FFFF (from <c>&lt;cp&gt;</c>), which Normalize rejects, stays as it is.
     /// </summary>
     internal static string Fold(string text)
@@ -100,7 +184,8 @@ internal static partial class Words
         var folded = new StringBuilder();
         foreach (var d in decomposed)
         {
-            if (CharUnicodeInfo.GetUnicodeCategory(d) == UnicodeCategory.NonSpacingMark)
+            // Accents go; the kana voicing marks stay, as カ (ka) and ガ (ga) are different letters.
+            if (CharUnicodeInfo.GetUnicodeCategory(d) == UnicodeCategory.NonSpacingMark && d is not ('\u3099' or '\u309A'))
                 continue;
 
             var lower = char.ToLowerInvariant(d);

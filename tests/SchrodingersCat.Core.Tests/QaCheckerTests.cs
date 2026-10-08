@@ -93,6 +93,11 @@ public class QaCheckerTests
         Assert.Equal("“.exe” is marked not to be translated, but the target doesn't have it unchanged.", issue.Message);
     }
 
+    // A source that is all protected text is meant to be copied: no "same as source" for it.
+    [Fact]
+    public void ASourceAllMarkedNotToTranslate_MayBeCopied() =>
+        Assert.Empty(Check(new InlineContent([Marker("m1", translate: false), new InlineText("Acme Widget Pro"), Close("m1")]), Text("Acme Widget Pro")));
+
     [Fact]
     public void TranslatableAnnotations_AreNotProtected() =>
         Assert.Empty(Check(new InlineContent([Marker("m1", translate: null), new InlineText("Save"), Close("m1")]), Text("Mentés")));

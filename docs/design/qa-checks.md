@@ -57,7 +57,9 @@ public sealed record QaIssue(QaIssueKind Kind, IssueSeverity Severity, Segment S
 ### 2. Segment checks
 
 `QaChecker.Check(unit, options)` in `Core/Checks`, per unit like the code check, and for the same segments: those
-translated and not ignorable. Each check compares one segment's target with its source; the text compared is the
+translated and not ignorable. Content marked `translate="no"` (the unit, or its group or file, inherited) is meant
+to stay as it is, so it isn't checked: the checker skips a unit marked so, and `TranslationDocument.UnitsToTranslate`
+tells callers which units their file or groups leave out. Each check compares one segment's target with its source; the text compared is the
 plain text with each code as its `equiv` (standalone codes) or as U+FFFC (`QaText.CodeMark`), so a check never
 looks inside native code and words on either side of a code don't run together. (Proposed as `equiv` or nothing,
 but then `Line<br/>line` read as one word.)
@@ -65,7 +67,7 @@ but then `Line<br/>line` read as one word.)
 | Check | Severity | Notes |
 |---|---|---|
 | **Numbers** differ | Warning | Each number in the source must appear in the target, and the target has no others. Compared by value, so `1,000.5` (en) and `1 000,5` (hu) are equal (see [open question 2](#open-questions)); a space separates groups only before three digits, and a number no reading fits (`1.2.3`) is compared as written. Numbers inside `translate="no"` spans are covered by that check instead; an extra number in the target is still reported, as the check can't know it was meant for the protected text. |
-| **Target same as source** | Warning | Only when the source has letters, so `{0}`, `42` or `OK` copied over is fine if the source is that short (`OK` is skipped below 3 letters). |
+| **Target same as source** | Warning | Only when the source has letters, so `{0}`, `42` or `OK` copied over is fine if the source is that short (`OK` is skipped below 3 letters). Letters inside `translate="no"` text don't count, so a source that is all protected text may be copied. |
 | **`translate="no"` text changed** | Warning | The text inside each `<mrk translate="no">` (or `<sm>`/`<em>`) in the source must appear unchanged in the target. Doesn't need the annotation itself in the target, only its text. |
 | **Terminology** | Warning | A source term from the file's glossary (below) is in the source, and none of its translations is in the target. |
 | **Repeated word** | Warning | `the the`, case-insensitively, unless the source repeats it too. |
@@ -88,11 +90,18 @@ There's no termbase in the app, and building one is its own project. But files o
   zero or more `<gls:translation>`s, and a `ref` that may point to an annotation in the unit;
 - **term annotations** (`<mrk type="term">`), which say a span is a term but carry no translation.
 
-The check uses glossary entries that have a translation. If the entry points to an annotation (`ref="#m1"`; a
+The check uses glossary entries that have a translation; entries for the same term count as one, with all their
+translations. If the entry points to an annotation (`ref="#m1"`; a
 target annotation, `#t=m1`, doesn't count), the term is that annotation's text, and only the segment with it is
 checked; otherwise every segment whose source contains the term
 (by the folded word rule) is. The target passes if it contains any of the translations, by the same rule, so a
-Hungarian suffix (`Tabulátort`) still counts. `GlossaryReader` (Core, like `XliffMatches` in Memory) reads the
+Hungarian suffix (`Tabulátort`) still counts. In scripts written without spaces between words (Chinese, Japanese,
+Thai, …) a "word" is a whole clause, so a term in such a script, and a term or translation with no words at all
+(`%`), is found as a folded substring instead; in mixed text, runs of such a script are kept apart from the words
+around them, so `このprofileを開く` has the word `profile` and not `file`. Folding keeps the kana voicing marks
+(`カード`, card, isn't `ガード`, guard). Two limitations: a symbol translation is ambiguous (`-` is found in a
+hyphenated word, `.` in a full stop), and full-width or half-width forms (`ｆｉｌｅ`, `ｶﾞｽ`) don't match their usual
+forms. `GlossaryReader` (Core, like `XliffMatches` in Memory) reads the
 entries from `ExtensionElements` and skips anything malformed, writing nothing back.
 
 ### 4. Document checks
@@ -151,8 +160,22 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    `DocumentChecker`; the exact-match key (`ContentKey`) moved from Memory into Core with `Words`.
    - Examples with glossary entries with and without `ref`, several translations, a suffixed match; malformed
      glossaries skipped. Consistency with repetitions and near-repetitions.
-3. **App: issues on badges.** `SegmentIssue`, `UnitCheck` running both checkers, badges, tooltips and
-   Ctrl+Shift+Down covering both. View-model and headless tests.
+3. **App: issues on badges.** *(Done 2026-10-08.)* `SegmentIssue`, `UnitCheck` running both checkers, badges,
+   tooltips and Ctrl+Shift+Down covering both. View-model and headless tests.
+   - A review of steps 2 and 3 (four reviewers, each finding checked by a skeptic) found, and this step fixes: terms
+     missed or wrongly reported in Japanese and Chinese (a "word" there is a whole clause); two glossary entries
+     for one term where only the first counted; translations made only of symbols that could never be found;
+     quality warnings on content marked `translate="no"` (a unit, or its group or file); and a source that is all
+     `translate="no"` text, which got a warning whatever the target. Each has a regression test, as do two claimed
+     but untested document behaviours (NFC, near-repetitions). The glossary and annotations are now read once per
+     unit rather than once per segment.
+   - A second round (one skeptic per fix, re-running the original input and nearby ones) confirmed the fixes and
+     found three things the first fixes broke or missed, also fixed with tests: one Japanese character made every
+     term in the text match as a substring (`file` inside `このprofileを開く`); folding treated voiced and unvoiced
+     kana as one letter; a found term's range left out a final combining mark. And entries for a term annotation and
+     for the same plain words, or for one term spaced differently, now merge too.
+   - Left as designed: a term matches by the beginning of a word, so `Datei` isn't found in `Textdatei`, and `tab`
+     is found in `table`. Changing that is a design decision (compounds, a minimum term length), not a fix.
 4. **App: the QA tab.** F8, the grouped report, jumping to a segment, dismissing, the settings dialog. View-model and
    headless tests.
 5. **Documentation:** CLAUDE.md, and mark this proposal implemented.

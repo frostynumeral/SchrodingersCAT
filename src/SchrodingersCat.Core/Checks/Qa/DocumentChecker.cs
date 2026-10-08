@@ -19,7 +19,7 @@ public static class DocumentChecker
         ArgumentNullException.ThrowIfNull(document);
         options ??= QaOptions.Default;
 
-        var segments = TranslatableSegments(document).ToList();
+        var segments = document.UnitsToTranslate.SelectMany(u => u.TranslatableSegments).ToList();
         var translated = segments.Where(s => s.Target is not null).ToList();
         var issues = new List<QaIssue>();
 
@@ -68,32 +68,6 @@ public static class DocumentChecker
                     Related = [.. group.Where(s => ContentKey.Of(other(s)) != key)],
                 };
             }
-        }
-    }
-
-    // The segments a translator works on, in units that are to be translated (translate="no" inherits downwards).
-    private static IEnumerable<Segment> TranslatableSegments(TranslationDocument document)
-    {
-        foreach (var file in document.Files)
-        {
-            foreach (var segment in Segments(file.Items, file.Translate ?? true))
-                yield return segment;
-        }
-    }
-
-    private static IEnumerable<Segment> Segments(IEnumerable<TranslationItem> items, bool translate)
-    {
-        foreach (var item in items)
-        {
-            var itemTranslate = item.Translate ?? translate;
-            var segments = item switch
-            {
-                TranslationGroup group => Segments(group.Items, itemTranslate),
-                TranslationUnit unit when itemTranslate => unit.TranslatableSegments,
-                _ => [],
-            };
-            foreach (var segment in segments)
-                yield return segment;
         }
     }
 

@@ -21,7 +21,8 @@ public sealed partial class SegmentViewModel : ObservableObject
     private IReadOnlyList<TmMatch>? _fileMatches;
     private bool _keepState;
     private bool _autoFilled;
-    private IReadOnlyList<InlineCodeIssue> _issues = [];
+    private IReadOnlyList<InlineCodeIssue> _codeIssues = [];
+    private IReadOnlyList<SegmentIssue> _issues = [];
 
     /// <param name="check">The unit's code check, shared with the unit's other segments.</param>
     public SegmentViewModel(UnitCheck check, Segment segment, Action changed)
@@ -91,8 +92,11 @@ public sealed partial class SegmentViewModel : ObservableObject
     /// <summary>The ids of the target's codes that the code check reports a problem with, for the chips' outline.</summary>
     public IReadOnlySet<string> TargetProblemCodes => ProblemCodes(i => !IsMissing(i));
 
-    /// <summary>The code check's issues that show up in this segment.</summary>
-    public IReadOnlyList<InlineCodeIssue> Issues => _issues;
+    /// <summary>
+    /// The issues that show up in this segment: the code check's, then the quality checks' (step 3 of
+    /// <c>docs/design/qa-checks.md</c>).
+    /// </summary>
+    public IReadOnlyList<SegmentIssue> Issues => _issues;
 
     public bool HasIssues => _issues.Count > 0;
 
@@ -100,7 +104,7 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     public bool HasWarnings => _issues.Any(i => i.Severity == IssueSeverity.Warning);
 
-    /// <summary>The issues in words, one per line, for the badge's tooltip.</summary>
+    /// <summary>The issues in words, one per line, for the badge's tooltip. Quality checks never report errors.</summary>
     public string? IssueSummary => HasIssues ? string.Join("\n", _issues.Select(i => $"{i.Severity}: {i.Message}")) : null;
 
     /// <summary>The selected segment; its target is edited in the editor control.</summary>
@@ -253,15 +257,20 @@ public sealed partial class SegmentViewModel : ObservableObject
         OnPropertyChanged(nameof(TargetProblemCodes));
     }
 
-    private void UpdateIssues() => _issues = [.. _check.Issues.Where(i => ReferenceEquals(i.Segment, _segment))];
+    private void UpdateIssues()
+    {
+        _codeIssues = [.. _check.CodeIssues.Where(i => ReferenceEquals(i.Segment, _segment))];
+        _issues = [.. _codeIssues.Select(SegmentIssue.From), .. _check.QaIssues.Where(i => ReferenceEquals(i.Segment, _segment)).Select(SegmentIssue.From)];
+    }
 
     // Missing codes are outlined in the source, where they are; the other problems in the target.
     private static bool IsMissing(InlineCodeIssue issue) =>
         issue.Kind is InlineCodeIssueKind.MissingCode or InlineCodeIssueKind.MissingProtectedCode;
 
-    // Info (reordering, a missing annotation) is normal in translation and doesn't outline anything.
+    // Info (reordering, a missing annotation) is normal in translation and doesn't outline anything; quality issues
+    // aren't about codes.
     private HashSet<string> ProblemCodes(Func<InlineCodeIssue, bool> where) =>
-        _issues.Where(i => i.Severity >= IssueSeverity.Warning && where(i)).Select(i => i.CodeId).ToHashSet(StringComparer.Ordinal);
+        _codeIssues.Where(i => i.Severity >= IssueSeverity.Warning && where(i)).Select(i => i.CodeId).ToHashSet(StringComparer.Ordinal);
 
     // An annotation can span segments, so text at the start of this one may still be inside one.
     private IReadOnlyList<InlineMarker> OpenMarkersBefore(Func<Segment, InlineContent> side) =>
