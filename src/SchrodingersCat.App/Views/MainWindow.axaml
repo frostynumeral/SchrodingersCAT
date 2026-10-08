@@ -64,6 +64,8 @@
                 <MenuItem x:Name="OpenMemoryItem" Header="_Open…" Command="{Binding OpenTranslationMemoryCommand}" />
                 <MenuItem x:Name="CloseMemoryItem" Header="_Close" Command="{Binding CloseTranslationMemoryCommand}" />
                 <Separator />
+                <MenuItem x:Name="ManageEntriesItem" Header="_Manage entries…" Command="{Binding ManageEntriesCommand}" />
+                <Separator />
                 <MenuItem x:Name="ImportTmxItem" Header="_Import TMX…" Command="{Binding ImportTmxCommand}" />
                 <MenuItem x:Name="ExportTmxItem" Header="_Export TMX…" Command="{Binding ExportTmxCommand}" />
             </MenuItem>

@@ -149,6 +149,20 @@ public static class Concordance
             [.. best.Select(c => Highlight(load(c.Key), query, side) with { EntryId = keysAreIds ? new TmEntryId(c.Key) : null })], total);
     }
 
+    /// <summary>
+    /// A stored entry split at its hits for the query, as a search would return it: for browsing the TM with a text
+    /// filter (<see cref="EntryFilter.Text"/>). Without a query, or one without words, nothing is a hit.
+    /// </summary>
+    public static ConcordanceHit Highlight(StoredEntry stored, ConcordanceQuery? query, ConcordanceSide side)
+    {
+        ArgumentNullException.ThrowIfNull(stored);
+
+        var hit = query is { IsEmpty: false }
+            ? Highlight(stored.Entry, query, side)
+            : new ConcordanceHit(stored.Entry, Plain(stored.Entry.Source), Plain(stored.Entry.Target));
+        return hit with { EntryId = stored.Id };
+    }
+
     private static ConcordanceHit Highlight(TmEntry entry, ConcordanceQuery query, ConcordanceSide side) =>
         side == ConcordanceSide.Source
             ? new ConcordanceHit(entry, Parts(entry.Source, Find(entry.Source, query)), Plain(entry.Target))

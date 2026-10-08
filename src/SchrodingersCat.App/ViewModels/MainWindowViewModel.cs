@@ -281,10 +281,14 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
     [NotifyCanExecuteChangedFor(nameof(ExportTmxCommand))]
     [NotifyCanExecuteChangedFor(nameof(EditEntryCommand))]
     [NotifyCanExecuteChangedFor(nameof(DeleteEntryCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ManageEntriesCommand))]
     public partial OpenTranslationMemory? TranslationMemory { get; private set; }
 
     partial void OnTranslationMemoryChanged(OpenTranslationMemory? value)
     {
+        // The entries window belongs to the TM it shows.
+        _entries?.Close();
+        _entries = null;
         Concordance.Reset(); // before the old TM is closed, so closing doesn't wait for a search
         MatchLookup = LookUpMatchesAsync();
     }
@@ -529,7 +533,12 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         };
         if (result != UpdateResult.NotFound)
             FollowStoredTarget(stored.Entry, target);
-        AfterEntryChanged();
+        OnEntriesChanged(result switch
+        {
+            UpdateResult.Updated => new EntriesChange { Updated = stored.Id },
+            UpdateResult.Merged => EntriesChange.Everything, // and the other entry went
+            _ => new EntriesChange { Deleted = [stored.Id] },
+        });
     }
 
     /// <summary>Deletes a TM entry (a match's or a concordance hit's), asking first: there is no undo (decision 3).</summary>
@@ -556,14 +565,17 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
 
         Notice = removed == 0 ? $"The entry is no longer in {memory.Name}." : $"Deleted the entry from {memory.Name}.";
         FollowStoredTarget(stored.Entry, null);
-        AfterEntryChanged();
+        OnEntriesChanged(new EntriesChange { Deleted = [stored.Id] });
     }
 
     private bool CanChangeEntry(StoredEntry? stored) => stored is not null && TranslationMemory is not null;
 
-    // A segment of the open document whose stored translation is this entry follows the edit (or forgets a deleted
-    // entry), so confirming the segment again replaces the corrected entry instead of adding another beside it.
-    private void FollowStoredTarget(TmEntry stored, InlineContent? target)
+    /// <summary>
+    /// A segment of the open document whose stored translation is this entry follows the edit (or forgets a deleted
+    /// entry, with a null <paramref name="target"/>), so confirming the segment again replaces the corrected entry
+    /// instead of adding another beside it.
+    /// </summary>
+    internal void FollowStoredTarget(TmEntry stored, InlineContent? target)
     {
         if (FilePath is null || stored.Document != Path.GetFileName(FilePath))
             return;
@@ -575,12 +587,37 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         }
     }
 
-    // The pane and the concordance show what the TM holds now.
-    private void AfterEntryChanged()
+    /// <summary>Raised after TM entries were edited or deleted, from the pane, the concordance or the entries window.</summary>
+    public event EventHandler<EntriesChange>? EntriesChanged;
+
+    /// <summary>After entries changed: the pane, the concordance and the entries window show what the TM holds now.</summary>
+    internal void OnEntriesChanged(EntriesChange change)
     {
         MatchLookup = LookUpMatchesAsync();
         Concordance.Refresh();
+        EntriesChanged?.Invoke(this, change);
     }
+
+    // The entries window's view model, while its TM is open.
+    private TmEntriesViewModel? _entries;
+
+    /// <summary>
+    /// Translation memory → Manage entries…: the window for browsing the TM and deleting in bulk (step 3 of the
+    /// maintenance design). Shows the same one again while the TM stays open.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasTranslationMemory))]
+    private async Task ManageEntriesAsync()
+    {
+        var memory = TranslationMemory!;
+        var fresh = _entries is null;
+        _entries ??= new TmEntriesViewModel(this, memory, dialogs);
+        dialogs.ShowTmEntries(_entries);
+        if (fresh)
+            await _entries.OpenAsync();
+    }
+
+    /// <summary>The entries window's view model, if it has been shown for the open TM; tests read it.</summary>
+    internal TmEntriesViewModel? Entries => _entries;
 
     private static string Shorten(string text) => text.Length <= 60 ? text : string.Concat(text.AsSpan(0, 59), "…");
 
@@ -782,8 +819,8 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         ? ""
         : $" Skipped {Count(skipped.Count, what, what + "s")}: {string.Join("; ", skipped.Take(3))}{(skipped.Count > 3 ? "; …" : "")}";
 
-    // What a TM, a TMX file or the file system report for bad files or unavailable paths; anything else is a bug.
-    private static bool IsMemoryReportable(Exception ex) =>
+    /// <summary>What a TM, a TMX file or the file system report for bad files or unavailable paths; anything else is a bug.</summary>
+    internal static bool IsMemoryReportable(Exception ex) =>
         ex is TmFormatException or DbException or IOException or UnauthorizedAccessException or ArgumentException
             or ObjectDisposedException;
 

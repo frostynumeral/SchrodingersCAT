@@ -45,6 +45,12 @@ public interface IDialogService
     /// </summary>
     Task<InlineContent?> EditEntryAsync(EntryEditorViewModel editor);
 
+    /// <summary>
+    /// Shows the window with the TM's entries (not modal), or brings it to the front if it's showing already. It
+    /// closes on <see cref="TmEntriesViewModel.CloseRequested"/>.
+    /// </summary>
+    void ShowTmEntries(TmEntriesViewModel entries);
+
     /// <summary>The local path of the translation memory (<c>*.sctm</c>) the user picked to open, or null if they cancelled.</summary>
     Task<string?> PickTranslationMemoryToOpenAsync();
 

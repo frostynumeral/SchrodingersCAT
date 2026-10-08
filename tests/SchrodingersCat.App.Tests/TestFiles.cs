@@ -123,6 +123,15 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
         return Task.FromResult(TmxToExport);
     }
 
+    /// <summary>The entries window last shown.</summary>
+    public TmEntriesViewModel? ShownEntries { get; private set; }
+
+    public void ShowTmEntries(TmEntriesViewModel entries)
+    {
+        Asked.Add("show entries");
+        ShownEntries = entries;
+    }
+
     /// <summary>Answers the entry editor: what the translator does in it, and the translation to store (null = cancelled).</summary>
     public Func<EntryEditorViewModel, InlineContent?>? EditEntry { get; set; }
 

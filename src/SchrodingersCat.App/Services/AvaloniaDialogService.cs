@@ -61,6 +61,30 @@ public sealed class AvaloniaDialogService(Window owner) : IDialogService
     public Task<InlineContent?> EditEntryAsync(EntryEditorViewModel editor) =>
         new EntryEditorDialog(editor).ShowDialog<InlineContent?>(owner);
 
+    // The entries window, while it's open.
+    private TmEntriesWindow? _entries;
+
+    public void ShowTmEntries(TmEntriesViewModel entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+
+        if (_entries is { } open && open.DataContext == entries)
+        {
+            open.Activate();
+            return;
+        }
+
+        _entries?.Close();
+        var window = new TmEntriesWindow(entries);
+        window.Closed += (_, _) =>
+        {
+            if (_entries == window)
+                _entries = null;
+        };
+        _entries = window;
+        window.Show(owner);
+    }
+
     private async Task<string?> PickToOpenAsync(string title, FilePickerFileType type)
     {
         var files = await owner.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions

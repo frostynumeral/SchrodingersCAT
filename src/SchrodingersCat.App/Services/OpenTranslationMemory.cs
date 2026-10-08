@@ -119,6 +119,35 @@ public sealed class OpenTranslationMemory(ITranslationMemory memory, string name
         return Enqueue(() => Memory.Delete(ids));
     }
 
+    /// <summary>The number of entries, read in the queue.</summary>
+    public Task<int> CountAsync() => Enqueue(() => Memory.Count);
+
+    /// <summary>An entry by id (<see cref="ITranslationMemory.Find"/>); null if it went in the meantime.</summary>
+    public Task<StoredEntry?> FindAsync(TmEntryId id) => Enqueue(() => Memory.Find(id));
+
+    /// <summary>A page of the entries a filter finds, newest first, and how many it finds (<see cref="ITranslationMemory.Browse"/>).</summary>
+    public Task<BrowseResult> BrowseAsync(EntryFilter filter, TmEntryId? after, int pageSize)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        return Enqueue(() => Memory.Browse(filter, after, pageSize));
+    }
+
+    /// <summary>Removes every entry the filter finds (<see cref="ITranslationMemory.DeleteMatching"/>); returns how many.</summary>
+    public Task<int> DeleteMatchingAsync(EntryFilter filter)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        return Enqueue(() => Memory.DeleteMatching(filter));
+    }
+
+    /// <summary>The documents and the users the entries name, for the filter's lists.</summary>
+    public Task<(IReadOnlyList<string> Documents, IReadOnlyList<string> Users)> FilterValuesAsync() =>
+        Enqueue(() => (Memory.Documents(), Memory.Users()));
+
+    /// <summary>Gives back the space deleted entries left, if it's worth it (<see cref="ITranslationMemory.Compact"/>); whether it did.</summary>
+    public Task<bool> CompactAsync() => Enqueue(Memory.Compact);
+
     /// <summary>Every entry, oldest first, read in the queue (for export).</summary>
     public Task<IReadOnlyList<TmEntry>> EntriesAsync() => Enqueue<IReadOnlyList<TmEntry>>(() => [.. Memory.Entries()]);
 
