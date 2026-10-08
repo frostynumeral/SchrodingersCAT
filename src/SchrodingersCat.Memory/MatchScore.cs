@@ -77,6 +77,21 @@ public static partial class MatchScore
 
             return new Normalized(key.ToString(), [.. words], [.. words.Where(w => w.IsNumber).Select(w => w.Text)], [.. codes]);
         }
+
+        /// <summary>Only the <see cref="Key"/>, without tokenizing (several times faster than <see cref="Of"/>).</summary>
+        public static string KeyOf(InlineContent content)
+        {
+            var key = new StringBuilder();
+            foreach (var element in content)
+            {
+                if (element is InlineText text)
+                    key.Append(Nfc(text.Text));
+                else if (element is InlineCode code)
+                    key.Append('\uE000').Append((int)code.Kind);
+            }
+
+            return key.ToString();
+        }
     }
 
     internal readonly record struct Word(string Text, bool IsNumber);

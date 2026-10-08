@@ -41,6 +41,9 @@ public sealed record StoredEntry(TmEntryId Id, TmEntry Entry);
 ```
 
 - **SQLite TM:** the id is the `entries` row id, which already exists. No format change: the file stays version 1.
+  An id is never reused, so a stale id can't reach another entry: SQLite would hand out the highest id again once
+  that entry is deleted, so the highest id deleted is kept in `meta` (a key-value table, so a new key needs no schema
+  change), and a new entry gets the next id after both.
 - **In-memory TM:** increasing ids from a counter, kept in the entry list (tests compare both TMs' results).
 - **Where ids come from:** `TmMatch.EntryId` and `ConcordanceHit.EntryId` (null for matches from the XLIFF file,
   which aren't in a TM), and `StoredEntry` from browsing. `TmEntry` stays id-free, so what the app builds to store
@@ -51,14 +54,15 @@ public sealed record StoredEntry(TmEntryId Id, TmEntry Entry);
 
 ### 2. Operations
 
-Added to `ITranslationMemory`, implemented by both TMs, with the shared rules in `Ranking` (or a new internal
-`EntryRules`) so they can't drift apart:
+Added to `ITranslationMemory`, implemented by both TMs, with the shared filter rules in the internal `Maintenance`
+so they can't drift apart:
 
-- `StoredEntry? Get(TmEntryId id)`.
-- `UpdateResult Update(TmEntryId id, InlineContent target)`: replaces an entry's translation and sets `Changed` and
-  `ChangedBy` to now and the user. `Document` and the context stay: they say where the translation was made, and
-  context matches (101%) still need them. If the new pair equals another stored pair (ignoring code ids), the two
-  merge into one, with the newer details, as `Add` would (decision 4). The result says which: `Updated`, `Merged`
+- `StoredEntry? Find(TmEntryId id)`. (Proposed as `Get`, which the analyzers reserve as a keyword of other languages.)
+- `UpdateResult Update(TmEntryId id, InlineContent target, DateTimeOffset changed, string? changedBy)`: replaces an
+  entry's translation and its `Changed` and `ChangedBy` (the app passes now and the user, as when storing).
+  `Document` and the context stay: they say where the translation was made, and context matches (101%) still need
+  them. If the new pair equals another stored pair (ignoring code ids), the two merge into one, as `Add` would
+  (decision 4): the edited entry stays, with its id, and the other goes. The result says which: `Updated`, `Merged`
   or `NotFound`. Bigrams don't change, because the source doesn't (see [open question 2](#open-questions)).
 - `int Delete(IReadOnlyCollection<TmEntryId> ids)`: removes the entries and their index rows, in one transaction.
   Returns how many were still there.
@@ -66,25 +70,31 @@ Added to `ITranslationMemory`, implemented by both TMs, with the shared rules in
   first (by id, which is the order stored), plus the total that match. Paging continues after the last id seen, not
   with an offset, so deleting rows doesn't make a page skip or repeat entries.
 - `EntryFilter`: text (a `ConcordanceQuery`, on the source or the translation), document (exact file name), user,
-  changed from/to, and "sources with more than one translation". All optional; empty means every entry.
+  changed from (inclusive) and before (exclusive), and "sources with more than one translation" (sources compared
+  as for an exact match). All optional; `EntryFilter.All` sets none, and a query without words sets no text
+  condition.
 - `int DeleteMatching(EntryFilter filter)`: what "Delete all N" does, in one transaction, with the same filter as
   the list the translator saw. It doesn't take a list of ids that could be 200,000 long.
 - `IReadOnlyList<string> Documents()` and `IReadOnlyList<string> Users()`: the values the filter's lists offer.
 
-**Filtering cost.** Only `changed` is a plain column. Document, user, source and target are `TmContentFormat` blobs,
-so a filter on them scans and decodes, as the concordance does (about 300 ms for 200,000 entries, measured for the
-concordance step). Step 1 measures `Browse` and `DeleteMatching` on the same generated TM, with the same goal as the
-concordance: under 1 s at p95. Only if that fails do we add plain-text `document`/`changed_by` columns with indexes,
-which means format version 2 and a migration on open.
+**Filtering cost.** Only `changed` is a plain column. Document, user, source and target are `TmContentFormat` blobs.
+A string is always stored as the same bytes, though, so SQLite compares document and user with the stored bytes of
+the filter's value, and no row is decoded for them. Only the text and "several translations" conditions scan, and
+they decode only the column they need, as the concordance does; whole entries are read only for the page shown.
+"Several translations" needs every source's normalised key, which `MatchScore.Normalized.KeyOf` computes without
+tokenizing. All filters stay well under the 1 s goal (step 1 below), so the format stays version 1.
 
 **Bulk delete and the index.** `Delete` removes each entry's postings one by one (as `Remove` does now). That's
-about 45 statements per entry, fine for dozens and slow for 50,000. When a delete removes more than a quarter of the
-TM, it rebuilds `postings` and `features` from the entries that remain, in the same transaction. Step 1 measures
-where the two cost the same and sets the threshold from that.
+about 45 statements per entry, fine for dozens and slow for 50,000. When a delete removes 2% of the TM or more
+(`BulkDeleteShare`, where the two cost the same, measured in step 1), it deletes the entries' postings in one pass
+and recounts `features` from the postings that remain, in the same transaction. That needs no entry decoded.
 
-**Space.** SQLite doesn't shrink a file when rows go. After a bulk delete that leaves more than a quarter of the
-file's pages free (`PRAGMA freelist_count` against `page_count`), the TM runs `VACUUM` in the queue, and the status
-says "Compacting…". `VACUUM` keeps the schema exactly, so the file still passes `Open`'s checks.
+**Space.** SQLite doesn't shrink a file when rows go. `Compact()` runs `VACUUM` once more than a quarter of the
+entries have been deleted since the file was last compacted, counted in `meta`. (Proposed as more than a quarter of
+the file's pages free, but scattered deletes leave pages half empty rather than free: after deleting every other
+entry, `freelist_count` hardly moved.) The app calls it in the queue after a bulk delete, and the status says
+"Compacting…". `VACUUM` keeps the schema exactly, so the file still passes `Open`'s checks, and it keeps the row ids
+of a table with an integer primary key, so ids stay.
 
 ### 3. In the editor: actions on matches and concordance hits
 
@@ -139,14 +149,47 @@ beside the editor:
 
 Each step ends with passing tests, zero warnings and green CI, and can be merged on its own.
 
-1. **Memory: ids and operations.** `TmEntryId`, `StoredEntry`, `EntryId` on matches and hits; `Get`, `Update`,
-   `Delete`, `Browse`, `DeleteMatching`, `Documents`, `Users` on both TMs.
-   - Examples per rule: merge on update, stale ids, paging across deletes, every filter.
+1. **Memory: ids and operations.** *(Done 2026-10-08.)* `TmEntryId`, `StoredEntry`, `EntryId` on matches and hits;
+   `Find`, `Update`, `Delete`, `Browse`, `DeleteMatching`, `Documents`, `Users` and `Compact` on both TMs.
+   - Examples per rule: merge on update, stale ids, ids never reused (across reopening too), paging across deletes,
+     every filter, both delete paths, compacting.
    - Properties over `XliffGen` documents: a random script of adds, updates and deletes leaves the SQLite and
      in-memory TMs with equal entries and equal lookups; after any script, the SQLite index equals one rebuilt
      from the remaining entries (postings and feature counts), whichever delete path ran.
-   - Measured on the 200,000-entry generated TM: `Browse` with each filter, `DeleteMatching` of 1%, 25% and 90%
-     (sets the rebuild threshold), and `VACUUM`. The numbers go into this document.
+   - **Measured** (throwaway, not kept) on a generated TM like step 2's of the TM design: 60,000 random sentences of
+     3–25 words from a 6,000-word Zipf vocabulary plus 140,000 variants with 1–4 word edits, 199,406 entries after
+     merging pairs, 155 MB; 40 documents, 5 users, dates over a year. Release build, 15 runs each.
+
+     | `Browse` | Median / p95 | Found |
+     |---|---|---|
+     | Every entry, first page or a middle one | 5 / 9 ms | 199,406 |
+     | Dates (a month) | 45 / 51 ms | 16,570 |
+     | Document | 27 / 28 ms | 4,986 |
+     | User | 27 / 29 ms | 39,869 |
+     | Text, the commonest word | 468 / 495 ms | 71,883 |
+     | Text, a rare word | 181 / 186 ms | 160 |
+     | Text in translations | 188 / 203 ms | 1,015 |
+     | Several translations | 521 / 536 ms | |
+     | Document and text | 35 / 36 ms | 632 |
+     | `Documents()`, `Users()` | 37, 31 ms | |
+
+     Before the document and user conditions went into SQL and the text scan read only its column, those filters
+     took 690 ms and the commonest word 1,050 ms at p95; "several translations" took 2.2 s with the full
+     normalisation instead of `KeyOf`.
+
+     | Deleting every nth entry | One by one | At once | Then `Compact` |
+     |---|---|---|---|
+     | 0.1% (200) | 0.57 s | 0.66 s | |
+     | 1% (1,995) | 0.76 s | 1.02 s | |
+     | 5% (9,971) | 3.02 s | 1.31 s | |
+     | 10% (19,941) | 5.36 s | 1.60 s | |
+     | 25% (49,852) | 12.71 s | 1.98 s | 0.63 s, to 112 MB |
+     | 50% (99,703) | 25.26 s | 2.60 s | 0.45 s, to 76 MB |
+     | 90% (179,466) | 44.54 s | 3.54 s | 0.10 s, to 16 MB |
+
+     One by one costs about 0.3 ms an entry, at once about 0.6 s plus a little, so `BulkDeleteShare` is 2%.
+     `DeleteMatching` for one document (4,977 entries) takes 1.2 s, for one user (39,888) 2.0 s, for the commonest
+     word (71,883) 3.0 s plus 0.5 s compacting. Deleting or editing one entry takes 5 / 8 ms and 3 / 4 ms.
 2. **App: actions on rows.** The queue's new operations, Edit and Delete on TM matches and concordance hits,
    Ctrl+Shift+1 … 9, `EntryEditorDialog`, refreshing after changes, `StoredTarget` following edits. View-model tests
    with a fake TM, and headless tests: delete a match with confirmation, edit one (with a refused save on code

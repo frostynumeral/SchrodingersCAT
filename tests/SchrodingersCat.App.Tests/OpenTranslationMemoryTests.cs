@@ -173,6 +173,22 @@ public sealed class OpenTranslationMemoryTests : IDisposable
 
         public IEnumerable<TmEntry> Entries() => _inner.Entries();
 
+        public StoredEntry? Find(TmEntryId id) => _inner.Find(id);
+
+        public UpdateResult Update(TmEntryId id, InlineContent target, DateTimeOffset changed, string? changedBy) => _inner.Update(id, target, changed, changedBy);
+
+        public int Delete(IReadOnlyCollection<TmEntryId> ids) => _inner.Delete(ids);
+
+        public BrowseResult Browse(EntryFilter filter, TmEntryId? after = null, int pageSize = ITranslationMemory.DefaultPageSize) => _inner.Browse(filter, after, pageSize);
+
+        public int DeleteMatching(EntryFilter filter) => _inner.DeleteMatching(filter);
+
+        public IReadOnlyList<string> Documents() => _inner.Documents();
+
+        public IReadOnlyList<string> Users() => _inner.Users();
+
+        public bool Compact() => _inner.Compact();
+
         public IReadOnlyList<TmMatch> Lookup(
             InlineContent source, string? previousSource = null, string? nextSource = null,
             int threshold = Ranking.DefaultThreshold, int maxMatches = Ranking.DefaultMaxMatches)

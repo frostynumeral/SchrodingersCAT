@@ -30,6 +30,13 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
     /// <summary>At most this many entries are scored per lookup.</summary>
     public const int CandidateCount = 100;
 
+    /// <summary>
+    /// Deleting at least this share of the TM at once recounts the index instead of updating it per entry: on 200,000
+    /// entries, one by one costs about 0.3 ms an entry, at once about 0.6 s plus a little (step 1 of the maintenance
+    /// design), so they cost the same at about 2%.
+    /// </summary>
+    public const double BulkDeleteShare = 0.02;
+
     private const string Format = "SchrodingersCat.TM";
 
     private static readonly string[] Schema =
@@ -197,7 +204,7 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
         if (chosen.Count == 0)
             return [];
 
-        var candidates = new List<(TmEntry, MatchScore.Normalized)>();
+        var candidates = new List<(TmEntryId, TmEntry, MatchScore.Normalized)>();
         using (var command = _connection.CreateCommand())
         {
             command.CommandText =
@@ -208,7 +215,7 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
             while (reader.Read())
             {
                 var entry = ReadEntry(reader);
-                candidates.Add((entry, MatchScore.Normalized.Of(entry.Source)));
+                candidates.Add((new TmEntryId(reader.GetInt64(0)), entry, MatchScore.Normalized.Of(entry.Source)));
             }
         }
 
@@ -254,6 +261,106 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
     }
 
     public void Dispose() => _connection.Dispose();
+
+    // ---------------------------------------------------------------- maintenance
+
+    public StoredEntry? Find(TmEntryId id) =>
+        Query($"SELECT {Columns} FROM entries WHERE id = $id", ("$id", id.Value)).FirstOrDefault();
+
+    public UpdateResult Update(TmEntryId id, InlineContent target, DateTimeOffset changed, string? changedBy)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        using var transaction = _connection.BeginTransaction();
+        if (Find(id) is not { Entry: var stored })
+            return UpdateResult.NotFound;
+
+        var entry = stored with { Target = target, Changed = changed, ChangedBy = changedBy };
+        var source = MatchScore.Normalized.Of(entry.Source);
+        var (pairHash, other, _) = FindPair(source, entry);
+        var result = UpdateResult.Updated;
+        if (other is { } otherId && otherId != id.Value)
+        {
+            Delete(otherId, source);
+            result = UpdateResult.Merged;
+        }
+
+        // The source stays, so its bigrams do.
+        Execute(_connection,
+            "UPDATE entries SET pair_hash = $hash, target = $target, changed = $changed, changed_by = $changedBy WHERE id = $id",
+            ("$hash", pairHash), ("$target", TmContentFormat.Write(target)), ("$changed", changed.UtcTicks), ("$changedBy", Text(changedBy)),
+            ("$id", id.Value));
+        transaction.Commit();
+        return result;
+    }
+
+    public int Delete(IReadOnlyCollection<TmEntryId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        using var transaction = _connection.BeginTransaction();
+        var removed = DeleteIds(ids);
+        transaction.Commit();
+        return removed;
+    }
+
+    public BrowseResult Browse(EntryFilter filter, TmEntryId? after = null, int pageSize = ITranslationMemory.DefaultPageSize)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
+
+        var (where, parameters) = Conditions(filter);
+        if (!NeedsScan(filter))
+        {
+            // Nothing to check on content: SQLite counts and pages on its own.
+            var total = Convert.ToInt32(Scalar($"SELECT count(*) FROM entries WHERE {where}", parameters), CultureInfo.InvariantCulture);
+            var page = Query(
+                $"SELECT {Columns} FROM entries WHERE {where} AND id < $after ORDER BY id DESC LIMIT $limit",
+                [.. parameters, ("$after", after?.Value ?? long.MaxValue), ("$limit", pageSize)]).ToList();
+            return new BrowseResult(page, total);
+        }
+
+        // Every matching id (newest first) for the total; whole entries only for the page.
+        var ids = MatchingIds(filter, where, parameters);
+        return new BrowseResult(
+            [.. ids.Where(id => after is not { } last || id.Value < last.Value).Take(pageSize).Select(id => Find(id) ?? throw new TmFormatException($"Entry {id.Value} disappeared."))],
+            ids.Count);
+    }
+
+    public int DeleteMatching(EntryFilter filter)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+
+        using var transaction = _connection.BeginTransaction();
+        var (where, parameters) = Conditions(filter);
+        List<TmEntryId> ids = NeedsScan(filter)
+            ? MatchingIds(filter, where, parameters)
+            : [.. Ids($"SELECT id FROM entries WHERE {where}", parameters)];
+        var removed = DeleteIds(ids);
+        transaction.Commit();
+        return removed;
+    }
+
+    public IReadOnlyList<string> Documents() => Maintenance.Sorted(DistinctTexts("document"));
+
+    public IReadOnlyList<string> Users() => Maintenance.Sorted(DistinctTexts("changed_by"));
+
+    /// <summary>
+    /// Rewrites the file (<c>VACUUM</c>) if more than a quarter of its entries were deleted since it was last rewritten.
+    /// (Counted, because SQLite's free pages don't show it: deleting scattered entries leaves pages half empty rather
+    /// than free.) Ids, and so the order stored, stay: <c>VACUUM</c> keeps the row ids of a table with an integer
+    /// primary key.
+    /// </summary>
+    public bool Compact()
+    {
+        var deleted = Convert.ToInt64(Scalar("SELECT coalesce((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'deleted_since_compact'), 0)"), CultureInfo.InvariantCulture);
+        if (deleted * 4 <= deleted + Count)
+            return false;
+
+        Execute(_connection, "VACUUM");
+        Execute(_connection, "DELETE FROM meta WHERE key = 'deleted_since_compact'");
+        return true;
+    }
 
     // ---------------------------------------------------------------- concordance
 
@@ -314,9 +421,13 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
             return;
         }
 
+        // The next id after both the last one stored and the last one deleted, so an id is never reused: a stale id
+        // in the app can't reach another entry.
         Execute(_connection,
-            "INSERT INTO entries(pair_hash, source, target, previous_source, next_source, document, changed, changed_by) "
-            + "VALUES($hash, $source, $target, $previous, $next, $document, $changed, $changedBy)",
+            "INSERT INTO entries(id, pair_hash, source, target, previous_source, next_source, document, changed, changed_by) "
+            + "VALUES(max(coalesce((SELECT max(id) FROM entries), 0), "
+            + "coalesce((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'last_deleted_id'), 0)) + 1, "
+            + "$hash, $source, $target, $previous, $next, $document, $changed, $changedBy)",
             values);
         var entryId = Convert.ToInt64(Scalar("SELECT last_insert_rowid()"), CultureInfo.InvariantCulture);
         foreach (var feature in Features(source).Distinct())
@@ -331,12 +442,65 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
     private void Delete(long id, MatchScore.Normalized source)
     {
         Execute(_connection, "DELETE FROM entries WHERE id = $id", ("$id", id));
+        RecordDeleted(id, 1);
         foreach (var feature in Features(source).Distinct())
         {
             Execute(_connection, "DELETE FROM postings WHERE feature = $feature AND entry = $id", ("$feature", feature), ("$id", id));
             Execute(_connection, "UPDATE features SET entries = entries - 1 WHERE feature = $feature", ("$feature", feature));
             Execute(_connection, "DELETE FROM features WHERE feature = $feature AND entries <= 0", ("$feature", feature));
         }
+    }
+
+    // Remembers the highest id deleted, so Store never hands it out again, and how many entries went since the file was
+    // last compacted. Both in meta, which takes new keys without a schema change.
+    private void RecordDeleted(long highestId, int count)
+    {
+        Execute(_connection,
+            "INSERT INTO meta(key, value) VALUES('last_deleted_id', $id) "
+            + "ON CONFLICT(key) DO UPDATE SET value = CAST(max(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER)) AS TEXT)",
+            ("$id", highestId.ToString(CultureInfo.InvariantCulture)));
+        Execute(_connection,
+            "INSERT INTO meta(key, value) VALUES('deleted_since_compact', $count) "
+            + "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + CAST(excluded.value AS INTEGER) AS TEXT)",
+            ("$count", count.ToString(CultureInfo.InvariantCulture)));
+    }
+
+    // Deletes entries in the open transaction; the ids it doesn't have are skipped. A few go one by one, through their
+    // bigrams' index rows. Many (BulkDeleteShare of the TM or more) go at once: their index rows in one pass over
+    // the postings, then the bigram counts recounted, which costs about the same whatever the number deleted.
+    private int DeleteIds(IReadOnlyCollection<TmEntryId> ids)
+    {
+        if (ids.Count == 0)
+            return 0;
+
+        if (ids.Count < Count * BulkDeleteShare)
+        {
+            var removed = 0;
+            foreach (var id in ids.Distinct())
+            {
+                if (Scalar("SELECT source FROM entries WHERE id = $id", ("$id", id.Value)) is not byte[] blob)
+                    continue;
+                Delete(id.Value, MatchScore.Normalized.Of(ReadContent(blob)));
+                removed++;
+            }
+
+            return removed;
+        }
+
+        Execute(_connection, "CREATE TEMP TABLE IF NOT EXISTS doomed(id INTEGER PRIMARY KEY)");
+        Execute(_connection, "DELETE FROM doomed");
+        foreach (var id in ids)
+            Execute(_connection, "INSERT OR IGNORE INTO doomed(id) VALUES($id)", ("$id", id.Value));
+
+        var highest = Scalar("SELECT max(id) FROM entries WHERE id IN (SELECT id FROM doomed)");
+        var count = ExecuteCount("DELETE FROM entries WHERE id IN (SELECT id FROM doomed)");
+        if (highest is long highestId)
+            RecordDeleted(highestId, count);
+        Execute(_connection, "DELETE FROM postings WHERE entry IN (SELECT id FROM doomed)");
+        Execute(_connection, "DELETE FROM features");
+        Execute(_connection, "INSERT INTO features(feature, entries) SELECT feature, count(*) FROM postings GROUP BY feature");
+        Execute(_connection, "DELETE FROM doomed");
+        return count;
     }
 
     // The same pair (ignoring code ids) as the entry's, if stored; the hash only narrows the search.
@@ -359,6 +523,108 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
     }
 
     // ---------------------------------------------------------------- reading
+
+    private const string Columns = "id, source, target, previous_source, next_source, document, changed, changed_by";
+
+    private IEnumerable<StoredEntry> Query(string sql, params (string Name, object? Value)[] parameters)
+    {
+        using var command = Command(sql, parameters);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            yield return new StoredEntry(new TmEntryId(reader.GetInt64(0)), ReadEntry(reader));
+    }
+
+    private IEnumerable<TmEntryId> Ids(string sql, params (string Name, object? Value)[] parameters)
+    {
+        using var command = Command(sql, parameters);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            yield return new TmEntryId(reader.GetInt64(0));
+    }
+
+    // The text and several translations need content decoded; the other conditions are SQL (Conditions).
+    private static bool NeedsScan(EntryFilter filter) => filter.HasText || filter.SeveralTranslations;
+
+    // The ids of the entries meeting the filter, newest first. Only the columns the content conditions need are read
+    // and decoded, as for a concordance search; SharedSources reads every source.
+    private List<TmEntryId> MatchingIds(EntryFilter filter, string where, (string, object?)[] parameters)
+    {
+        var shared = filter.SeveralTranslations ? Maintenance.SharedSources([.. ReadColumn("SELECT source FROM entries")]) : null;
+        var needsSource = filter.SeveralTranslations || (filter.HasText && filter.TextSide == ConcordanceSide.Source);
+        var needsTarget = filter.HasText && filter.TextSide == ConcordanceSide.Target;
+
+        using var command = Command(
+            $"SELECT id, {(needsSource ? "source" : "NULL")}, {(needsTarget ? "target" : "NULL")} FROM entries WHERE {where} ORDER BY id DESC",
+            parameters);
+        using var reader = command.ExecuteReader();
+        var ids = new List<TmEntryId>();
+        while (reader.Read())
+        {
+            var source = needsSource ? ReadContent((byte[])reader[1]) : null;
+            var target = needsTarget ? ReadContent((byte[])reader[2]) : null;
+            if (Maintenance.MatchesContent(filter, source, target, shared))
+                ids.Add(new TmEntryId(reader.GetInt64(0)));
+        }
+
+        return ids;
+    }
+
+    // The conditions SQLite checks: dates on the plain changed column, and document and user on their stored bytes
+    // (a string is always stored as the same bytes, so no row has to be decoded).
+    private static (string Sql, (string, object?)[] Parameters) Conditions(EntryFilter filter)
+    {
+        var conditions = new List<string> { "1" };
+        var parameters = new List<(string, object?)>();
+        if (filter.Document is { } document)
+        {
+            conditions.Add("document = $document");
+            parameters.Add(("$document", Text(document)));
+        }
+
+        if (filter.User is { } user)
+        {
+            conditions.Add("changed_by = $user");
+            parameters.Add(("$user", Text(user)));
+        }
+
+        if (filter.ChangedFrom is { } from)
+        {
+            conditions.Add("changed >= $from");
+            parameters.Add(("$from", from.UtcTicks));
+        }
+
+        if (filter.ChangedBefore is { } before)
+        {
+            conditions.Add("changed < $before");
+            parameters.Add(("$before", before.UtcTicks));
+        }
+
+        return (string.Join(" AND ", conditions), [.. parameters]);
+    }
+
+    private IEnumerable<InlineContent> ReadColumn(string sql)
+    {
+        using var command = Command(sql);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            yield return ReadContent((byte[])reader[0]);
+    }
+
+    // Equal strings are stored as equal bytes, so SQLite can find the distinct ones before they're decoded.
+    private IEnumerable<string> DistinctTexts(string column) =>
+        [.. ReadColumn($"SELECT DISTINCT {column} FROM entries WHERE {column} IS NOT NULL").Select(c => c.ToPlainText())];
+
+    private static InlineContent ReadContent(byte[] blob)
+    {
+        try
+        {
+            return TmContentFormat.Read(blob);
+        }
+        catch (InvalidCastException ex)
+        {
+            throw new TmFormatException("A stored entry is damaged.", ex);
+        }
+    }
 
     private static TmEntry ReadEntry(SqliteDataReader reader)
     {
@@ -434,11 +700,25 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
         }
     }
 
-    private object? Scalar(string sql)
+    private object? Scalar(string sql, params (string Name, object? Value)[] parameters)
     {
-        using var command = _connection.CreateCommand();
-        command.CommandText = sql;
+        using var command = Command(sql, parameters);
         return command.ExecuteScalar();
+    }
+
+    private int ExecuteCount(string sql)
+    {
+        using var command = Command(sql);
+        return command.ExecuteNonQuery();
+    }
+
+    private SqliteCommand Command(string sql, params (string Name, object? Value)[] parameters)
+    {
+        var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        return command;
     }
 
     private static void Execute(SqliteConnection connection, string sql, params (string Name, object? Value)[] parameters)

@@ -15,7 +15,11 @@ public enum ConcordanceSide
 public sealed record HighlightPart(InlineElement Element, bool IsHit);
 
 /// <summary>An entry with a hit; the searched side split at the hits (the other side has no hits).</summary>
-public sealed record ConcordanceHit(TmEntry Entry, IReadOnlyList<HighlightPart> Source, IReadOnlyList<HighlightPart> Target);
+public sealed record ConcordanceHit(TmEntry Entry, IReadOnlyList<HighlightPart> Source, IReadOnlyList<HighlightPart> Target)
+{
+    /// <summary>The entry's id in the TM, for editing or deleting it; null from a TM that has no ids.</summary>
+    public TmEntryId? EntryId { get; init; }
+}
 
 /// <summary>The best hits, best first, and how many entries had a hit at all.</summary>
 public sealed record ConcordanceResult(IReadOnlyList<ConcordanceHit> Hits, int Total);
@@ -79,14 +83,17 @@ public static class Concordance
         if (query.IsEmpty)
             return new ConcordanceResult([], 0);
 
+        // The two TMs key their rows by entry id; any other is keyed by position and has no ids.
         if (memory is SqliteTranslationMemory sqlite)
-            return Rank(sqlite.ScanSide(side), sqlite.Load, query, side, maxHits, cancellationToken);
+            return Rank(sqlite.ScanSide(side), sqlite.Load, keysAreIds: true, query, side, maxHits, cancellationToken);
+        if (memory is InMemoryTranslationMemory inMemory)
+            return Rank(inMemory.ScanSide(side), inMemory.Load, keysAreIds: true, query, side, maxHits, cancellationToken);
 
         var entries = memory.Entries().ToList();
         return Rank(
             entries.Select((e, i) => ((long)i, e.Changed, side == ConcordanceSide.Source ? e.Source : e.Target)),
             key => entries[(int)key],
-            query, side, maxHits, cancellationToken);
+            keysAreIds: false, query, side, maxHits, cancellationToken);
     }
 
     // ---------------------------------------------------------------- ranking
@@ -109,6 +116,7 @@ public static class Concordance
     private static ConcordanceResult Rank(
         IEnumerable<(long Key, DateTimeOffset Changed, InlineContent Side)> rows,
         Func<long, TmEntry> load,
+        bool keysAreIds,
         ConcordanceQuery query,
         ConcordanceSide side,
         int maxHits,
@@ -137,7 +145,8 @@ public static class Concordance
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        return new ConcordanceResult([.. best.Select(c => Highlight(load(c.Key), query, side))], total);
+        return new ConcordanceResult(
+            [.. best.Select(c => Highlight(load(c.Key), query, side) with { EntryId = keysAreIds ? new TmEntryId(c.Key) : null })], total);
     }
 
     private static ConcordanceHit Highlight(TmEntry entry, ConcordanceQuery query, ConcordanceSide side) =>
@@ -152,6 +161,10 @@ public static class Concordance
 
     // One occurrence of the query: its first word and how many, and whether every word was whole.
     private readonly record struct Hit(int First, int Count, bool Whole);
+
+    // Whether the content has a hit (a filter's text condition).
+    internal static bool Contains(InlineContent content, ConcordanceQuery query) =>
+        MayContain(content.ToPlainText(), query) && Find(content, query).Count > 0;
 
     // Cheap: the whole text, folded, must contain every query word, or there's no hit.
     private static bool MayContain(string text, ConcordanceQuery query)
