@@ -221,6 +221,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
 3. **Spike: AvaloniaEdit.** A throwaway branch or sample showing one target with chips: rendering, atomic caret, `Backspace` over a chip, and one headless test.
    - Manual checks for IME, screen reader and RTL on the three desktops ([checklist](../testing/editor-manual-checks.md); not done yet).
    - Ends with a decision note in this document: C, or fall back to A.
+   - **Decision (2026-10-02):** keep C, AvaloniaEdit. The spike (`samples/EditorSpike`, PR #11, never merged and closed once the editor was built) showed chips, atomic caret moves, Backspace over a chip and refused deletes working, with headless tests. The editor control (step 5) is built on AvaloniaEdit. The manual checks weren't run then; when they are, the checklist's decision rule applies, and A stays the fallback with the same `TargetEditModel`.
 4. **Read-only chips** *(Done 2026-10-02.)* for the source column and inactive targets (`SelectableTextBlock` and `InlineUIContainer`), replacing the `⟨1⟩` placeholder text in the list. Headless tests check the chips' labels, tooltips and states.
    - The red outline for code check problems comes with the badges in step 6; for now a chip's state is its shape and the lock.
 5. **Editor control** *(Done 2026-10-02.)* for the active segment's target, bound to `TargetEditModel`: typing, chips, `Backspace`/`Delete`, refusals shown as status messages, undo. Headless tests type around chips, try to delete a protected code, and undo.
