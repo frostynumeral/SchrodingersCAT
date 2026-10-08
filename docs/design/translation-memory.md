@@ -1,6 +1,6 @@
 # Proposal: translation memory
 
-**Status:** accepted (2026-10-03). All [open questions](#open-questions) are decided as proposed; implementation follows the [steps](#implementation-steps), starting with step 1.
+**Status:** implemented (2026-10-07). All [open questions](#open-questions) were decided as proposed, and all [implementation steps](#implementation-steps) are done, as is the [concordance](#concordance-follow-up) follow-up; maintenance followed in [tm-maintenance.md](tm-maintenance.md).
 
 ## Problem
 
