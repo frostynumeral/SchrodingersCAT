@@ -20,6 +20,9 @@ public sealed partial class ConcordanceViewModel : ObservableObject
     // Cancels the running search when another starts or the TM changes. (The search owns its token source.)
     private Action? _cancel;
 
+    // What the results are for, so they can be searched again after the TM changed.
+    private (string Query, bool InTargets)? _searched;
+
     public ConcordanceViewModel(MainWindowViewModel owner) => _owner = owner ?? throw new ArgumentNullException(nameof(owner));
 
     [ObservableProperty]
@@ -45,17 +48,28 @@ public sealed partial class ConcordanceViewModel : ObservableObject
 
         Query = text.Trim();
         SearchTargets = inTargets;
-        SearchTask = SearchAsync();
+        SearchTask = SearchAsync(Query, SearchTargets);
     }
 
     [RelayCommand]
-    private void Search() => SearchTask = SearchAsync();
+    private void Search() => SearchTask = SearchAsync(Query, SearchTargets);
+
+    /// <summary>
+    /// Called after an entry was edited or deleted: searches again for what the results show (not for what the box
+    /// may hold by now), so they show what the TM holds.
+    /// </summary>
+    internal void Refresh()
+    {
+        if (_searched is { } searched)
+            SearchTask = SearchAsync(searched.Query, searched.InTargets);
+    }
 
     /// <summary>Called when the TM changes: stops a running search (so closing the TM doesn't wait for it) and clears the results.</summary>
     internal void Reset()
     {
         _cancel?.Invoke();
         _cancel = null;
+        _searched = null;
         Results.Clear();
         Status = Hint;
     }
@@ -95,10 +109,11 @@ public sealed partial class ConcordanceViewModel : ObservableObject
         }));
     }
 
-    private async Task SearchAsync()
+    private async Task SearchAsync(string text, bool inTargets)
     {
         _cancel?.Invoke();
         _cancel = null;
+        _searched = null;
         Results.Clear();
 
         if (_owner.TranslationMemory is not { } memory)
@@ -107,7 +122,7 @@ public sealed partial class ConcordanceViewModel : ObservableObject
             return;
         }
 
-        var query = ConcordanceQuery.Parse(Query);
+        var query = ConcordanceQuery.Parse(text);
         if (query.IsEmpty)
         {
             Status = "Type a word or phrase to search for.";
@@ -117,15 +132,16 @@ public sealed partial class ConcordanceViewModel : ObservableObject
         using var search = new CancellationTokenSource();
         Action cancel = search.Cancel;
         _cancel = cancel;
+        _searched = (text, inTargets);
         Status = "Searching…";
         try
         {
-            var result = await memory.SearchAsync(query, SearchTargets ? ConcordanceSide.Target : ConcordanceSide.Source, cancellationToken: search.Token);
+            var result = await memory.SearchAsync(query, inTargets ? ConcordanceSide.Target : ConcordanceSide.Source, cancellationToken: search.Token);
             if (search.IsCancellationRequested || _owner.TranslationMemory != memory)
                 return;
 
             foreach (var hit in result.Hits)
-                Results.Add(new ConcordanceResultViewModel(hit, memory.Name));
+                Results.Add(new ConcordanceResultViewModel(hit, memory.Name, _owner.EditEntryCommand, _owner.DeleteEntryCommand));
             Status = result.Total switch
             {
                 0 => $"No hits for '{query.Text.Trim()}'.",

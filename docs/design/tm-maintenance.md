@@ -102,16 +102,21 @@ The common case: a match that's wrong right now.
 
 - **Delete:** each TM match and concordance row gets an Edit and a Delete button (non-focusable like the insert
   button, so the keyboard stays in the editor) and the same two items in a context menu. Ctrl+Shift+1 … Ctrl+Shift+9
-  delete the nth match. Every delete asks first (`IDialogService.ConfirmAsync`, "Delete this entry from en-hu.sctm?").
-  A file's own matches have neither action: nothing is ever written back to the XLIFF file's `<mtc:matches>`.
+  delete the nth match. Every delete asks first (`IDialogService.ConfirmAsync`, "Delete “Save the file.” → “Mentsd a
+  fájlt.” from en-hu.sctm? This can't be undone."). A file's own matches have neither action: nothing is ever written
+  back to the XLIFF file's `<mtc:matches>`. The outcome goes to the window's notice line, under the error banner.
 - **Edit:** opens `EntryEditorDialog`, with the entry's source read-only (chips, as in the source column) and its
   translation in a `TargetEditor`. The editor runs on a `TargetEditModel` over a one-segment `TranslationUnit` built
   from the entry, so typing, chips, F9, the code picker, the clipboard and undo all work as in the grid, with the
-  same rules. Save is refused while `InlineCodeChecker` finds code errors, for the same reason a confirmed segment
-  with code errors isn't stored. Escape or Cancel leaves the entry as it was.
+  same rules. Ctrl+Enter or Save stores the translation; Escape or Cancel leaves the entry as it was. Save is
+  refused for an empty translation (delete the entry instead), and while the edit has added code errors, for the same
+  reason a confirmed segment with code errors isn't stored. (Proposed as any code error, but an entry can hold half a
+  pair whose other half was in the next segment, which a unit of one segment always reports, so errors the entry had
+  already stay allowed.) The chip styles moved from the main window to `Styles/ContentStyles.axaml`, so the dialog
+  draws chips the same way.
 - **After a change:** the selected segment's lookup runs again, so the pane shows what the TM now holds, and the
-  concordance updates or drops the row. Both go through `OpenTranslationMemory`'s queue (`GetAsync`, `UpdateAsync`,
-  `DeleteAsync`), so they're ordered with stores and lookups. Failures (`TmFormatException`, `DbException`,
+  concordance searches again for what its results show. Both go through `OpenTranslationMemory`'s queue
+  (`UpdateAsync`, `DeleteAsync`), so they're ordered with stores and lookups. Failures (`TmFormatException`, `DbException`,
   `IOException`) go to the error banner, as for the other TM operations.
 - **The open document's segments:** editing an entry that one of its segments stored (same document name, source
   and translation as the segment's `StoredTarget`) moves that segment's `StoredTarget` to the new translation. Then
@@ -190,10 +195,12 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      One by one costs about 0.3 ms an entry, at once about 0.6 s plus a little, so `BulkDeleteShare` is 2%.
      `DeleteMatching` for one document (4,977 entries) takes 1.2 s, for one user (39,888) 2.0 s, for the commonest
      word (71,883) 3.0 s plus 0.5 s compacting. Deleting or editing one entry takes 5 / 8 ms and 3 / 4 ms.
-2. **App: actions on rows.** The queue's new operations, Edit and Delete on TM matches and concordance hits,
-   Ctrl+Shift+1 … 9, `EntryEditorDialog`, refreshing after changes, `StoredTarget` following edits. View-model tests
-   with a fake TM, and headless tests: delete a match with confirmation, edit one (with a refused save on code
-   errors), a stale id.
+2. **App: actions on rows.** *(Done 2026-10-08.)* The queue's new operations, Edit and Delete on TM matches and
+   concordance hits, Ctrl+Shift+1 … 9, `EntryEditorDialog`, refreshing after changes, `StoredTarget` following edits.
+   View-model tests with real TM files (deleting with and without confirmation, what can't be deleted, the
+   concordance searching again, stale ids, editing, merging, `StoredTarget` following an edit or a delete, the
+   editor's refusals), and headless tests: a match's Edit and Delete buttons and Ctrl+Shift+1 in the real window, and
+   the real `EntryEditorDialog` (chips, Ctrl+Enter, a refused save, Escape).
 3. **App: the maintenance window.** `TmEntriesWindow` with filters, paging, multi-select delete, delete-all and
    compacting. Headless tests drive the window, and the main window's matches follow its changes.
 4. **Documentation:** CLAUDE.md, and mark this proposal implemented.

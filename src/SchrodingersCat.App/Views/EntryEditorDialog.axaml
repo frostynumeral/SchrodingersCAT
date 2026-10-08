@@ -1,0 +1,27 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SchrodingersCat.App.ViewModels"
+        xmlns:controls="using:SchrodingersCat.App.Controls"
+        x:Class="SchrodingersCat.App.Views.EntryEditorDialog"
+        x:DataType="vm:EntryEditorViewModel"
+        Title="Edit translation memory entry" Width="640" SizeToContent="Height" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <!-- Ctrl+Enter saves and Escape cancels (EntryEditorDialog.axaml.cs): the editor takes Enter for itself. -->
+    <StackPanel Margin="20" Spacing="8">
+        <TextBlock x:Name="DetailsText" Text="{Binding Details}" Opacity="0.6" TextWrapping="Wrap" />
+        <TextBlock Text="Source" FontWeight="SemiBold" Margin="0,8,0,0" />
+        <controls:InlineContentBlock x:Name="SourceBlock" Runs="{Binding SourceRuns}" TextWrapping="Wrap" />
+        <TextBlock Text="Translation" FontWeight="SemiBold" Margin="0,8,0,0" />
+        <Border Classes="targetFrame editing">
+            <controls:TargetEditor x:Name="Editor" Model="{Binding Model}" Status="{Binding Status}" ProblemCodes="{Binding TargetProblemCodes}" />
+        </Border>
+        <TextBlock x:Name="ProblemText" Text="{Binding Problem}" Foreground="#E53935" TextWrapping="Wrap"
+                   IsVisible="{Binding Problem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="StatusText" Text="{Binding Status}" Foreground="#C75000" TextWrapping="Wrap"
+                   IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button x:Name="SaveButton" Classes="accent" Content="Save" Click="OnSave" ToolTip.Tip="Ctrl+Enter" />
+            <Button x:Name="CancelButton" Content="Cancel" Click="OnCancel" ToolTip.Tip="Escape" />
+        </StackPanel>
+    </StackPanel>
+</Window>

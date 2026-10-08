@@ -100,6 +100,25 @@ public sealed class OpenTranslationMemory(ITranslationMemory memory, string name
         return Enqueue(() => Concordance.Search(Memory, query, side, maxHits, cancellationToken));
     }
 
+    /// <summary>
+    /// Gives an entry a new translation (<see cref="ITranslationMemory.Update"/>), changed now by <paramref name="changedBy"/>.
+    /// <see cref="UpdateResult.NotFound"/> if the entry went in the meantime.
+    /// </summary>
+    public Task<UpdateResult> UpdateAsync(TmEntryId id, InlineContent target, DateTimeOffset changed, string? changedBy)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        return Enqueue(() => Memory.Update(id, target, changed, changedBy));
+    }
+
+    /// <summary>Removes entries (<see cref="ITranslationMemory.Delete"/>); returns how many were still there.</summary>
+    public Task<int> DeleteAsync(IReadOnlyCollection<TmEntryId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        return Enqueue(() => Memory.Delete(ids));
+    }
+
     /// <summary>Every entry, oldest first, read in the queue (for export).</summary>
     public Task<IReadOnlyList<TmEntry>> EntriesAsync() => Enqueue<IReadOnlyList<TmEntry>>(() => [.. Memory.Entries()]);
 

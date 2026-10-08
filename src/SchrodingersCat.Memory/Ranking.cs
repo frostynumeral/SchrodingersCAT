@@ -35,6 +35,18 @@ public static class Ranking
             .Take(maxMatches)];
     }
 
+    /// <summary>
+    /// Whether two entries are the same pair, the one storing either would replace (decision 4): sources and targets
+    /// equal ignoring code ids and annotations.
+    /// </summary>
+    public static bool IsSamePair(TmEntry a, TmEntry b)
+    {
+        ArgumentNullException.ThrowIfNull(a);
+        ArgumentNullException.ThrowIfNull(b);
+        return MatchScore.Normalized.KeyOf(a.Source) == MatchScore.Normalized.KeyOf(b.Source)
+            && MatchScore.Normalized.KeyOf(a.Target) == MatchScore.Normalized.KeyOf(b.Target);
+    }
+
     /// <summary>What makes two targets the same translation: equal ignoring code ids (and annotations).</summary>
     internal static string TargetKey(TmEntry entry) => MatchScore.Normalized.Of(entry.Target).Key;
 }

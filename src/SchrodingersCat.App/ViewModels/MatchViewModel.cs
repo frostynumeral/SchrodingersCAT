@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Windows.Input;
 using CommunityToolkit.Mvvm.Input;
 using SchrodingersCat.Memory;
 
@@ -12,8 +13,12 @@ public sealed class MatchViewModel
 {
     /// <param name="number">The match's place in the pane, 1–9: Ctrl+<paramref name="number"/> inserts it.</param>
     /// <param name="fromFile">The XLIFF file carried the match (matches module), rather than the open TM.</param>
-    public MatchViewModel(int number, TmMatch match, bool fromFile, SegmentViewModel segment)
+    /// <param name="editCommand">Edits a <see cref="StoredEntry"/> (the window's); null where entries can't be changed.</param>
+    /// <param name="deleteCommand">Deletes a <see cref="StoredEntry"/> (the window's).</param>
+    public MatchViewModel(int number, TmMatch match, bool fromFile, SegmentViewModel segment, ICommand? editCommand = null, ICommand? deleteCommand = null)
     {
+        EditCommand = editCommand;
+        DeleteCommand = deleteCommand;
         ArgumentNullException.ThrowIfNull(match);
         ArgumentNullException.ThrowIfNull(segment);
 
@@ -63,6 +68,16 @@ public sealed class MatchViewModel
         return string.Join(" · ", new[] { origin, entry.Document is null ? null : Path.GetFileName(entry.Document), date, entry.ChangedBy }
             .Where(s => !string.IsNullOrEmpty(s)));
     }
+
+    /// <summary>The TM entry behind the match, for editing or deleting it; null for a match from the file.</summary>
+    public StoredEntry? Stored => !IsFromFile && Match.EntryId is { } id ? new StoredEntry(id, Match.Entry) : null;
+
+    public ICommand? EditCommand { get; }
+
+    public ICommand? DeleteCommand { get; }
+
+    /// <summary>The key that deletes the match's entry.</summary>
+    public string DeleteShortcut => $"Ctrl+Shift+{Number}";
 
     /// <summary>Inserts the match into its segment's target (what Ctrl+<see cref="Number"/> does).</summary>
     public IRelayCommand InsertCommand { get; }
