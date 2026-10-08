@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
 using Avalonia.Threading;
+using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.Core.Models;
 using SchrodingersCat.Memory;
@@ -86,7 +87,7 @@ public sealed class InlineContentBlock : SelectableTextBlock
         if (copy && ClipboardUnit is { } unit && SelectionStart != SelectionEnd && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
         {
             var content = ContentRuns.Slice(Runs ?? [], Math.Min(SelectionStart, SelectionEnd), Math.Max(SelectionStart, SelectionEnd));
-            _ = SegmentClipboard.SetAsync(clipboard, content, unit);
+            SegmentClipboard.SetAsync(clipboard, content, unit).Forget();
             e.Handled = true;
             return;
         }

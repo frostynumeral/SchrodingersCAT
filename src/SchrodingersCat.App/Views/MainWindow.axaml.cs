@@ -6,6 +6,7 @@ using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SchrodingersCat.App.Controls;
+using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
 
 namespace SchrodingersCat.App.Views;
@@ -110,7 +111,7 @@ public partial class MainWindow : Window
             return;
 
         e.Cancel = true;
-        _ = ConfirmAndCloseAsync(viewModel);
+        ConfirmAndCloseAsync(viewModel).Forget();
     }
 
     private async Task ConfirmAndCloseAsync(MainWindowViewModel viewModel)
