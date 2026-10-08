@@ -12,6 +12,7 @@ using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
 using AvaloniaEdit.Rendering;
 using SchrodingersCat.App.Editing;
+using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.Core.Models;
 
@@ -184,7 +185,7 @@ public sealed class TargetEditor : UserControl
         if ((e.Key == Key.V && ctrl && !shift) || (e.Key == Key.Insert && shift && !ctrl))
         {
             e.Handled = true;
-            _ = PasteAsync();
+            PasteAsync().Forget();
             return;
         }
 
@@ -221,7 +222,7 @@ public sealed class TargetEditor : UserControl
     {
         SyncSelection();
         if (Model is { HasSelection: true } model && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
-            _ = SegmentClipboard.SetAsync(clipboard, model.SelectedContent(), model.Unit);
+            SegmentClipboard.SetAsync(clipboard, model.SelectedContent(), model.Unit).Forget();
     }
 
     // Codes come along when they were copied in this app from the same unit; the model applies the rules.

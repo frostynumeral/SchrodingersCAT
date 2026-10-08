@@ -11,8 +11,12 @@ public sealed class JsonSettingsStore(string path) : ISettingsStore
 {
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
+    // DoNotVerify: a folder that doesn't exist yet (e.g. ~/.config on a fresh Linux account) would give "", and the
+    // settings would land in the working directory.
     public static string DefaultPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SchrodingersCAT", "settings.json");
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData, Environment.SpecialFolderOption.DoNotVerify),
+            "SchrodingersCAT", "settings.json");
 
     public string FilePath { get; } = path ?? throw new ArgumentNullException(nameof(path));
 

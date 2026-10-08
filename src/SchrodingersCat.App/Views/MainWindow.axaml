@@ -102,7 +102,7 @@
                 <TextBlock x:Name="TargetHeader" Grid.Column="2" Text="{Binding TargetHeader}" FontWeight="SemiBold" />
                 <TextBlock Grid.Column="3" Text="State" FontWeight="SemiBold" />
             </Grid>
-            <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Margin="12,4" Text="{Binding SelectedSegment.EditStatus, FallbackValue={x:Null}}"
+            <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Margin="12,4" Text="{Binding SelectedSegment?.EditStatus}"
                        TextWrapping="Wrap" Foreground="#C75000" IsVisible="{Binding $self.Text, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
             <!-- The pane under the segments: the selected segment's matches (design section 6 of
                  docs/design/translation-memory.md), and the concordance (searching the TM for a word or phrase). -->
