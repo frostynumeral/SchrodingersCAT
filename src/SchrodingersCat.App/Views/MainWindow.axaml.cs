@@ -43,8 +43,8 @@ public partial class MainWindow : Window
             (Key.Up, KeyModifiers.Control) => (viewModel.PreviousSegmentCommand, null),
             (Key.Down, KeyModifiers.Control | KeyModifiers.Shift) => (viewModel.NextSegmentWithIssuesCommand, null),
             (Key.Insert, KeyModifiers.Control) => (viewModel.CopySourceCommand, null),
-            (>= Key.D1 and <= Key.D9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.D0),
-            (>= Key.NumPad1 and <= Key.NumPad9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.NumPad0),
+            ( >= Key.D1 and <= Key.D9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.D0),
+            ( >= Key.NumPad1 and <= Key.NumPad9, KeyModifiers.Control) => (viewModel.InsertMatchCommand, e.Key - Key.NumPad0),
             _ => ((ICommand?)null, (object?)null),
         };
         if (command is null)
