@@ -321,11 +321,16 @@ internal sealed class BracketsCheck : IQaCheck
 }
 
 /// <summary>
-/// A term from the unit's glossary is in the source and none of its translations is in the target (section 3).
-/// Entries for the same term count as one, with all their translations. An entry pointing to a term annotation is
-/// checked in that annotation's segment, with its text as the term; others wherever the source has the term. Terms
-/// and translations are found with <see cref="Words.FindTerm"/>: words match by their beginning, folded, so a
-/// suffixed translation counts; text without spaces between words (CJK, Thai) matches anywhere.
+/// A term is in the source and none of its translations is in the target (section 3; section 5 of
+/// <c>docs/design/termbase.md</c>). The terms are <see cref="QaSegment.Terms"/>: the unit's glossary, and records from
+/// outside the file such as a termbase. Records found for the same term count as one, with all their allowed
+/// translations, whatever their origin or concept (so homonyms pass with either translation), and a concept is
+/// reported once however many of its synonyms are there. A record for a term annotation is checked in that
+/// annotation's segment, with its text as the term; others wherever the source has one of their terms. Terms and
+/// translations are found with <see cref="Words.FindTerm"/>: words match by their beginning, folded, so a suffixed
+/// translation counts; text without spaces between words (CJK, Thai) matches anywhere; a term with punctuation
+/// (<c>C#</c>, <c>Wi-Fi</c>) only where the text has the same characters. A forbidden translation never satisfies the
+/// check, and a record with no allowed translation checks nothing.
 /// </summary>
 internal sealed class TerminologyCheck : IQaCheck
 {
@@ -333,39 +338,88 @@ internal sealed class TerminologyCheck : IQaCheck
 
     public IEnumerable<QaIssue> Check(QaSegment segment)
     {
-        // Each entry's term where it is in this segment's source: an annotation's text, or the entry's term found.
-        var found = new List<(string Key, string Term, (int Start, int Length) Range, IReadOnlyList<string> Translations)>();
-        foreach (var entry in segment.Glossary.Where(e => e.Translations.Count > 0))
+        // Each record's terms where they are in this segment's source: an annotation's text, or the record's terms found.
+        var found = new List<Found>();
+        foreach (var record in segment.Terms)
         {
-            if (entry.MarkerId is { } id && segment.HasSourceMarker(id))
+            if (Allowed(record).Count == 0)
+                continue;
+
+            if (record.MarkerId is { } id && segment.HasSourceMarker(id))
             {
                 if (segment.MarkedRange(id) is not { } marked)
                     continue;
 
                 var text = segment.Source.Text.Substring(marked.Start, marked.Length).Replace(QaText.CodeMark.ToString(), "", StringComparison.Ordinal).Trim();
-                found.Add((Key(text), text, marked, entry.Translations));
+                found.Add(new Found(record, Key(text), text, marked));
+                continue;
             }
-            else if (Words.FindTerm(segment.Source.Text, entry.Term) is { } range)
+
+            foreach (var term in record.Terms.Where(t => !string.IsNullOrWhiteSpace(t)))
             {
-                found.Add((Key(entry.Term), entry.Term, range, entry.Translations));
+                if (Words.FindTerm(segment.Source.Text, term) is { } range)
+                    found.Add(new Found(record, Key(term), term.Trim(), range));
             }
         }
 
-        // Entries for the same term are one term with all their translations, whichever way each was found.
-        foreach (var term in found.Where(f => f.Key.Length > 0).GroupBy(f => f.Key, StringComparer.Ordinal))
+        // A term with no text (an annotation around codes only) is no term.
+        foreach (var group in Groups([.. found.Where(f => f.Key.Length > 0)]))
         {
-            var translations = term.SelectMany(f => f.Translations).DistinctBy(Key, StringComparer.Ordinal).ToList();
+            var records = group.Select(f => f.Record).Distinct().ToList();
+            var translations = records.SelectMany(Allowed).DistinctBy(Key, StringComparer.Ordinal).ToList();
             if (translations.Any(t => Words.FindTerm(segment.Target.Text, t) is not null))
                 continue;
 
-            var (_, text, (start, length), _) = term.First();
+            var first = group[0];
+            var origins = records.Select(r => r.Origin).Distinct().OrderBy(o => o.Termbase is not null).ToList();
+            var (start, length) = first.Range;
             yield return new QaIssue(Kind, IssueSeverity.Warning, segment.Segment,
-                $"The glossary translates “{text}” as {string.Join(" or ", translations.Select(t => $"“{t}”"))}, which isn't in the target.")
+                $"{Describe(origins)} {(origins.Count == 1 ? "translates" : "translate")} “{first.Text}” as {string.Join(" or ", translations.Select(t => $"“{t}”"))}, which isn't in the target.")
             {
                 Span = segment.Source.SpanOf(start, length),
                 SpanInSource = true,
             };
         }
+    }
+
+    private sealed record Found(TermRecord Record, string Key, string Text, (int Start, int Length) Range);
+
+    // The found terms that count as one, in the order found: those with the same key, and those of the same record,
+    // joined until no group shares either with another.
+    private static List<List<Found>> Groups(List<Found> found)
+    {
+        var group = Enumerable.Range(0, found.Count).ToArray();
+        int Root(int i) => group[i] == i ? i : group[i] = Root(group[i]);
+        for (var i = 0; i < found.Count; i++)
+        {
+            for (var j = 0; j < i; j++)
+            {
+                if (found[i].Key == found[j].Key || ReferenceEquals(found[i].Record, found[j].Record))
+                    group[Root(i)] = Root(j);
+            }
+        }
+
+        return [.. Enumerable.Range(0, found.Count)
+            .GroupBy(Root)
+            .Select(g => g.Select(i => found[i]).ToList())];
+    }
+
+    // The record's translations that satisfy the check: trimmed, not empty, and not forbidden by the record.
+    private static List<string> Allowed(TermRecord record)
+    {
+        var forbidden = record.ForbiddenTranslations.Where(t => t is not null).Select(Key).ToHashSet(StringComparer.Ordinal);
+        return [.. record.Translations
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .Where(t => !forbidden.Contains(Key(t)))];
+    }
+
+    // "The file's glossary", "The termbase “client”", "The file's glossary and the termbase “client”".
+    private static string Describe(List<TermOrigin> origins)
+    {
+        var names = origins.Select(o => o.Termbase is { } name ? $"the termbase “{name}”" : "the file's glossary").ToList();
+        var text = names.Count == 1 ? names[0] : $"{string.Join(", ", names[..^1])} and {names[^1]}";
+        return char.ToUpperInvariant(text[0]) + text[1..];
     }
 
     // What makes two terms the same: folded, with whitespace collapsed.

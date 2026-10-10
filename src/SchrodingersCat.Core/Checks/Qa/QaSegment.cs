@@ -79,12 +79,19 @@ public sealed class QaSegment
         DoNotTranslate = doNotTranslate;
     }
 
-    /// <summary>What every segment of a unit shares, read once per unit: its glossary, and its source annotations.</summary>
-    internal sealed class UnitContext(TranslationUnit unit)
+    /// <summary>
+    /// What every segment of a unit shares, read once per unit: its glossary, its source annotations, and where terms
+    /// from outside the file come from.
+    /// </summary>
+    internal sealed class UnitContext(TranslationUnit unit, ITermSource? terms)
     {
         public TranslationUnit Unit { get; } = unit;
 
+        public ITermSource? Terms { get; } = terms;
+
         public IReadOnlyList<GlossaryEntry> Glossary => field ??= GlossaryReader.Read(Unit);
+
+        public IReadOnlyList<TermRecord> GlossaryTerms => field ??= [.. Glossary.Select(TermRecord.Of)];
 
         public IReadOnlySet<string> SourceMarkers => field ??=
             Unit.Segments.SelectMany(s => s.Source).OfType<InlineMarker>().Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
@@ -103,6 +110,13 @@ public sealed class QaSegment
 
     /// <summary>The unit's glossary entries (<see cref="GlossaryReader"/>), read once per unit.</summary>
     public IReadOnlyList<GlossaryEntry> Glossary => _context.Glossary;
+
+    /// <summary>
+    /// The term records to check this segment against: the unit's glossary, then what the term source finds for this
+    /// segment's source, looked up the first time they're asked for.
+    /// </summary>
+    public IReadOnlyList<TermRecord> Terms => field ??=
+        _context.Terms is { } terms ? [.. _context.GlossaryTerms, .. terms.Find(Source)] : _context.GlossaryTerms;
 
     /// <summary>Whether an annotation with this id is in the unit's source, in any segment.</summary>
     public bool HasSourceMarker(string markerId) => _context.SourceMarkers.Contains(markerId);
@@ -142,9 +156,9 @@ public sealed class QaSegment
 
     /// <summary>
     /// A segment of a unit. Annotations can span segments, so <c>translate="no"</c> may have opened in an earlier
-    /// segment's source.
+    /// segment's source. <paramref name="terms"/> adds term records from outside the file, such as a termbase.
     /// </summary>
-    public static QaSegment Of(TranslationUnit unit, Segment segment)
+    public static QaSegment Of(TranslationUnit unit, Segment segment, ITermSource? terms = null)
     {
         ArgumentNullException.ThrowIfNull(unit);
         ArgumentNullException.ThrowIfNull(segment);
@@ -153,16 +167,16 @@ public sealed class QaSegment
         var open = new HashSet<string>(StringComparer.Ordinal);
         foreach (var earlier in unit.Segments.TakeWhile(s => !ReferenceEquals(s, segment)))
             Track(earlier.Source, open);
-        return Of(new UnitContext(unit), segment, open);
+        return Of(new UnitContext(unit, terms), segment, open);
     }
 
     /// <summary>
     /// Every segment of a unit in order, sharing one <see cref="UnitContext"/> and following the <c>translate="no"</c>
     /// annotations along, so a unit's check reads it once rather than once per segment.
     /// </summary>
-    internal static IEnumerable<QaSegment> OfUnit(TranslationUnit unit)
+    internal static IEnumerable<QaSegment> OfUnit(TranslationUnit unit, ITermSource? terms = null)
     {
-        var context = new UnitContext(unit);
+        var context = new UnitContext(unit, terms);
         var open = new HashSet<string>(StringComparer.Ordinal);
         foreach (var segment in unit.Segments)
         {
