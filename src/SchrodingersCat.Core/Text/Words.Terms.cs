@@ -16,7 +16,8 @@ internal static partial class Words
     /// by their beginning, folded (<see cref="FindPhrase"/>), so <c>fájl</c> finds <c>fájlt</c>. In scripts written
     /// without spaces (Chinese, Japanese, Thai, …) a "word" is a whole clause, so a term in such a script, and a term
     /// with no words (only symbols), is found as a folded substring instead, starting and ending where characters of
-    /// the text do (<c>カ</c> isn't in <c>ガ</c>, <c>s</c> isn't in <c>ß</c>); and in the text, runs of such a script are
+    /// the text do (<c>カ</c> isn't in <c>ガ</c>, <c>をs</c> isn't in <c>をß</c>; a Latin <c>s</c> takes the word rule, so
+    /// it is found in <c>ß</c>); and in the text, runs of such a script are
     /// kept apart from the words around them, so <c>このprofileを開く</c> has the word <c>profile</c>, not <c>file</c>.
     /// A term with punctuation or symbols (<c>C#</c>, <c>.NET</c>, <c>Wi-Fi</c>) is found only where the text has the
     /// same characters (<see cref="FindPunctuated"/>).

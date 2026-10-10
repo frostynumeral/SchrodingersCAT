@@ -16,6 +16,7 @@ internal static class TermGen
     [
         "file", "Fájl", "fájlt", "manager", "Straße", "strasse", "groß", "c", "C", "NET", "Wi", "Fi", "e", "mail",
         "profile", "a", "_",
+        "Donaudampfschifffahrt", "abcdefghijklmnop", // first words around and beyond the index's key length (16)
         "1", "2.5", "1,5", // numbers
         "この", "を", "ファイル", "カ", "ガ", "が", "文件", "ไทย", // scripts without spaces
         "é", "\U0001D400", "\U00020000", // marks, and letters outside the BMP
@@ -63,7 +64,7 @@ internal static class TermGen
 
     /// <summary>Terms cut from these texts at arbitrary places (half words, lone surrogates), often from a word's start.</summary>
     public static Gen<string> CutFrom(IReadOnlyList<string> texts) =>
-        Gen.Select(Gen.Int[0, texts.Count - 1], Gen.Int[0, 1000], Gen.Int[1, 12], Gen.Bool, (which, at, length, fromWord) =>
+        Gen.Select(Gen.Int[0, texts.Count - 1], Gen.Int[0, 1000], Gen.Int[1, 30], Gen.Bool, (which, at, length, fromWord) =>
         {
             var text = texts[which];
             if (text.Length == 0)

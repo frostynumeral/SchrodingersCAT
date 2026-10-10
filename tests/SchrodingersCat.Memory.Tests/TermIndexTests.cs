@@ -17,6 +17,7 @@ public class TermIndexTests
     [InlineData("strasse", "Die Straße", 4, 6)] // ß → ss
     [InlineData("Straße", "DIE STRASSE", 4, 7)]
     [InlineData("Gros", "Ein großartiger Tag", 4, 11)]
+    [InlineData("s", "ß", 0, 1)] // a word's folded beginning: only the substring rule needs whole characters
     [InlineData("tab", "the table", 4, 5)] // a known limitation
     public void AWordTerm_IsFoundByItsWordsBeginnings(string term, string text, int start, int length) =>
         Assert.Equal([(start, length)], Places(Find(text, term)));
@@ -108,6 +109,40 @@ public class TermIndexTests
     [InlineData("Wi-Fi", "Turn on WiFi")]
     [InlineData("Wi-Fi", "Turn on HiWi-Fi")]
     public void ATermWithPunctuation_IsntFoundOtherwise(string term, string text) => Assert.Empty(Find(text, term));
+
+    // ---------------------------------------------------------------- long first words (the key's cut)
+
+    // A term is filed under at most Words.MaxKeyLength (16) characters of its first word run, and the text is probed
+    // with as many: first words around the cut, and longer, are found, suffixed, and with a code inside.
+    [Theory]
+    [InlineData("abcdefghijklmno", "x abcdefghijklmno y", 2, 15)]
+    [InlineData("abcdefghijklmnop", "x abcdefghijklmnop y", 2, 16)]
+    [InlineData("abcdefghijklmnopq", "x abcdefghijklmnopq y", 2, 17)]
+    [InlineData("Donaudampfschifffahrt", "Die Donaudampfschifffahrt", 4, 21)]
+    [InlineData("Donaudampfschifffahrt", "Die Donaudampfschifffahrtsgesellschaft", 4, 34)]
+    [InlineData("Donaudampfschifffahrt Wien", "Die DONAUDAMPFSCHIFFFAHRT  Wien", 4, 27)]
+    [InlineData("Donaudampfschifffahrt-Wien", "Die Donaudampfschifffahrt-Wien", 4, 26)]
+    [InlineData("abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyz", 0, 26)]
+    public void ALongFirstWord_IsFound(string term, string text, int start, int length) =>
+        Assert.Equal([(start, length)], Places(Find(text, term)));
+
+    // The first 16 characters agree, the rest doesn't: the key matches, the rule doesn't.
+    [Theory]
+    [InlineData("Donaudampfschifffahrt", "Die Donaudampfschiffahrt")]
+    [InlineData("abcdefghijklmnopq", "abcdefghijklmnopx")]
+    public void ALongFirstWord_DifferingAfterTheKey_IsntFound(string term, string text) => Assert.Empty(Find(text, term));
+
+    // A code inside the first word of a term with punctuation is skipped (a word term would be split there): the
+    // key is the run around it.
+    [Theory]
+    [InlineData(5)]
+    [InlineData(14)]
+    [InlineData(15)]
+    [InlineData(16)]
+    [InlineData(17)]
+    public void ALongFirstWord_IsFoundWithACodeInside(int at) =>
+        Assert.Equal([(0, 27)], Places(Index(["Donaudampfschifffahrt-Wien"]).Find(QaText.Of(Content(
+            "Donaudampfschifffahrt-Wien"[..at], Ph(), "Donaudampfschifffahrt-Wien"[at..])))));
 
     // ---------------------------------------------------------------- several entries and terms
 

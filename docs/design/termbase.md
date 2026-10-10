@@ -104,12 +104,15 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
   now` is found for `Press OK now`). The rule applies in the source and in the target alike, so a translation only
   in the target's `equiv` doesn't satisfy the check, and to the file's glossary too. One consequence, accepted: a
   word that runs into `equiv` text is a word of both (`file` followed by the `equiv` `name` is the token
-  `filename`), so `file` isn't found there. The index, the pane, the check and the marks all leave such hits out,
+  `filename`), so `file` isn't found there. A term annotation's term is only its text: the codes in it, their
+  `equiv` text included, count for nothing, so an annotation around codes only is no term and checks nothing. The index, the pane, the check and the marks all leave such hits out,
   as they all go through `QaText`'s term search.
 - **Substrings start and end on characters** (step 2): a term found as a folded substring starts where a
   character of the text starts and ends where one ends, and not right before a kana voicing mark (U+3099/U+309A),
-  which folding keeps. So `カ` (ka) isn't found in `ガ` (ga), whether that is one character or two, `s` isn't in
-  `ß`'s `ss`, and `ss` is in `ß` once, not twice. (The punctuation rule already started only on characters; its last
+  which folding keeps. So `カ` (ka) isn't found in `ガ` (ga), whether that is one character or two, `をs` isn't in
+  `をß` (half of its `ss`), and `をss` is in `をß` once, not twice. This is only the substring rule: a Latin term
+  such as `s` takes the word rule, which matches a word's folded beginning, so `s` is still found in `ß` (as
+  `strasse` is found in `Straße`). (The punctuation rule already started only on characters; its last
   word may still end inside a fold, as `x-Gros` finds `x-großartig`.)
 - **Remaining limitations, the same as the check's:** a term isn't found inside a compound (`Datei` in
   `Textdatei`), `tab` is found in `table`, and case never matters (`US` is found in `us`). A per-term

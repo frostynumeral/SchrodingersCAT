@@ -331,7 +331,8 @@ internal sealed class BracketsCheck : IQaCheck
 /// translation counts; text without spaces between words (CJK, Thai) matches anywhere a character starts; a term with
 /// punctuation (<c>C#</c>, <c>Wi-Fi</c>) only where the text has the same characters. Every place a term is counts,
 /// except one that starts or ends in a code's <c>equiv</c> text, in the source and the target alike: a term only in
-/// <c>equiv</c> isn't there, and neither is a translation. A forbidden translation never satisfies the check, and a
+/// <c>equiv</c> isn't there, and neither is a translation; an annotation's term is only its text, so one around codes
+/// only checks nothing. A forbidden translation never satisfies the check, and a
 /// record with no allowed translation checks nothing.
 /// </summary>
 internal sealed class TerminologyCheck : IQaCheck
@@ -352,7 +353,10 @@ internal sealed class TerminologyCheck : IQaCheck
                 if (segment.MarkedRange(id) is not { } marked)
                     continue;
 
-                var text = segment.Source.Text.Substring(marked.Start, marked.Length).Replace(QaText.CodeMark.ToString(), "", StringComparison.Ordinal).Trim();
+                // Only the annotation's text is its term: codes, their equiv text included, count for nothing.
+                var text = string.Concat(Enumerable.Range(marked.Start, marked.Length)
+                    .Where(i => !segment.Source.IsInCode(i))
+                    .Select(i => segment.Source.Text[i])).Trim();
                 found.Add(new Found(record, Key(text), text, marked));
                 continue;
             }
@@ -364,7 +368,7 @@ internal sealed class TerminologyCheck : IQaCheck
             }
         }
 
-        // A term with no text (an annotation around codes only) is no term.
+        // A term with no text (an annotation around codes only, with or without equiv text) is no term.
         foreach (var group in Groups([.. found.Where(f => f.Key.Length > 0)]))
         {
             var records = group.Select(f => f.Record).Distinct().ToList();

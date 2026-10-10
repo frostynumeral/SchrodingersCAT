@@ -322,6 +322,30 @@ public class QaTermRecordTests
         Assert.Empty(Check(unit, Record(["Save"], ["Mentés"])));
     }
 
+    // The same for a term annotation: one around a code with equiv text has no text, so no term, and its record
+    // checks nothing (the target's equiv would not satisfy it either).
+    [Fact]
+    public void ATermAnnotationAroundOnlyACodesEquiv_IsNoTerm()
+    {
+        var unit = Coded(["Click ", new InlineMarker("m1", InlineMarkerKind.Opening) { Type = "term" }, Equiv("1", "Save"),
+            new InlineMarker("m1", InlineMarkerKind.Closing), " now."], "–");
+        unit.Segments[0].Target = new InlineContent([new InlineText("Kattints: "), Equiv("1", "Save"), new InlineText(" most.")]);
+        AddGlossary(unit, """<gls:glossEntry ref="#m1"><gls:term>Save</gls:term><gls:translation>Save</gls:translation></gls:glossEntry>""");
+
+        Assert.Empty(Check(unit));
+    }
+
+    // An annotation's term is its text, without the equiv text of the codes in it.
+    [Fact]
+    public void ATermAnnotationsEquivText_IsntPartOfItsTerm()
+    {
+        var unit = Coded(["Click ", new InlineMarker("m1", InlineMarkerKind.Opening) { Type = "term" }, "Save", Equiv("1", "All"),
+            new InlineMarker("m1", InlineMarkerKind.Closing), " now."], "Kattints.");
+        AddGlossary(unit, """<gls:glossEntry ref="#m1"><gls:term>Save</gls:term><gls:translation>Mentés</gls:translation></gls:glossEntry>""");
+
+        Assert.Contains("“Save”", Assert.Single(Check(unit)).Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ATranslationOnlyInTheTargetsEquiv_DoesntSatisfyTheCheck()
     {
