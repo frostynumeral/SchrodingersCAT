@@ -51,7 +51,7 @@ public class QaTerminologyAndDocumentTests
 
         var issue = Assert.Single(QaChecker.Check(unit));
         Assert.Equal((QaIssueKind.Terminology, IssueSeverity.Warning), (issue.Kind, issue.Severity));
-        Assert.Equal("The glossary translates “TAB key” as “Tab billentyű” or “tabulátor”, which isn't in the target.", issue.Message);
+        Assert.Equal("The file's glossary translates “TAB key” as “Tab billentyű” or “tabulátor”, which isn't in the target.", issue.Message);
         Assert.Equal((new TextSpan(0, 10, 7), true), (issue.Span!.Value, issue.SpanInSource));
     }
 
@@ -69,7 +69,7 @@ public class QaTerminologyAndDocumentTests
 
         var issue = Assert.Single(QaChecker.Check(unit));
         Assert.Same(unit.Segments[1], issue.Segment);
-        Assert.Equal("The glossary translates “TAB key” as “billentyű”, which isn't in the target.", issue.Message);
+        Assert.Equal("The file's glossary translates “TAB key” as “billentyű”, which isn't in the target.", issue.Message);
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public class QaTerminologyAndDocumentTests
         var issues = QaChecker.Check(unit);
         Assert.Equal(reported ? 1 : 0, issues.Count);
         if (reported)
-            Assert.Equal("The glossary translates “file” as “fájl” or “állomány”, which isn't in the target.", issues[0].Message);
+            Assert.Equal("The file's glossary translates “file” as “fájl” or “állomány”, which isn't in the target.", issues[0].Message);
     }
 
     [Fact]
@@ -170,7 +170,7 @@ public class QaTerminologyAndDocumentTests
 
         var issue = Assert.Single(QaChecker.Check(unit));
         Assert.Same(unit.Segments[1], issue.Segment);
-        Assert.Equal($"The glossary translates “file” as “{first}” or “{second}”, which isn't in the target.", issue.Message);
+        Assert.Equal($"The file's glossary translates “file” as “{first}” or “{second}”, which isn't in the target.", issue.Message);
     }
 
     [Fact]

@@ -26,7 +26,7 @@ public enum QaIssueKind
     /// <summary>A bracket or quote without its other half in the target.</summary>
     Brackets,
 
-    /// <summary>A term from the file's glossary is in the source, and none of its translations in the target.</summary>
+    /// <summary>A term from the file's glossary or a termbase is in the source, and none of its translations in the target.</summary>
     Terminology,
 
     /// <summary>A segment to translate has no target (document check; only in the report).</summary>
