@@ -1,6 +1,7 @@
 # Proposal: termbase
 
-**Status:** proposed (2026-10-08). The [open questions](#open-questions) need deciding before step 1 starts.
+**Status:** accepted (2026-10-10). All [open questions](#open-questions) are decided as proposed; implementation
+follows the [steps](#implementation-steps), starting with step 1.
 
 ## Problem
 
@@ -90,8 +91,12 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
   words, so `C#` and `C++` become the word `c`, found at the start of any word, and `.NET` becomes `net`. Product
   and software termbases are full of such terms. Proposed: a term containing punctuation or symbols matches only
   where the text has the same characters, folded, with only whitespace allowed to differ (`Wi-Fi` matches `wi-fi`,
-  not `Wi Fi`), and its first and last word still start and end at word boundaries. This changes the file glossary's
-  matching the same way, which is right for both.
+  not `Wi Fi`). It still starts at a word beginning, and its last word still matches by its beginning, so suffixes
+  count (`e-mail` finds `e-mailt`, `Wi-Fi` finds `Wi-Fi-t`); only a term that ends in punctuation (`C#`, `C++`)
+  needs a word boundary after it, so `C#` isn't found in `C#x`. Translations are found in the target by the same rule.
+  This changes the file glossary's matching the same way, which is right for both.
+- **Codes:** a code's `equiv` text is part of the `QaText` the rule runs on, but a hit that starts or ends inside it
+  doesn't count: terms are text, not codes. The index, the pane, the check and the marks all leave such hits out.
 - **Remaining limitations, the same as the check's:** a term isn't found inside a compound (`Datei` in
   `Textdatei`), `tab` is found in `table`, and case never matters (`US` is found in `us`). A per-term
   "case-sensitive" or "whole word" flag would fix the worst of these ([open question 7](#open-questions)).
@@ -100,8 +105,12 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
     `fájl`, `fájlt`), so the cost is per word of the source, not per entry;
   - terms in scripts without spaces by their first folded character;
   - terms with no words in a short list checked every time;
+  - terms with punctuation under their first folded word too (`C#` under `c`, `.NET` under `net`);
   - the source is tokenised and folded once per lookup, and each candidate is confirmed against those tokens
-    (`FindPhrase`), not with a `FindTerm` call that would tokenise the whole source again per candidate.
+    (`FindPhrase`), not with a `FindTerm` call that would tokenise the whole source again per candidate. A candidate
+    with punctuation is then also checked by the punctuation rule against the source's folded characters, which the
+    lookup prepares once too, since the tokens have lost the punctuation. Both are the same functions the check
+    uses.
 - **Why in memory:** the QA check runs synchronously after every edit, on the UI thread, and has to look terms up
   there; the TM's queue answers later. Termbases are small next to TMs (thousands to tens of thousands of entries;
   the spike in step 3 measures 200,000). Writes still go to SQLite through a queue. Lookups read an immutable
@@ -132,8 +141,10 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
     or `ntig` → `termGrp` → `term`. A term's status and note sit beside it in the `tig` or `termGrp`.
   - TBX 3 (ISO 30042:2019, root `<tbx>`, namespace `urn:iso:std:iso:30042:ed-2`, dialect in `type`): `conceptEntry`
     → `langSec` → `termSec` → `term`. Both styles are read for the data categories below: DCA (`termNote
-    type="administrativeStatus"`) and DCT (namespaced elements, e.g. `<basic:administrativeStatus>`). Other data
-    categories are dropped and counted in the report.
+    type="administrativeStatus"`) and DCT (an element per data category, in its module's namespace:
+    `administrativeStatus` from the Min module, `http://www.tbxinfo.net/ns/min`; `definition` from Basic,
+    `http://www.tbxinfo.net/ns/basic`). DCT elements are matched by namespace URI and local name, never by prefix.
+    Other data categories are dropped and counted in the report.
 - **Status:**
 
   | TBX data category | Values | Status |
@@ -146,7 +157,7 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
   | | `deprecatedTerm`, `supersededTerm` | Forbidden |
   | neither, or another value | | Unspecified (another value is reported) |
 
-- **Notes:** `note` and `descrip type="definition"` at concept level and in the two languages' `langSet`/`langSec`
+- **Notes:** `note`, and the definition (`descrip type="definition"` in DCA, the Basic module's `definition` in DCT), at concept level and in the two languages' `langSet`/`langSec`
   become the entry's `Note`, joined in document order, each language's prefixed with its tag; at term level, the
   term's `Note`.
 - **Languages:** the termbase's two languages are taken, regional variants included by the TM's rule; an entry
@@ -166,8 +177,10 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
     separator.
 - **CSV export:** UTF-8 with BOM (so Excel reads it as UTF-8), every field quoted, `|` between terms. A field that
   starts with `=`, `+`, `-` or `@` gets a leading `'`, so a spreadsheet doesn't run it as a formula; the import
-  strips it again. CSV holds one status and one note per row, so terms with different statuses or their own notes
-  are exported without them, and the export says how many; only TBX keeps everything.
+  strips a `'` only when one of those four follows it, so a client's own `'til` stays. CSV holds one status and one
+  note per row, and `|` can't be inside a term, so terms with different statuses, their own notes, or a `|` are
+  exported without what CSV can't hold (a term with `|` is left out), and the export says how many; only TBX keeps
+  everything.
 - **Defences**, as for TMX: a size limit (`LimitedReadStream`), a depth limit (`DepthLimitingXmlReader`), no
   external resolver, and failures as the termbase's format exception; malformed entries are skipped and reported
   instead of failing the import. One difference: TBX 2 files almost always start with
@@ -209,7 +222,7 @@ entries by folded term, and says "The glossary translates …". Step 1 changes i
   underline of a term annotation (`<mrk type="term">`), with the translations in a tooltip. A new `AnnotationStyle`
   value, as term annotations are styled. The ranges need a new `QaText` method that maps a range to every element
   piece it covers (`SpanOf` returns only the first), so `ContentRuns` can split text runs at them. Chips inside a
-  hit aren't underlined, and a hit that starts or ends inside a code's `equiv` text doesn't count. Marks are looked
+  hit aren't underlined (hits inside `equiv` text don't exist, see [finding terms](#2-finding-terms)). Marks are looked
   up for the rows the list shows and cached per segment until the termbase changes.
 - **Inserting:** Ctrl+T opens a picker at the caret listing the segment's terms (type-ahead, Up/Down, Enter,
   Escape), like the code picker (Ctrl+Shift+F9); the translation goes in as text through `TargetEditModel.Paste`,
@@ -241,15 +254,16 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    own argument to `QaChecker.Check`, per-segment lookup, messages naming origins, and the punctuation rule in
    `Words.FindTerm`.
    - Examples: a termbase record alone, the same term from both origins, synonyms, homonyms, a forbidden
-     translation, a record with only forbidden translations, `C#`, `C++`, `.NET`, `Wi-Fi`.
+     translation, a record with only forbidden translations, `C#`, `C++`, `.NET`, `Wi-Fi`, and their suffixed forms (`e-mail` → `e-mailt`, `Wi-Fi` → `Wi-Fi-t`) in sources and targets.
    - The property tests' rules hold with a term source: arbitrary targets never throw, and a target containing an
      allowed translation reports nothing for it.
 2. **Entries and the index:** `TermEntry`, `Term`, the in-memory index, finding every occurrence, and `QaText`'s
    mapping of a range to element pieces.
    - Examples per rule: suffixes, case and accents, scripts without spaces, mixed scripts (`このprofileを開く`),
-     symbol terms, overlapping terms, a hit across a code, a hit inside `equiv` text.
+     symbol terms, `C#`, `C++`, `.NET`, `Wi-Fi`, overlapping terms, a hit across a code, and a term that occurs only
+     in `equiv` text (not found).
    - Properties: every hit's range is inside the text and the term rule finds the term there; the index finds what
-     a scan of every entry finds.
+     a scan of every entry finds, with generated terms that include punctuation.
 3. **Storage spike and SQLite termbase:** `Create`, `Open`, add, update, delete, load into the index.
    - The spike measures a generated termbase of 200,000 entries and a document of 5,000 segments, against these
      budgets: loading under 2 s; one segment's terms p95 under 5 ms; adding a term, with its re-check, under 50 ms;
@@ -260,7 +274,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
 4. **Exchange:** TBX 2 and 3 import (DCA and DCT), TBX 2 export (TBX 3 as an option), CSV import and export.
    - Sample files of every variant, from other tools where their licences allow; round trips through TBX keep
      entries, status (Unspecified included) and notes; CSV round trips keep what CSV can hold; damaged files fail
-     only with the format exception; a DOCTYPE is skipped, never processed; legacy encodings and formula prefixes.
+     only with the format exception; a DOCTYPE is skipped, never processed; legacy encodings, formula prefixes, a client term starting with `'`, and a term with `|` (reported).
    - The export checked by hand in at least one other tool, with the result recorded here.
 5. **App: the termbase in the editor.** The Termbase menu, remembering and loading it, the terms list, the source
    marks, Ctrl+T, and the checks using it.
@@ -277,44 +291,67 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      `Words`.
    - Option (b): a new `SchrodingersCat.Terms` project: cleaner names, but it would need its own SQLite reference,
      and Core's `InternalsVisibleTo` for `Words` and the XML defences.
+
+   **Decision (2026-10-10):** (a), in `SchrodingersCat.Memory`.
 2. **What is an entry?**
    - Option (a): a bilingual concept (proposed): synonyms and several translations, with status and notes.
    - Option (b): one source term and one translation per entry: simplest, but synonyms become separate entries, and
      TBX concepts have to be split on import.
    - Option (c): multilingual concepts, any number of languages, as TBX allows: one termbase for every target
      language, but the editor only ever needs two, and every query has to pick them.
+
+   **Decision (2026-10-10):** (a), a bilingual concept.
 3. **Lookups from memory or from SQLite?**
    - Option (a): an in-memory index, loaded at open (proposed): synchronous lookups for the QA check, no SQL per
      segment. Costs memory and loading time, which the spike measures.
    - Option (b): SQL queries per lookup: nothing to load, but the QA check would have to become asynchronous, or
      query on the UI thread.
+
+   **Decision (2026-10-10):** (a), an in-memory index loaded at open; the step 3 spike checks the budgets.
 4. **How many termbases?**
    - Option (a): one at a time, remembered between sessions (proposed), as decided for the TM.
    - Option (b): several at once, in priority order (a client's and the translator's own): what many translators
      want, but it needs a list in the settings, origins on every hit, and a choice of where Ctrl+E adds. The check's
      origins (step 1) already allow it later.
+
+   **Decision (2026-10-10):** (a), one at a time, remembered between sessions.
 5. **Where are terms shown?**
    - Option (a): a list in the Matches tab, below the matches (proposed): seen while translating.
    - Option (b): a Terms tab of its own: more room, but hidden whenever the matches show.
    - Option (c): one list with the matches, numbered together (as memoQ does): one place, but Ctrl+1 … Ctrl+9 would
      mean something different in every segment.
+
+   **Decision (2026-10-10):** (a), a list in the Matches tab, below the matches.
 6. **Which key inserts a term?**
    - Option (a): Ctrl+T, then a picker (proposed): free, and like the code picker.
    - Option (b): Alt+1 … Alt+9: one key, but Option+digit types characters on macOS (`¡`, `™`, …), which the manual
      checks require to work.
    - Option (c): Ctrl+Alt+1 … Ctrl+Alt+9: Ctrl+Alt is AltGr on Windows, and types characters on many layouts.
+
+   **Decision (2026-10-10):** (a), Ctrl+T, then a picker.
 7. **Case and whole words.** Proposed: the QA check's rule for every term (case and accents ignored, word
    beginnings), with the punctuation rule above, so that the pane and the check agree. A per-term flag
    ("case-sensitive", "whole word only") would fix acronyms (`US`) and short terms (`tab` in `table`), at the cost of
    a second rule in both places.
+
+   **Decision (2026-10-10):** as proposed: one rule for every term, no per-term flags.
 8. **Forbidden terms in the target.** Proposed: keep the status from the start, show forbidden translations struck
    through, never insert them or let them satisfy the check, and leave a "forbidden term used" check for a later
    step. Option: add it to step 1 (a Warning, like the terminology check).
+
+   **Decision (2026-10-10):** as proposed: keep the status from the start; the forbidden-term check comes in a later
+   step.
 9. **TBX files with a DOCTYPE.** Proposed: skip it without processing (`DtdProcessing.Ignore`), because most TBX 2
    files have one. Option: refuse them, as the TMX and XLIFF readers do, and ask users to delete the line.
+
+   **Decision (2026-10-10):** as proposed: skip the DOCTYPE without processing it.
 10. **Formats.** Proposed: import TBX 2 and 3 (DCA and DCT) and CSV; export TBX 2 (TBX-Basic) and CSV, with TBX 3
     as an option. Option: refuse DCT files with a clear message, if few tools write them.
+
+    **Decision (2026-10-10):** as proposed.
 11. **Both directions?** Proposed: no; an en→hu termbase serves en→hu documents only, as a TM does, and the reverse
     needs a second termbase (an export and import away). Option: let a termbase serve the reverse direction too
     (terminology is concept-based and TBX has no direction): one termbase for both, but the source and target
     roles, synonyms' statuses and the index would all have to work either way round.
+
+    **Decision (2026-10-10):** as proposed: one direction only.
