@@ -327,10 +327,13 @@ internal sealed class BracketsCheck : IQaCheck
 /// translations, whatever their origin or concept (so homonyms pass with either translation), and a concept is
 /// reported once however many of its synonyms are there. A record for a term annotation is checked in that
 /// annotation's segment, with its text as the term; others wherever the source has one of their terms. Terms and
-/// translations are found with <see cref="Words.FindTerm"/>: words match by their beginning, folded, so a suffixed
-/// translation counts; text without spaces between words (CJK, Thai) matches anywhere; a term with punctuation
-/// (<c>C#</c>, <c>Wi-Fi</c>) only where the text has the same characters. A forbidden translation never satisfies the
-/// check, and a record with no allowed translation checks nothing.
+/// translations are found with <see cref="QaText.FindTerm"/>: words match by their beginning, folded, so a suffixed
+/// translation counts; text without spaces between words (CJK, Thai) matches anywhere a character starts; a term with
+/// punctuation (<c>C#</c>, <c>Wi-Fi</c>) only where the text has the same characters. Every place a term is counts,
+/// except one that starts or ends in a code's <c>equiv</c> text, in the source and the target alike: a term only in
+/// <c>equiv</c> isn't there, and neither is a translation; an annotation's term is only its text, so one around codes
+/// only checks nothing. A forbidden translation never satisfies the check, and a
+/// record with no allowed translation checks nothing.
 /// </summary>
 internal sealed class TerminologyCheck : IQaCheck
 {
@@ -350,24 +353,27 @@ internal sealed class TerminologyCheck : IQaCheck
                 if (segment.MarkedRange(id) is not { } marked)
                     continue;
 
-                var text = segment.Source.Text.Substring(marked.Start, marked.Length).Replace(QaText.CodeMark.ToString(), "", StringComparison.Ordinal).Trim();
+                // Only the annotation's text is its term: codes, their equiv text included, count for nothing.
+                var text = string.Concat(Enumerable.Range(marked.Start, marked.Length)
+                    .Where(i => !segment.Source.IsInCode(i))
+                    .Select(i => segment.Source.Text[i])).Trim();
                 found.Add(new Found(record, Key(text), text, marked));
                 continue;
             }
 
             foreach (var term in record.Terms.Where(t => !string.IsNullOrWhiteSpace(t)))
             {
-                if (Words.FindTerm(segment.Source.Text, term) is { } range)
+                if (segment.Source.FindTerm(term) is { } range)
                     found.Add(new Found(record, Key(term), term.Trim(), range));
             }
         }
 
-        // A term with no text (an annotation around codes only) is no term.
+        // A term with no text (an annotation around codes only, with or without equiv text) is no term.
         foreach (var group in Groups([.. found.Where(f => f.Key.Length > 0)]))
         {
             var records = group.Select(f => f.Record).Distinct().ToList();
             var translations = records.SelectMany(Allowed).DistinctBy(Key, StringComparer.Ordinal).ToList();
-            if (translations.Any(t => Words.FindTerm(segment.Target.Text, t) is not null))
+            if (translations.Any(t => segment.Target.FindTerm(t) is not null))
                 continue;
 
             var first = group[0];

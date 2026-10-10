@@ -1,5 +1,6 @@
 using System.Text;
 using SchrodingersCat.Core.Models;
+using SchrodingersCat.Core.Text;
 
 namespace SchrodingersCat.Core.Checks;
 
@@ -13,10 +14,11 @@ public sealed class QaText
     /// <summary>What a code without an equivalent text stands as: U+FFFC, which is neither a letter, a digit nor whitespace.</summary>
     public const char CodeMark = '￼';
 
-    // Where each element's text starts in Text (an element with no text is left out).
-    private readonly List<(int Start, int Element, int Length)> _pieces;
+    // Where each element's text starts in Text (an element with no text is left out), and whether it's a code's: in
+    // order and contiguous, so every index of Text is in exactly one piece.
+    private readonly List<(int Start, int Element, int Length, bool IsCode)> _pieces;
 
-    private QaText(string text, List<(int, int, int)> pieces)
+    private QaText(string text, List<(int, int, int, bool)> pieces)
     {
         Text = text;
         _pieces = pieces;
@@ -24,25 +26,28 @@ public sealed class QaText
 
     public string Text { get; }
 
+    /// <summary>The text tokenised and folded for the term rule, once however many terms are looked for in it.</summary>
+    internal PreparedText Prepared => field ??= PreparedText.Of(Text);
+
     public static QaText Of(InlineContent content)
     {
         ArgumentNullException.ThrowIfNull(content);
 
         var text = new StringBuilder();
-        var pieces = new List<(int, int, int)>();
+        var pieces = new List<(int, int, int, bool)>();
         for (var i = 0; i < content.Count; i++)
         {
-            var piece = content[i] switch
+            var (piece, isCode) = content[i] switch
             {
-                InlineText t => t.Text,
-                InlineCode { Kind: InlineCodeKind.Standalone, Equiv: { Length: > 0 } equiv } => equiv,
-                InlineCode => CodeMark.ToString(),
-                _ => "",
+                InlineText t => (t.Text, false),
+                InlineCode { Kind: InlineCodeKind.Standalone, Equiv: { Length: > 0 } equiv } => (equiv, true),
+                InlineCode => (CodeMark.ToString(), true),
+                _ => ("", false),
             };
             if (piece.Length == 0)
                 continue;
 
-            pieces.Add((text.Length, i, piece.Length));
+            pieces.Add((text.Length, i, piece.Length, isCode));
             text.Append(piece);
         }
 
@@ -52,7 +57,7 @@ public sealed class QaText
     /// <summary>Where a range of <see cref="Text"/> is in the content: its start's element, cut off at that element's end.</summary>
     public TextSpan? SpanOf(int start, int length)
     {
-        foreach (var (pieceStart, element, pieceLength) in _pieces)
+        foreach (var (pieceStart, element, pieceLength, _) in _pieces)
         {
             if (start < pieceStart || start >= pieceStart + pieceLength)
                 continue;
@@ -62,6 +67,64 @@ public sealed class QaText
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Where a range of <see cref="Text"/> is in the content: every element it covers, in order, each cut to the range,
+    /// codes included (an element with no text, such as an annotation's half, has nothing to cover). A range reaching
+    /// outside the text is cut to it; an empty one covers nothing.
+    /// </summary>
+    public IReadOnlyList<TextSpan> SpansOf(int start, int length)
+    {
+        var from = Math.Max(start, 0);
+        var to = (int)Math.Min((long)start + length, Text.Length);
+        if (to <= from)
+            return [];
+
+        var spans = new List<TextSpan>();
+        for (var i = PieceAt(from); i < _pieces.Count && _pieces[i].Start < to; i++)
+        {
+            var (pieceStart, element, pieceLength, _) = _pieces[i];
+            var spanStart = Math.Max(from, pieceStart);
+            spans.Add(new TextSpan(element, spanStart - pieceStart, Math.Min(to, pieceStart + pieceLength) - spanStart));
+        }
+
+        return spans;
+    }
+
+    /// <summary>Whether this character of <see cref="Text"/> is a code's (its equivalent text, or a code mark).</summary>
+    internal bool IsInCode(int index) => index >= 0 && index < Text.Length && _pieces[PieceAt(index)].IsCode;
+
+    /// <summary>
+    /// Every place the term rule finds the term in <see cref="Text"/> (<see cref="Words.FindAll"/>), except those that
+    /// start or end in a code: terms are text, not codes, though a code may be inside one (section 2 of
+    /// <c>docs/design/termbase.md</c>).
+    /// </summary>
+    internal IEnumerable<(int Start, int Length)> FindAll(TermPattern term) =>
+        Words.FindAll(Prepared, term).Where(r => !IsInCode(r.Start) && !IsInCode(r.Start + r.Length - 1));
+
+    /// <summary>The first place <see cref="FindAll"/> finds the term; null if there's none.</summary>
+    internal (int Start, int Length)? FindTerm(string term)
+    {
+        foreach (var range in FindAll(TermPattern.Of(term)))
+            return range;
+        return null;
+    }
+
+    // The piece the index is in, or the first after it: the pieces are in order and contiguous.
+    private int PieceAt(int index)
+    {
+        int low = 0, high = _pieces.Count - 1;
+        while (low < high)
+        {
+            var middle = low + ((high - low) / 2);
+            if (_pieces[middle].Start + _pieces[middle].Length <= index)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        return low;
     }
 }
 

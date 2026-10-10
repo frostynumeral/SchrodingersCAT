@@ -99,21 +99,43 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
   needs a word boundary after it, so `C#` isn't found in `C#x`. Translations are found in the target by the same rule.
   This changes the file glossary's matching the same way, which is right for both.
 - **Codes:** a code's `equiv` text is part of the `QaText` the rule runs on, but a hit that starts or ends inside it
-  doesn't count: terms are text, not codes. The index, the pane, the check and the marks all leave such hits out.
+  doesn't count: terms are text, not codes. Decided in step 2: a hit counts only if its first and last characters
+  are text, not a code's (its `equiv` text or a code mark); a code in the middle is fine (`Press <ph equiv="OK"/>
+  now` is found for `Press OK now`). The rule applies in the source and in the target alike, so a translation only
+  in the target's `equiv` doesn't satisfy the check, and to the file's glossary too. One consequence, accepted: a
+  word that runs into `equiv` text is a word of both (`file` followed by the `equiv` `name` is the token
+  `filename`), so `file` isn't found there. A term annotation's term is only its text: the codes in it, their
+  `equiv` text included, count for nothing, so an annotation around codes only is no term and checks nothing. The index, the pane, the check and the marks all leave such hits out,
+  as they all go through `QaText`'s term search.
+- **Substrings start and end on characters** (step 2): a term found as a folded substring starts where a
+  character of the text starts and ends where one ends, and not right before a kana voicing mark (U+3099/U+309A),
+  which folding keeps. So `カ` (ka) isn't found in `ガ` (ga), whether that is one character or two, `をs` isn't in
+  `をß` (half of its `ss`), and `をss` is in `をß` once, not twice. This is only the substring rule: a Latin term
+  such as `s` takes the word rule, which matches a word's folded beginning, so `s` is still found in `ß` (as
+  `strasse` is found in `Straße`). (The punctuation rule already started only on characters; its last
+  word may still end inside a fold, as `x-Gros` finds `x-großartig`.)
 - **Remaining limitations, the same as the check's:** a term isn't found inside a compound (`Datei` in
   `Textdatei`), `tab` is found in `table`, and case never matters (`US` is found in `us`). A per-term
-  "case-sensitive" or "whole word" flag would fix the worst of these ([open question 7](#open-questions)).
-- **An in-memory index**, built when the termbase opens:
-  - word terms by their first folded word; each word of the source looks up its own prefixes (`f`, `fá`, `fáj`,
-    `fájl`, `fájlt`), so the cost is per word of the source, not per entry;
-  - terms in scripts without spaces by their first folded character;
-  - terms with no words in a short list checked every time;
-  - terms with punctuation under their first folded word too (`C#` under `c`, `.NET` under `net`);
-  - the source is tokenised and folded once per lookup, and each candidate is confirmed against those tokens
-    (`FindPhrase`), not with a `FindTerm` call that would tokenise the whole source again per candidate. A candidate
-    with punctuation is then also checked by the punctuation rule against the source's folded characters, which the
-    lookup prepares once too, since the tokens have lost the punctuation. Both are the same functions the check
-    uses.
+  "case-sensitive" or "whole word" flag would fix the worst of these ([open question 7](#open-questions)). Also
+  inherited from the tokenizer and folding the concordance shares, and left alone: the tokenizer treats letters
+  outside the BMP (`𝐀`, CJK extension B) as punctuation, while the punctuation rule's word boundaries treat them as
+  letters; folding decomposes Hangul into jamo, so `하` finds `한국`; and Thai vowel marks fold away. A word hit
+  covers the whole suffixed word (`fájlt`), a punctuation or substring hit only the term (`Wi-Fi` in `Wi-Fi-t`);
+  step 5 decides whether the marks should show that difference.
+- **An in-memory index**, built when the termbase opens (step 2, `TermIndex`):
+  - each source term is classified once (`TermPattern`: words, punctuation or substring) and filed under one key in
+    one dictionary: a word term under its first folded word run (`fájl`), cut at 16 characters;
+  - a term with punctuation under its first word run too, with code marks skipped (`C#` under `c`, `.NET` under
+    `net`, `Wi-Fi` under `wi`). Not under its first token: `Wi-Fi` in `W<ph/>i-Fi` has the tokens `w`, `i`, `fi`,
+    which a first-token key would miss, though the rule finds it;
+  - terms in scripts without spaces, and terms with no words (`%`), under their first folded character. This
+    replaces the short list of symbol-only terms checked every time that this section first proposed: one
+    dictionary serves every kind;
+  - a lookup probes, at every place of the source's folded text, its character and the beginnings of the word run
+    starting there (up to the longest key), so every key a term found in the text can have is probed; the
+    candidates are then confirmed by the rule itself, on the source tokenised and folded once per lookup
+    (`PreparedText`, cached on the `QaText` the check reuses). The property tests check that the index finds
+    exactly what trying every term of every entry finds.
 - **Why in memory:** the QA check runs synchronously after every edit, on the UI thread, and has to look terms up
   there; the TM's queue answers later. Termbases are small next to TMs (thousands to tens of thousands of entries;
   the spike in step 3 measures 200,000). Writes still go to SQLite through a queue. Lookups read an immutable

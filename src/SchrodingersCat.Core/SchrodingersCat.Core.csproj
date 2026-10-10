@@ -9,6 +9,8 @@
   <ItemGroup>
     <!-- The translation memory reuses the hardened XML input pieces (size and depth limits, inline content). -->
     <InternalsVisibleTo Include="SchrodingersCat.Memory" />
+    <!-- The termbase index's properties check it against the term rule itself. -->
+    <InternalsVisibleTo Include="SchrodingersCat.Memory.Tests" />
   </ItemGroup>
 
   <ItemGroup>

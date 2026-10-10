@@ -41,205 +41,34 @@ internal static partial class Words
     /// </summary>
     internal static int? FindPhrase(IReadOnlyList<WordToken> words, IReadOnlyList<string> phrase)
     {
-        if (phrase.Count == 0)
-            return null;
-
         for (var i = 0; i + phrase.Count <= words.Count; i++)
         {
-            var all = true;
-            for (var j = 0; j < phrase.Count && all; j++)
-                all = words[i + j].Folded.StartsWith(phrase[j], StringComparison.Ordinal);
-            if (all)
+            if (PhraseAt(words, phrase, i))
                 return i;
         }
 
         return null;
     }
 
-    /// <summary>
-    /// Where a term (or a translation) is in a text, as a range of the text; null if it isn't there. Words match by
-    /// their beginning, folded (<see cref="FindPhrase"/>), so <c>fájl</c> finds <c>fájlt</c>. In scripts written
-    /// without spaces (Chinese, Japanese, Thai, …) a "word" is a whole clause, so a term in such a script, and a term
-    /// with no words (only symbols), is found as a folded substring instead; and in the text, runs of such a script
-    /// are kept apart from the words around them, so <c>このprofileを開く</c> has the word <c>profile</c>, not <c>file</c>.
-    /// A term with punctuation or symbols (<c>C#</c>, <c>.NET</c>, <c>Wi-Fi</c>) is found only where the text has the
-    /// same characters (<see cref="FindPunctuated"/>).
-    /// </summary>
-    internal static (int Start, int Length)? FindTerm(string text, string term)
+    /// <summary>Whether the phrase (folded words, at least one) is among the words at this place, as <see cref="FindPhrase"/> finds it.</summary>
+    internal static bool PhraseAt(IReadOnlyList<WordToken> words, IReadOnlyList<string> phrase, int i)
     {
-        var termWords = Find(term).Select(w => w.Folded).ToList();
-        if (termWords.Count == 0 || NoSpaces().IsMatch(term))
-            return FindFolded(text, term);
-        if (Tokens().Matches(term).Any(t => IsPunctuation(t.Value)))
-            return FindPunctuated(text, term);
+        if (phrase.Count == 0 || i < 0 || i + phrase.Count > words.Count)
+            return false;
 
-        var words = WordsAndRuns(text);
-        if (FindPhrase(words, termWords) is not { } first)
-            return null;
-
-        var last = words[first + termWords.Count - 1];
-        return (words[first].Start, last.Start + last.Length - words[first].Start);
-    }
-
-    // The text's words, each split where it changes between a script without spaces and any other.
-    private static List<WordToken> WordsAndRuns(string text)
-    {
-        var words = new List<WordToken>();
-        foreach (var word in Find(text))
+        for (var j = 0; j < phrase.Count; j++)
         {
-            var start = word.Start;
-            var end = word.Start + word.Length;
-            var runStart = start;
-            for (var i = start + 1; i < end; i++)
-            {
-                // The second half of a surrogate pair belongs with the first.
-                if (char.IsLowSurrogate(text[i]) || IsNoSpaces(text, i) == IsNoSpaces(text, i - 1))
-                    continue;
-
-                words.Add(new WordToken(runStart, i - runStart, Fold(text[runStart..i])));
-                runStart = i;
-            }
-
-            words.Add(new WordToken(runStart, end - runStart, Fold(text[runStart..end])));
+            if (!words[i + j].Folded.StartsWith(phrase[j], StringComparison.Ordinal))
+                return false;
         }
 
-        return words;
+        return true;
     }
 
     private static bool IsNoSpaces(string text, int index) =>
         !char.IsSurrogate(text[index]) ? NoSpaces().IsMatch(text.AsSpan(index, 1))
             : index + 1 < text.Length && char.IsHighSurrogate(text[index]) && char.IsLowSurrogate(text[index + 1])
                 && char.ConvertToUtf32(text[index], text[index + 1]) is >= 0x20000 and <= 0x3FFFF; // CJK extensions B–H
-
-    // The term as a folded substring of the text.
-    private static (int Start, int Length)? FindFolded(string text, string term)
-    {
-        var needle = Fold(term.Trim());
-        if (needle.Length == 0)
-            return null;
-
-        var (folded, origin) = FoldWithOrigin(text);
-        var at = folded.IndexOf(needle, StringComparison.Ordinal);
-        return at < 0 ? null : RangeOf(text, origin, at, at + needle.Length);
-    }
-
-    /// <summary>
-    /// A term with punctuation (section 2 of <c>docs/design/termbase.md</c>): the text has the same characters, folded,
-    /// where only whitespace may differ (a run of it for a run of it), so <c>Wi-Fi</c> finds <c>wi-fi</c> but not
-    /// <c>Wi Fi</c>, and <c>C#</c> doesn't find <c>C</c>. Apostrophes count as one character (<c>'</c>, <c>’</c>, …), and
-    /// so do hyphens (<c>-</c>, the non-breaking hyphen, …), as typing and typography differ. Codes are left out, as
-    /// the word rule leaves them out: a <see cref="Checks.QaText.CodeMark"/> inside the term is skipped, and one at a
-    /// gap counts as whitespace, so <c>Wi-Fi settings</c> is found in <c>⟨b⟩Wi-Fi⟨/b⟩ settings</c>. It starts at a
-    /// word beginning, so <c>.NET</c> isn't in <c>ASP.NET</c>. Its last word matches by its beginning, so suffixes count
-    /// (<c>e-mail</c> finds <c>e-mailt</c>, <c>Wi-Fi</c> finds <c>Wi-Fi-t</c>, <c>x-Gros</c> finds <c>x-großartig</c>); a
-    /// term that ends in punctuation (<c>C#</c>, <c>C++</c>) needs a word boundary after it, so <c>C#</c> isn't in
-    /// <c>C#x</c>. As elsewhere, a script without spaces next to another counts as a boundary (<c>このC#を</c>).
-    /// </summary>
-    private static (int Start, int Length)? FindPunctuated(string text, string term)
-    {
-        // Whitespace in the needle is a single space, which stands for a run of whitespace in the text.
-        var needle = string.Join(' ', Fold(term).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .Select(word => string.Concat(word.Select(Variant))));
-        var trimmed = term.TrimEnd();
-        var endsInPunctuation = trimmed.Length > 0 && !IsWordChar(trimmed, trimmed.Length - 1);
-        var (folded, origin) = FoldWithOrigin(text);
-
-        for (var at = 0; at + needle.Length <= folded.Length; at++)
-        {
-            // Only where a character of the text starts (not in the middle of ß's "ss"), at a word beginning.
-            if (at > 0 && origin[at] == origin[at - 1] || !IsBoundary(text, origin[at], origin[at] - 1))
-                continue;
-
-            // It may end in the middle of a character's fold: the last word matches by its beginning (gros in groß).
-            if (MatchAt(folded, at, needle) is not { } end)
-                continue;
-
-            var range = RangeOf(text, origin, at, end);
-            if (endsInPunctuation && !IsBoundary(text, range.Start + range.Length - 1, range.Start + range.Length))
-                continue;
-
-            return range;
-        }
-
-        return null;
-    }
-
-    // Where the needle ends in the folded text if it's there at this position; null if it isn't. A space in the needle
-    // takes a run of whitespace and code marks; a code mark elsewhere is skipped.
-    private static int? MatchAt(string folded, int at, string needle)
-    {
-        var i = at;
-        foreach (var c in needle)
-        {
-            if (c == ' ')
-            {
-                var gap = i;
-                while (i < folded.Length && (char.IsWhiteSpace(folded[i]) || folded[i] == Checks.QaText.CodeMark))
-                    i++;
-                if (i == gap)
-                    return null;
-                continue;
-            }
-
-            while (i > at && i < folded.Length && folded[i] == Checks.QaText.CodeMark)
-                i++;
-            if (i >= folded.Length || Variant(folded[i]) != c)
-                return null;
-            i++;
-        }
-
-        return i;
-    }
-
-    // Apostrophes as one character, and hyphens as one.
-    private static char Variant(char c) => c switch
-    {
-        '\u2018' or '\u2019' or '\uFF07' => '\'',
-        '\u2010' or '\u2011' or '\uFE63' or '\uFF0D' => '-',
-        _ => c,
-    };
-
-    // The text folded per character, and for each folded character the index of the character it came from.
-    private static (string Folded, List<int> Origin) FoldWithOrigin(string text)
-    {
-        var folded = new StringBuilder(text.Length);
-        var origin = new List<int>(text.Length);
-        for (var i = 0; i < text.Length; i++)
-        {
-            var piece = Fold(text[i].ToString());
-            folded.Append(piece);
-            origin.AddRange(Enumerable.Repeat(i, piece.Length));
-        }
-
-        return (folded.ToString(), origin);
-    }
-
-    // A range of folded characters (end exclusive, not empty) as a range of the text, taking in combining marks that
-    // fold to nothing after its end, so a highlight never splits a letter from its mark.
-    private static (int Start, int Length) RangeOf(string text, List<int> origin, int start, int end)
-    {
-        var from = origin[start];
-        var to = origin[end - 1] + 1;
-        while (to < text.Length && Fold(text[to].ToString()).Length == 0)
-            to++;
-        return (from, to - from);
-    }
-
-    // Whether a term's character next to the text's (before or after it) ends a word there: the text's isn't a
-    // letter, mark, number or underscore, or one of the two is in a script without spaces and the other isn't.
-    private static bool IsBoundary(string text, int inside, int outside) =>
-        outside < 0 || outside >= text.Length || !IsWordChar(text, outside) || IsNoSpaces(text, CharStart(text, outside)) != IsNoSpaces(text, CharStart(text, inside));
-
-    // A letter, mark, number or underscore, as the tokenizer's words are made of; a surrogate pair as one character.
-    private static bool IsWordChar(string text, int index)
-    {
-        index = CharStart(text, index);
-        return text[index] == '_' || IsWordCategory(CharUnicodeInfo.GetUnicodeCategory(text, index));
-    }
-
-    // The second half of a surrogate pair belongs with the first.
-    private static int CharStart(string text, int index) =>
-        index > 0 && char.IsLowSurrogate(text[index]) && char.IsHighSurrogate(text[index - 1]) ? index - 1 : index;
 
     // Scripts written without spaces between words.
     [GeneratedRegex(@"[\p{IsHiragana}\p{IsKatakana}\p{IsKatakanaPhoneticExtensions}\p{IsCJKUnifiedIdeographs}\p{IsCJKUnifiedIdeographsExtensionA}\p{IsCJKCompatibilityIdeographs}\uFF66-\uFF9F\p{IsThai}\p{IsLao}\p{IsKhmer}\p{IsMyanmar}\p{IsTibetan}]")]
@@ -268,11 +97,14 @@ internal static partial class Words
             if (c < 0x80)
                 folded.Append(char.ToLowerInvariant(c));
             else
-                folded.Append(FoldedChars[c] ??= FoldChar(c));
+                folded.Append(FoldOne(c));
         }
 
         return folded.ToString();
     }
+
+    /// <summary>One UTF-16 unit folded, as <see cref="Fold"/> folds it inside a text (which is the same thing).</summary>
+    internal static string FoldOne(char c) => FoldedChars[c] ??= c < 0x80 ? char.ToLowerInvariant(c).ToString() : FoldChar(c);
 
     private static string FoldChar(char c)
     {
