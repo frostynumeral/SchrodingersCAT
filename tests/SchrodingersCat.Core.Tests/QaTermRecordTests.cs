@@ -216,6 +216,14 @@ public class QaTermRecordTests
     [InlineData("file-based system", "A file-basedsystem.", false)]
     [InlineData("Straße-Nr.", "Die strasse-nr. fehlt.", true)]
     [InlineData("e-mail", "Küldj é-mailt.", true)] // accents are folded, as for words
+    [InlineData("C#", "Learn C#x and C# today.", true)] // a refused place doesn't stop the search
+    [InlineData(".NET", "Install ASP.NET or .NET.", true)]
+    [InlineData("Wi-Fi", "HiWi-Fi or Wi-Fi.", true)]
+    [InlineData("don't", "Don\u2019t panic.", true)] // apostrophes are one character
+    [InlineData("l\u2019ordinateur", "Allume l'ordinateur.", true)]
+    [InlineData("e-mail", "Küldj e\u2011mailt.", true)] // so are hyphens (a non-breaking one here)
+    [InlineData("e-mail", "Küldj e\u2013mailt.", false)] // a dash isn't a hyphen
+    [InlineData("x-Gros", "Ein x-großartiger Tag.", true)] // the last word's beginning may end inside ß's "ss"
     public void ATermWithPunctuation_IsFoundOnlyAsWritten(string term, string source, bool found)
     {
         var unit = Unit((source, "–"));
@@ -237,6 +245,48 @@ public class QaTermRecordTests
         var unit = Unit(("Use the language.", target));
 
         Assert.Equal(found, Check(unit, Record(["language"], [translation])).Count == 0);
+    }
+
+    // Translations are found whichever apostrophe or hyphen the target uses.
+    [Theory]
+    [InlineData("l'ordinateur", "Allume l\u2019ordinateur.", true)]
+    [InlineData("e-mail", "Küldj e\u2011mailt.", true)]
+    public void ATranslationWithATypographicVariant_IsFound(string translation, string target, bool found)
+    {
+        var unit = Unit(("Use the language.", target));
+
+        Assert.Equal(found, Check(unit, Record(["language"], [translation])).Count == 0);
+    }
+
+    // Codes are left out of a term with punctuation, as the word rule leaves them out: one at a gap is whitespace,
+    // one inside the term is skipped. In the source the term is found (and reported), in the target it satisfies.
+    [Theory]
+    [MemberData(nameof(CodedTexts))]
+    public void ATermWithPunctuation_IsFoundAcrossCodes(InlineContent coded)
+    {
+        var inSource = new TranslationUnit { Id = "u1" };
+        inSource.Segments.Add(new Segment { Source = coded, Target = InlineContent.FromText("–") });
+        var inTarget = Unit(("Open the Wi-Fi settings.", "–"));
+        inTarget.Segments[0].Target = coded;
+
+        Assert.Single(Check(inSource, Record(["Wi-Fi settings"], ["(translation)"])));
+        Assert.Empty(Check(inTarget, Record(["Wi-Fi settings"], ["Wi-Fi settings"])));
+    }
+
+    public static TheoryData<InlineContent> CodedTexts() =>
+    [
+        new InlineContent([new InlineText("the "), new InlineCode("1", InlineCodeKind.Opening), new InlineText("Wi-Fi"), new InlineCode("1", InlineCodeKind.Closing), new InlineText(" settings")]),
+        new InlineContent([new InlineText("the Wi-Fi"), new InlineCode("1", InlineCodeKind.Standalone), new InlineText("settings")]),
+        new InlineContent([new InlineText("the Wi"), new InlineCode("1", InlineCodeKind.Standalone), new InlineText("-Fi settings")]),
+    ];
+
+    // A refused place before it doesn't move the span.
+    [Fact]
+    public void ATermWithPunctuation_SpansTheFirstPlaceItMayBe()
+    {
+        var unit = Unit(("Learn C#x and C# today.", "–"));
+
+        Assert.Equal(new TextSpan(0, 14, 2), Assert.Single(Check(unit, Record(["C#"], ["x"]))).Span);
     }
 
     // The span covers the term as written in the text, whitespace and suffix-free.

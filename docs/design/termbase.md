@@ -91,7 +91,10 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
   words, so `C#` and `C++` become the word `c`, found at the start of any word, and `.NET` becomes `net`. Product
   and software termbases are full of such terms. Proposed: a term containing punctuation or symbols matches only
   where the text has the same characters, folded, with only whitespace allowed to differ (`Wi-Fi` matches `wi-fi`,
-  not `Wi Fi`). It still starts at a word beginning, and its last word still matches by its beginning, so suffixes
+  not `Wi Fi`). Apostrophes (`'`, `’`, …) count as one character, and so do hyphens (`-`, the non-breaking hyphen, …),
+  since typing and typography differ (`don't` finds `don’t`). Codes are left out, as the word rule leaves them out: a code
+  inside the term is skipped, and one at a gap counts as whitespace (`Wi-Fi settings` finds `<b>Wi-Fi</b> settings`).
+  It still starts at a word beginning, and its last word still matches by its beginning, so suffixes
   count (`e-mail` finds `e-mailt`, `Wi-Fi` finds `Wi-Fi-t`); only a term that ends in punctuation (`C#`, `C++`)
   needs a word boundary after it, so `C#` isn't found in `C#x`. Translations are found in the target by the same rule.
   This changes the file glossary's matching the same way, which is right for both.

@@ -126,16 +126,20 @@ internal static partial class Words
     /// <summary>
     /// A term with punctuation (section 2 of <c>docs/design/termbase.md</c>): the text has the same characters, folded,
     /// where only whitespace may differ (a run of it for a run of it), so <c>Wi-Fi</c> finds <c>wi-fi</c> but not
-    /// <c>Wi Fi</c>, and <c>C#</c> doesn't find <c>C</c>. It starts at a word beginning, so <c>.NET</c> isn't in
-    /// <c>ASP.NET</c>. Its last word matches by its beginning, so suffixes count (<c>e-mail</c> finds <c>e-mailt</c>,
-    /// <c>Wi-Fi</c> finds <c>Wi-Fi-t</c>); a term that ends in punctuation (<c>C#</c>, <c>C++</c>) needs a word boundary
-    /// after it, so <c>C#</c> isn't in <c>C#x</c>. As elsewhere, a script without spaces next to another counts as a
-    /// boundary (<c>このC#を</c>).
+    /// <c>Wi Fi</c>, and <c>C#</c> doesn't find <c>C</c>. Apostrophes count as one character (<c>'</c>, <c>’</c>, …), and
+    /// so do hyphens (<c>-</c>, the non-breaking hyphen, …), as typing and typography differ. Codes are left out, as
+    /// the word rule leaves them out: a <see cref="Checks.QaText.CodeMark"/> inside the term is skipped, and one at a
+    /// gap counts as whitespace, so <c>Wi-Fi settings</c> is found in <c>⟨b⟩Wi-Fi⟨/b⟩ settings</c>. It starts at a
+    /// word beginning, so <c>.NET</c> isn't in <c>ASP.NET</c>. Its last word matches by its beginning, so suffixes count
+    /// (<c>e-mail</c> finds <c>e-mailt</c>, <c>Wi-Fi</c> finds <c>Wi-Fi-t</c>, <c>x-Gros</c> finds <c>x-großartig</c>); a
+    /// term that ends in punctuation (<c>C#</c>, <c>C++</c>) needs a word boundary after it, so <c>C#</c> isn't in
+    /// <c>C#x</c>. As elsewhere, a script without spaces next to another counts as a boundary (<c>このC#を</c>).
     /// </summary>
     private static (int Start, int Length)? FindPunctuated(string text, string term)
     {
         // Whitespace in the needle is a single space, which stands for a run of whitespace in the text.
-        var needle = string.Join(' ', Fold(term).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        var needle = string.Join(' ', Fold(term).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Select(word => string.Concat(word.Select(Variant))));
         var trimmed = term.TrimEnd();
         var endsInPunctuation = trimmed.Length > 0 && !IsWordChar(trimmed, trimmed.Length - 1);
         var (folded, origin) = FoldWithOrigin(text);
@@ -146,7 +150,8 @@ internal static partial class Words
             if (at > 0 && origin[at] == origin[at - 1] || !IsBoundary(text, origin[at], origin[at] - 1))
                 continue;
 
-            if (MatchAt(folded, at, needle) is not { } end || end < folded.Length && origin[end] == origin[end - 1])
+            // It may end in the middle of a character's fold: the last word matches by its beginning (gros in groß).
+            if (MatchAt(folded, at, needle) is not { } end)
                 continue;
 
             var range = RangeOf(text, origin, at, end);
@@ -159,7 +164,8 @@ internal static partial class Words
         return null;
     }
 
-    // Where the needle ends in the folded text if it's there at this position; null if it isn't.
+    // Where the needle ends in the folded text if it's there at this position; null if it isn't. A space in the needle
+    // takes a run of whitespace and code marks; a code mark elsewhere is skipped.
     private static int? MatchAt(string folded, int at, string needle)
     {
         var i = at;
@@ -167,23 +173,31 @@ internal static partial class Words
         {
             if (c == ' ')
             {
-                if (i >= folded.Length || !char.IsWhiteSpace(folded[i]))
-                    return null;
-                while (i < folded.Length && char.IsWhiteSpace(folded[i]))
+                var gap = i;
+                while (i < folded.Length && (char.IsWhiteSpace(folded[i]) || folded[i] == Checks.QaText.CodeMark))
                     i++;
+                if (i == gap)
+                    return null;
+                continue;
             }
-            else if (i < folded.Length && folded[i] == c)
-            {
+
+            while (i > at && i < folded.Length && folded[i] == Checks.QaText.CodeMark)
                 i++;
-            }
-            else
-            {
+            if (i >= folded.Length || Variant(folded[i]) != c)
                 return null;
-            }
+            i++;
         }
 
         return i;
     }
+
+    // Apostrophes as one character, and hyphens as one.
+    private static char Variant(char c) => c switch
+    {
+        '\u2018' or '\u2019' or '\uFF07' => '\'',
+        '\u2010' or '\u2011' or '\uFE63' or '\uFF0D' => '-',
+        _ => c,
+    };
 
     // The text folded per character, and for each folded character the index of the character it came from.
     private static (string Folded, List<int> Origin) FoldWithOrigin(string text)
