@@ -310,6 +310,69 @@ public class QaTermRecordTests
         Assert.Equal(reported, QaChecker.Check(unit).Any(i => i.Kind == QaIssueKind.Terminology));
     }
 
+    // ---------------------------------------------------------------- codes (step 2)
+
+    // Terms are text, not codes: a term only in a code's equiv text isn't in the source, from either origin.
+    [Fact]
+    public void ATermOnlyInACodesEquiv_IsntFound()
+    {
+        var unit = Coded(["Click ", Equiv("1", "Save"), " now."], "Kattints.");
+        AddGlossary(unit, """<gls:glossEntry><gls:term>save</gls:term><gls:translation>mentés</gls:translation></gls:glossEntry>""");
+
+        Assert.Empty(Check(unit, Record(["Save"], ["Mentés"])));
+    }
+
+    [Fact]
+    public void ATranslationOnlyInTheTargetsEquiv_DoesntSatisfyTheCheck()
+    {
+        var unit = Unit(("Save the file.", "–"));
+        unit.Segments[0].Target = new InlineContent([new InlineText("Kattints: "), Equiv("1", "fájl")]);
+
+        Assert.Single(Check(unit, Record(["file"], ["fájl"])));
+    }
+
+    // Found in the equiv first, then in the text: the text is where it is.
+    [Fact]
+    public void ATermInAnEquivAndThenInTheText_IsReportedOnTheText()
+    {
+        var unit = Coded([Equiv("1", "Save"), " or Save it."], "Vagy.");
+
+        Assert.Equal(new TextSpan(1, 4, 4), Assert.Single(Check(unit, Record(["save"], ["mentés"]))).Span);
+    }
+
+    // A word that runs into a code's equiv text is a word of both, so the term isn't there as text.
+    [Fact]
+    public void AWordRunningIntoAnEquiv_IsntTheTerm()
+    {
+        var unit = Coded(["Open the file", Equiv("1", "name"), "."], "Nyisd meg.");
+
+        Assert.Empty(Check(unit, Record(["file"], ["fájl"])));
+    }
+
+    // A code inside a term is no reason to miss it.
+    [Fact]
+    public void ACodeInsideATerm_IsSkipped()
+    {
+        var unit = Coded(["Press ", Equiv("1", "OK"), " now."], "Nyomd meg.");
+
+        Assert.Equal(new TextSpan(0, 0, 6), Assert.Single(Check(unit, Record(["press ok now"], ["(x)"]))).Span);
+    }
+
+    // ---------------------------------------------------------------- substrings (step 2)
+
+    // A term in a script without spaces is found where characters of the text start and end: カ (ka) isn't in ガ (ga),
+    // whether ガ is one character or カ and a combining mark.
+    [Theory]
+    [InlineData("ガイド", false)]
+    [InlineData("\u30AB\u3099イド", false)]
+    [InlineData("カイド", true)]
+    public void AKanaTerm_IsntFoundInsideAVoicedKana(string source, bool reported)
+    {
+        var unit = Unit((source, "–"));
+
+        Assert.Equal(reported, Check(unit, Record(["カ"], ["ka"])).Count == 1);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static TermRecord Record(IReadOnlyList<string> terms, IReadOnlyList<string> translations) => new(terms, translations, Client);
@@ -324,6 +387,19 @@ public class QaTermRecordTests
             unit.Segments.Add(new Segment { Source = InlineContent.FromText(source), Target = target is null ? null : InlineContent.FromText(target) });
         return unit;
     }
+
+    private static TranslationUnit Coded(object[] source, string target)
+    {
+        var unit = new TranslationUnit { Id = "u1" };
+        unit.Segments.Add(new Segment
+        {
+            Source = new InlineContent(source.Select(p => p is string s ? new InlineText(s) : (InlineElement)p)),
+            Target = InlineContent.FromText(target),
+        });
+        return unit;
+    }
+
+    private static InlineCode Equiv(string id, string equiv) => new(id, InlineCodeKind.Standalone) { Equiv = equiv };
 
     private static void AddGlossary(TranslationUnit unit, string entries) =>
         unit.ExtensionElements.Add(XElement.Parse($"""<gls:glossary xmlns:gls="{GlossaryReader.Namespace}">{entries}</gls:glossary>"""));

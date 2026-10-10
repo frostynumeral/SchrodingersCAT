@@ -327,10 +327,12 @@ internal sealed class BracketsCheck : IQaCheck
 /// translations, whatever their origin or concept (so homonyms pass with either translation), and a concept is
 /// reported once however many of its synonyms are there. A record for a term annotation is checked in that
 /// annotation's segment, with its text as the term; others wherever the source has one of their terms. Terms and
-/// translations are found with <see cref="Words.FindTerm"/>: words match by their beginning, folded, so a suffixed
-/// translation counts; text without spaces between words (CJK, Thai) matches anywhere; a term with punctuation
-/// (<c>C#</c>, <c>Wi-Fi</c>) only where the text has the same characters. A forbidden translation never satisfies the
-/// check, and a record with no allowed translation checks nothing.
+/// translations are found with <see cref="QaText.FindTerm"/>: words match by their beginning, folded, so a suffixed
+/// translation counts; text without spaces between words (CJK, Thai) matches anywhere a character starts; a term with
+/// punctuation (<c>C#</c>, <c>Wi-Fi</c>) only where the text has the same characters. Every place a term is counts,
+/// except one that starts or ends in a code's <c>equiv</c> text, in the source and the target alike: a term only in
+/// <c>equiv</c> isn't there, and neither is a translation. A forbidden translation never satisfies the check, and a
+/// record with no allowed translation checks nothing.
 /// </summary>
 internal sealed class TerminologyCheck : IQaCheck
 {
@@ -357,7 +359,7 @@ internal sealed class TerminologyCheck : IQaCheck
 
             foreach (var term in record.Terms.Where(t => !string.IsNullOrWhiteSpace(t)))
             {
-                if (Words.FindTerm(segment.Source.Text, term) is { } range)
+                if (segment.Source.FindTerm(term) is { } range)
                     found.Add(new Found(record, Key(term), term.Trim(), range));
             }
         }
@@ -367,7 +369,7 @@ internal sealed class TerminologyCheck : IQaCheck
         {
             var records = group.Select(f => f.Record).Distinct().ToList();
             var translations = records.SelectMany(Allowed).DistinctBy(Key, StringComparer.Ordinal).ToList();
-            if (translations.Any(t => Words.FindTerm(segment.Target.Text, t) is not null))
+            if (translations.Any(t => segment.Target.FindTerm(t) is not null))
                 continue;
 
             var first = group[0];

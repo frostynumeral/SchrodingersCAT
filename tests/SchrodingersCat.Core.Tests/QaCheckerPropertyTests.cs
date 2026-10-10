@@ -85,10 +85,8 @@ public class QaCheckerPropertyTests
             foreach (var unit in document.Units.Where(u => u.Segments.Count(s => !s.IsIgnorable && s.Target is not null) == 1))
             {
                 var segment = unit.Segments.Single(s => !s.IsIgnorable && s.Target is not null);
-                var source = QaText.Of(segment.Source).Text;
-                var target = QaText.Of(segment.Target!).Text;
-                var term = FirstWord(source);
-                var translation = FirstWord(target);
+                var term = FirstWord(segment.Source);
+                var translation = FirstWord(segment.Target!);
                 if (term is null || translation is null)
                     continue;
 
@@ -143,8 +141,8 @@ public class QaCheckerPropertyTests
             {
                 foreach (var segment in unit.Segments.Where(s => !s.IsIgnorable && s.Target is not null))
                 {
-                    var term = FirstTerm(QaText.Of(segment.Source).Text);
-                    var translation = FirstTerm(QaText.Of(segment.Target!).Text);
+                    var term = FirstTerm(segment.Source);
+                    var translation = FirstTerm(segment.Target!);
                     if (term is null || translation is null)
                         continue;
 
@@ -155,6 +153,38 @@ public class QaCheckerPropertyTests
                     var missing = QaChecker.Check(unit, terms: new FixedTerms([new TermRecord([term], ["\u0001never"], origin)]));
                     Assert.Contains(missing, i => i.Kind == QaIssueKind.Terminology && i.Segment == segment);
                 }
+            }
+        });
+
+    // A range of the text maps to the elements it covers, in order, each span inside its element, together covering
+    // exactly the range cut to the text; and the first is where SpanOf puts the range.
+    [Fact]
+    public void SpansOf_CoversTheRange() =>
+        Gen.Select(XliffGen.Document, Gen.Int[-3, 60], Gen.Int[-3, 60]).Sample((document, start, length) =>
+        {
+            foreach (var content in document.Units.SelectMany(u => u.Segments).SelectMany(s => new[] { s.Source, s.Target ?? InlineContent.Empty }))
+            {
+                var text = QaText.Of(content);
+                var lengths = content.Select(e => QaText.Of(new InlineContent([e])).Text.Length).ToList();
+                var starts = lengths.Select((_, i) => lengths.Take(i).Sum()).ToList();
+                var from = Math.Max(start, 0);
+                var to = Math.Min(start + length, text.Text.Length);
+
+                var spans = text.SpansOf(start, length);
+
+                Assert.Equal(Math.Max(0, to - from), spans.Sum(s => s.Length));
+                var position = from;
+                for (var i = 0; i < spans.Count; i++)
+                {
+                    var span = spans[i];
+                    Assert.True(i == 0 || span.Element > spans[i - 1].Element);
+                    Assert.True(span.Length > 0 && span.Start >= 0 && span.Start + span.Length <= lengths[span.Element]);
+                    Assert.Equal(position, starts[span.Element] + span.Start);
+                    position += span.Length;
+                }
+
+                if (start >= 0 && start < text.Text.Length && length > 0)
+                    Assert.Equal(text.SpanOf(start, length), spans[0]);
             }
         });
 
@@ -173,10 +203,16 @@ public class QaCheckerPropertyTests
 
     // A word with letters, and the punctuation mark right after it if a word doesn't follow that (so C# from "C# x",
     // but only C from "C#x"): a term the term rule finds where it was cut from.
-    private static string? FirstTerm(string text) =>
-        System.Text.RegularExpressions.Regex.Matches(text, @"[\p{L}\p{M}\p{N}_]+(?:[^\s\p{L}\p{M}\p{N}_\p{Cs}\uFFFC](?![\p{L}\p{M}\p{N}_]))?")
-            .Select(m => m.Value)
+    private static string? FirstTerm(InlineContent content) =>
+        InsideText(content, @"[\p{L}\p{M}\p{N}_]+(?:[^\s\p{L}\p{M}\p{N}_\p{Cs}\uFFFC](?![\p{L}\p{M}\p{N}_]))?")
             .FirstOrDefault(w => w.Any(char.IsLetter));
+
+    // What a pattern finds inside one text element, touching neither of its ends: next to a code, a word would run
+    // into the code's equiv text, and the term rule doesn't count a place that starts or ends in a code.
+    private static IEnumerable<string> InsideText(InlineContent content, string pattern) =>
+        content.OfType<InlineText>()
+            .SelectMany(t => System.Text.RegularExpressions.Regex.Matches(t.Text, pattern).Where(m => m.Index > 0 && m.Index + m.Length < t.Text.Length))
+            .Select(m => m.Value);
 
     private sealed class FixedTerms(IReadOnlyList<TermRecord> records) : ITermSource
     {
@@ -184,8 +220,7 @@ public class QaCheckerPropertyTests
     }
 
     // A word with letters, as the checks' tokenizer sees words, and as XML can hold it.
-    private static string? FirstWord(string text) =>
-        System.Text.RegularExpressions.Regex.Matches(text, @"[\p{L}\p{M}\p{N}_]+")
-            .Select(m => m.Value)
+    private static string? FirstWord(InlineContent content) =>
+        InsideText(content, @"[\p{L}\p{M}\p{N}_]+")
             .FirstOrDefault(w => w.Any(char.IsLetter) && w.All(XmlConvert.IsXmlChar));
 }
