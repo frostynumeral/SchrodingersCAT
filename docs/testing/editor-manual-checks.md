@@ -124,5 +124,19 @@ The decision rule, from step 3 of the design:
 
 Then:
 - Add the outcome to step 3 of [inline-code-editing.md](../design/inline-code-editing.md): the desktops tested, and whether C stands.
-- Remove "Not handled yet: the manual IME, screen reader and RTL checks" from CLAUDE.md, or replace it with what is still open.
+- Remove "Not handled yet: the manual IME, screen reader and RTL checks" from docs/architecture.md, or replace it with what is still open.
 - Open an issue for each finding with the check's number (e.g. "4.2: Right Arrow moves logically in RTL text").
+
+## The termbase (step 5 of docs/design/termbase.md)
+
+Open a document with an en→hu termbase (and `samples/demo.en-he.xlf` with an en→he one for right-to-left text).
+
+- **IME:** composing CJK text in the term picker's filter (`TermFilter`) filters correctly, and Enter during composition commits the text instead of choosing a term.
+- **Screen readers** (Narrator, VoiceOver, Orca):
+  - term rows read the source, the translations and "forbidden: …" / "preferred: …"
+  - the non-focusable Insert button is announced, or the terms list is enough without it
+  - the picker announces the selected choice
+  - the source underline is announced, or the list is enough without it
+- **Tooltip with the real renderer:** hovering a term in the source shows its tooltip. The headless test can't prove it lands on the text, because headless drawing records no glyphs.
+- **RTL** (`samples/demo.en-he.xlf` with an en→he termbase): underlines and tooltips land on the right Hebrew words across bidi runs; translations in the list and picker are aligned and ordered correctly; an inserted term lands at the logical caret.
+- **Ctrl+T on macOS:** whether it should be Cmd+T instead, and that localised keyboard layouts don't type a character instead.
