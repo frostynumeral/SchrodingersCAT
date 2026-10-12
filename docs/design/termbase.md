@@ -396,11 +396,39 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      it now ignores only an index whose name matches by `GLOB` and that has no SQL. In Core, a `TermRecord` copies
      its lists and keeps what the terminology check works out from it (`TermRecord.Checked`), and `Words.Fold` returns text that is folded
      already as it is.
-4. **Exchange:** TBX 2 and 3 import (DCA and DCT), TBX 2 export (TBX 3 as an option), CSV import and export.
+4. **Exchange:** *(Done 2026-10-12.)* TBX 2 and 3 import (DCA and DCT), TBX 2 export (TBX 3 as an option), CSV import and export.
    - Sample files of every variant, from other tools where their licences allow; round trips through TBX keep
      entries, status (Unspecified included) and notes; CSV round trips keep what CSV can hold; damaged files fail
      only with the format exception; a DOCTYPE is skipped, never processed; legacy encodings, formula prefixes, a client term starting with `'`, and a term with `|` (reported).
    - The export checked by hand in at least one other tool, with the result recorded here.
+   - **Hand check of the export in another CAT tool: PENDING, to be done by a person; result to be recorded here.**
+     (Export a termbase as TBX 2, and as TBX 3 and CSV, import each into at least one other tool, and note which
+     tool and version, and whether terms, statuses and notes arrived.)
+   - **Decided while building it** (section 4 leaves these open):
+     - **Samples:** all hand-written for this project (`samples/termbase/`, MIT like the repository, origins in its
+       README); no tool's files had a licence that clearly allowed including them.
+     - **Source-only entries:** an entry with terms in the source language only is imported with no translations
+       (TBX can't hold an empty `langSet`, so this is how an entry without translations comes back); one with terms
+       in other languages but none in the target language is skipped, as section 4 says.
+     - **Dates:** the last modification's `transacGrp`, or else the origination's, at concept, language or term
+       level; ISO 8601 with or without a time, fraction or offset (none means UTC). One that can't be read is
+       reported and the entry kept without a date. The export writes UTC, with the fraction only when there is one,
+       so dates come back to the tick.
+     - **Declared legacy encodings:** an XML declaration naming an encoding .NET doesn't have without registering
+       code pages (`windows-1250`) fails as malformed; UTF-8, UTF-16 and ISO-8859-1 are read.
+     - **TBX 3 export** is DCA: no module namespaces, the TBX 2 writer's elements in TBX 3's namespace; the import
+       reads both styles anyway.
+     - **CSV encoding:** a BOM decides even when the user chose another encoding; without one, the chosen encoding
+       or strict UTF-8.
+     - **CSV separator:** the most frequent of tab, `;` and `,` outside quotes in the first row; on a tie, in that
+       order; a comma if there is none. A stray quote inside an unquoted field or after a closing quote is text;
+       only a quoted field that never closes fails.
+     - **CSV cells:** the formula rule is exact both ways: the export adds a `'` when a cell is `'`s and then `=`,
+       `+`, `-` or `@` (so `'=x` becomes `''=x`), and the import takes exactly one off such a cell; a client's
+       `'til` passes both ways untouched. Cells are then split at `|` and each term trimmed; empty pieces are
+       dropped. The status cell applies to every term in the row (CSV's words, TBX's values, or empty for
+       Unspecified; another value is reported). An empty note cell is no note. Imported entries have no date or
+       user (step 5 may stamp the import's time).
 5. **App: the termbase in the editor.** *(Done 2026-10-12.)* The Termbase menu, remembering and loading it, the terms
    list, the source marks, Ctrl+T, and the checks using it.
    - View-model tests with real `.sctb` files; headless tests for the list, the marks, the picker and inserting.

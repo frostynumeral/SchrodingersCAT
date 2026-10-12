@@ -20,6 +20,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The termbase exchange samples (samples/termbase/README.md), read by the tests from the output directory. -->
+    <None Include="..\..\samples\termbase\**" LinkBase="Samples\termbase" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\SchrodingersCat.Memory\SchrodingersCat.Memory.csproj" />
     <ProjectReference Include="..\SchrodingersCat.TestSupport\SchrodingersCat.TestSupport.csproj" />
   </ItemGroup>

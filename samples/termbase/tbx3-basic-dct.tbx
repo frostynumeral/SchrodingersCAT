@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tbx type="TBX-Basic" style="dct" xml:lang="en" xmlns="urn:iso:std:iso:30042:ed-2"
+     xmlns:x="http://www.tbxinfo.net/ns/min" xmlns:y="http://www.tbxinfo.net/ns/basic" xmlns:min="urn:example:not-tbx">
+  <tbxHeader>
+    <fileDesc>
+      <sourceDesc>
+        <p>Hand-written sample for SchrodingersCAT's tests: TBX 3, TBX-Basic, DCT style, with unusual prefixes
+          (x for Min, y for Basic, and min for a namespace that isn't TBX's).</p>
+      </sourceDesc>
+    </fileDesc>
+  </tbxHeader>
+  <text>
+    <body>
+      <conceptEntry id="c1">
+        <y:definition>A container for files.</y:definition>
+        <y:subjectField>Computing</y:subjectField>
+        <transacGrp>
+          <y:transactionType>origination</y:transactionType>
+          <y:responsibility>anna</y:responsibility>
+          <date>2024-05-01T08:00:00</date>
+        </transacGrp>
+        <langSec xml:lang="en">
+          <termSec>
+            <term>folder</term>
+            <x:administrativeStatus>preferredTerm-admn-sts</x:administrativeStatus>
+            <y:partOfSpeech>noun</y:partOfSpeech>
+          </termSec>
+          <termSec>
+            <term>directory</term>
+            <min:administrativeStatus>deprecatedTerm-admn-sts</min:administrativeStatus>
+          </termSec>
+        </langSec>
+        <langSec xml:lang="hu">
+          <termSec>
+            <term>mappa</term>
+            <x:administrativeStatus>admittedTerm-admn-sts</x:administrativeStatus>
+            <note>Informal.</note>
+          </termSec>
+        </langSec>
+      </conceptEntry>
+    </body>
+  </text>
+</tbx>
