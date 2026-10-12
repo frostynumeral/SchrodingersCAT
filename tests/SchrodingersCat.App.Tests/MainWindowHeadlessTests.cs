@@ -1,14 +1,12 @@
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
-using Avalonia.LogicalTree;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
-using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
+using Avalonia.Media;
 using Avalonia.Threading;
-using Avalonia.VisualTree;
 using SchrodingersCat.App.Controls;
 using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
@@ -16,6 +14,7 @@ using SchrodingersCat.App.Views;
 using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Xliff;
 using SchrodingersCat.Memory;
+using static SchrodingersCat.App.Tests.Headless;
 
 namespace SchrodingersCat.App.Tests;
 
@@ -26,11 +25,13 @@ public sealed class MainWindowHeadlessTests : IDisposable
 
     public void Dispose() => _files.Dispose();
 
+    // ---------------------------------------------------------------- opening, editing, saving
+
     [AvaloniaFact]
     public async Task OpenEditSave_ThroughTheWindow()
     {
         var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var (window, vm) = Show(path);
+        var (window, vm) = Show(new FakeDialogs(path));
 
         window.FindControl<Button>("OpenButton")!.Command!.Execute(null);
         await WaitFor(() => vm.Segments.Count == 3);
@@ -45,8 +46,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
         var editor = Assert.Single(VisibleEditors(window));
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
 
-        window.KeyTextInput("Helló világ.");
-        Dispatcher.UIThread.RunJobs();
+        Type(window, "Helló világ.");
         Assert.Equal("Helló világ.", editor.Editor.Document.Text);
         Assert.True(vm.IsDirty);
         Assert.Equal("Translated", vm.Segments[0].State);
@@ -56,7 +56,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
         window.KeyPressQwerty(PhysicalKey.S, RawInputModifiers.Control);
         await WaitFor(() => !vm.IsDirty);
 
-        var saved = await new Xliff20Serializer().ReadFileAsync(path, TestContext.Current.CancellationToken);
+        var saved = await ReadAsync(path);
         Assert.Equal("Helló világ.", saved.Units.First().Segments[0].Target!.ToPlainText());
         Assert.False(window.FindControl<Border>("ErrorBanner")!.IsVisible);
     }
@@ -64,12 +64,9 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task SelectingAnotherSegment_MovesTheEditorAndKeepsTheEdit()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, vm, _) = await OpenAsync("sample.xlf", TestFiles.Sample);
         Click(window, TargetFrames(window)[0]);
-        window.KeyTextInput("Szia");
-        Dispatcher.UIThread.RunJobs();
+        Type(window, "Szia");
 
         Click(window, TargetViews(window)[1], onText: true); // on the text itself, not the frame around it
         var editor = Assert.Single(VisibleEditors(window));
@@ -77,14 +74,12 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal("Szia", PlainText(TargetViews(window)[0]));
 
         // The caret starts at the end, so typing adds to the target.
-        window.KeyTextInput(" Szia.");
-        Dispatcher.UIThread.RunJobs();
+        Type(window, " Szia.");
         Assert.Equal("Viszlát. Szia.", vm.Segments[1].TargetText);
 
         // Each segment keeps its own undo history.
         Click(window, TargetFrames(window)[0]);
-        window.KeyPressQwerty(PhysicalKey.Z, RawInputModifiers.Control);
-        Dispatcher.UIThread.RunJobs();
+        Press(window, PhysicalKey.Z, RawInputModifiers.Control);
         Assert.Equal("", vm.Segments[0].TargetText);
         Assert.Equal("Viszlát. Szia.", vm.Segments[1].TargetText);
     }
@@ -92,9 +87,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task TheStatusLine_ShowsTheActiveSegmentsEditMessage()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, vm, _) = await OpenAsync("sample.xlf", TestFiles.Sample);
         var status = window.FindControl<TextBlock>("StatusText")!;
         Assert.False(status.IsVisible);
 
@@ -111,7 +104,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task OpenFailure_IsShownInTheWindow()
     {
-        var (window, vm) = Show(_files.Write("broken.xlf", "<xliff"));
+        var (window, vm) = Show(new FakeDialogs(_files.Write("broken.xlf", "<xliff")));
 
         window.KeyPressQwerty(PhysicalKey.O, RawInputModifiers.Control);
         await WaitFor(() => vm.ErrorMessage is not null);
@@ -127,36 +120,30 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [InlineData(UnsavedChangesChoice.Save, true, "Helló világ.")]
     public async Task ClosingWithUnsavedChanges_AsksFirst(UnsavedChangesChoice choice, bool closes, string? savedTarget)
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var dialogs = new FakeDialogs(path) { Choice = choice };
-        var (window, vm) = Show(dialogs);
-        await vm.LoadAsync(path);
+        var dialogs = new FakeDialogs(null) { Choice = choice };
+        var (window, vm, path) = await OpenAsync("sample.xlf", TestFiles.Sample, dialogs);
         vm.Segments[0].TargetText = "Helló világ.";
-        var closed = false;
-        window.Closed += (_, _) => closed = true;
+        var closed = TrackClosed(window);
 
         window.Close();
         await WaitFor(() => dialogs.Asked.Count > 0);
-        await WaitFor(() => closed == closes);
+        await WaitFor(() => closed() == closes);
 
         Assert.Equal(["save changes to sample.xlf?"], dialogs.Asked);
-        Assert.Equal(closes, closed);
-        var saved = await new Xliff20Serializer().ReadFileAsync(path, TestContext.Current.CancellationToken);
+        Assert.Equal(closes, closed());
+        var saved = await ReadAsync(path);
         Assert.Equal(savedTarget, saved.Units.First().Segments[0].Target?.ToPlainText());
     }
 
     [AvaloniaFact]
     public async Task ClosingWithoutChanges_DoesNotAsk()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var dialogs = new FakeDialogs(path);
-        var (window, vm) = Show(dialogs);
-        await vm.LoadAsync(path);
-        var closed = false;
-        window.Closed += (_, _) => closed = true;
+        var dialogs = new FakeDialogs(null);
+        var (window, _, _) = await OpenAsync("sample.xlf", TestFiles.Sample, dialogs);
+        var closed = TrackClosed(window);
 
         window.Close();
-        await WaitFor(() => closed);
+        await WaitFor(closed);
 
         Assert.Empty(dialogs.Asked);
     }
@@ -164,10 +151,8 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task CtrlO_WithUnsavedChanges_Cancel_ShowsNoPicker()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var dialogs = new FakeDialogs(path) { Choice = UnsavedChangesChoice.Cancel };
-        var (window, vm) = Show(dialogs);
-        await vm.LoadAsync(path);
+        var dialogs = new FakeDialogs(null) { Choice = UnsavedChangesChoice.Cancel };
+        var (window, vm, _) = await OpenAsync("sample.xlf", TestFiles.Sample, dialogs);
         vm.Segments[0].TargetText = "Helló világ.";
 
         window.KeyPressQwerty(PhysicalKey.O, RawInputModifiers.Control);
@@ -180,11 +165,8 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task CtrlShiftS_SavesAs()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
         var copy = _files.PathOf("copy.xlf");
-        var dialogs = new FakeDialogs(path) { SavePath = copy };
-        var (window, vm) = Show(dialogs);
-        await vm.LoadAsync(path);
+        var (window, vm, _) = await OpenAsync("sample.xlf", TestFiles.Sample, new FakeDialogs(null) { SavePath = copy });
 
         window.KeyPressQwerty(PhysicalKey.S, RawInputModifiers.Control | RawInputModifiers.Shift);
         await WaitFor(() => vm.FilePath == copy);
@@ -193,74 +175,31 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal("copy.xlf — SchrödingersCAT", window.Title);
     }
 
-    // The real prompt window, through the real dialog service.
-    [AvaloniaTheory]
-    [InlineData("SaveButton", UnsavedChangesChoice.Save)]
-    [InlineData("DontSaveButton", UnsavedChangesChoice.DontSave)]
-    [InlineData("CancelButton", UnsavedChangesChoice.Cancel)]
-    public async Task UnsavedChangesDialog_ReturnsTheClickedChoice(string button, UnsavedChangesChoice expected)
-    {
-        var (owner, prompt, dialog) = ShowPrompt();
-
-        dialog.FindControl<Button>(button)!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await WaitFor(() => prompt.IsCompleted);
-
-        Assert.Equal(expected, await prompt);
-        Assert.Contains("sample.xlf", dialog.FindControl<TextBlock>("Message")!.Text);
-        owner.Close();
-    }
-
-    [AvaloniaFact]
-    public async Task UnsavedChangesDialog_ClosedWithoutAnswer_MeansCancel()
-    {
-        var (owner, prompt, dialog) = ShowPrompt();
-
-        dialog.Close(); // title bar close button
-        await WaitFor(() => prompt.IsCompleted);
-
-        Assert.Equal(UnsavedChangesChoice.Cancel, await prompt);
-        owner.Close();
-    }
-
-    [AvaloniaFact]
-    public async Task UnsavedChangesDialog_Escape_MeansCancel()
-    {
-        var (owner, prompt, dialog) = ShowPrompt();
-
-        dialog.KeyPressQwerty(PhysicalKey.Escape, RawInputModifiers.None);
-        await WaitFor(() => prompt.IsCompleted);
-
-        Assert.Equal(UnsavedChangesChoice.Cancel, await prompt);
-        owner.Close();
-    }
+    // ---------------------------------------------------------------- inline codes and issues
 
     [AvaloniaFact]
     public async Task InlineCodes_AreShownAsChips()
     {
-        var path = _files.Write("tagged.xlf", """
-            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
-              <file id="f1">
-                <unit id="u1">
-                  <originalData>
-                    <data id="d1">&lt;b class="warn"&gt;</data>
-                    <data id="d2">&lt;/b&gt;</data>
-                  </originalData>
-                  <segment>
-                    <source>Hello <ph id="1" disp="{0}" equiv="Ann" canDelete="no"/>, press <pc id="2" subType="xlf:b" type="fmt" dataRefStart="d1" dataRefEnd="d2">OK</pc>.</source>
-                    <target>Szia <ph id="1" disp="{0}" equiv="Ann" canDelete="no"/>, nyomd meg: <pc id="2" subType="xlf:b" type="fmt" dataRefStart="d1" dataRefEnd="d2">OK</pc>.</target>
-                  </segment>
-                </unit>
-              </file>
-            </xliff>
-            """);
-        var (window, vm) = Show(path);
+        var path = _files.Write("tagged.xlf", Xliff("""
+            <unit id="u1">
+              <originalData>
+                <data id="d1">&lt;b class="warn"&gt;</data>
+                <data id="d2">&lt;/b&gt;</data>
+              </originalData>
+              <segment>
+                <source>Hello <ph id="1" disp="{0}" equiv="Ann" canDelete="no"/>, press <pc id="2" subType="xlf:b" type="fmt" dataRefStart="d1" dataRefEnd="d2">OK</pc>.</source>
+                <target>Szia <ph id="1" disp="{0}" equiv="Ann" canDelete="no"/>, nyomd meg: <pc id="2" subType="xlf:b" type="fmt" dataRefStart="d1" dataRefEnd="d2">OK</pc>.</target>
+              </segment>
+            </unit>
+            """));
+        var (window, vm) = Show(new FakeDialogs(path));
 
         window.KeyPressQwerty(PhysicalKey.O, RawInputModifiers.Control);
         await WaitFor(() => vm.Segments.Count == 1);
 
-        var source = ContentBlock(window, "source");
+        var source = One<InlineContentBlock>(window, "source");
         Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], Chips(source).Select(Label));
-        Assert.Equal("Hello {0}, press ⟨bOKb⟩.", string.Concat(source.Inlines!.Select(InlineText)));
+        Assert.Equal("Hello {0}, press ⟨bOKb⟩.", PlainText(source));
 
         var (placeholder, opening, closing) = (Chips(source)[0], Chips(source)[1], Chips(source)[2]);
         Assert.Equal(["chip", "standalone", "protected"], placeholder.Classes);
@@ -271,9 +210,9 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal("End of code 2\n</b>", ToolTip.GetTip(closing));
 
         // Not selected, the target shows the same chips, read-only; selected, the editor shows them.
-        var target = ContentBlock(window, "target");
+        var target = One<InlineContentBlock>(window, "target");
         Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], Chips(target).Select(Label));
-        Assert.Equal("Szia {0}, nyomd meg: ⟨bOKb⟩.", string.Concat(target.Inlines!.Select(InlineText)));
+        Assert.Equal("Szia {0}, nyomd meg: ⟨bOKb⟩.", PlainText(target));
 
         Click(window, TargetFrames(window)[0]);
         Assert.Same(vm.Segments[0], vm.SelectedSegment);
@@ -284,23 +223,16 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task OpenEditTaggedSegmentSave_KeepsTheCodes()
     {
-        var path = _files.Write("tagged.xlf", """
-            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
-              <file id="f1">
-                <unit id="u1">
-                  <segment><source>Hello <ph id="1" disp="{0}" canDelete="no"/>, press <pc id="2" subType="xlf:b" type="fmt">OK</pc>.</source></segment>
-                </unit>
-              </file>
-            </xliff>
-            """);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, vm, path) = await OpenAsync("tagged.xlf", Xliff("""
+            <unit id="u1">
+              <segment><source>Hello <ph id="1" disp="{0}" canDelete="no"/>, press <pc id="2" subType="xlf:b" type="fmt">OK</pc>.</source></segment>
+            </unit>
+            """));
         Assert.False(IssueBadge(window).IsVisible); // not translated yet
 
         Click(window, TargetFrames(window)[0]);
         var editor = Assert.Single(VisibleEditors(window));
-        window.KeyTextInput("Szia ");
-        Dispatcher.UIThread.RunJobs();
+        Type(window, "Szia ");
 
         // Both codes are missing: the protected one is an error, and the source chips are outlined. The quality checks
         // add two notes: a trailing space, and no full stop.
@@ -308,26 +240,24 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.True(badge.IsVisible);
         Assert.Contains("error", badge.Classes);
         Assert.Equal("4", Label(badge));
-        Assert.All(Chips(ContentBlock(window, "source")), c => Assert.Contains("problem", c.Classes));
+        Assert.All(SourceChips(window), c => Assert.Contains("problem", c.Classes));
 
         // Clicking a source chip inserts it at the caret, and the editor keeps the keyboard.
-        Click(window, Chips(ContentBlock(window, "source"))[0]);
+        Click(window, SourceChips(window)[0]);
         window.KeyTextInput(", nyomd meg: ");
-        Click(window, Chips(ContentBlock(window, "source"))[1]); // a pair: the caret goes between its halves
+        Click(window, SourceChips(window)[1]); // a pair: the caret goes between its halves
         window.KeyTextInput("OK");
         Press(window, PhysicalKey.End);
-        window.KeyTextInput(".");
-        Dispatcher.UIThread.RunJobs();
+        Type(window, ".");
         Assert.Equal(["{0} 🔒", "⟨b", "b⟩"], EditorChips(editor).Select(Label));
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
         Assert.False(IssueBadge(window).IsVisible);
-        Assert.All(Chips(ContentBlock(window, "source")), c => Assert.DoesNotContain("problem", c.Classes));
+        Assert.All(SourceChips(window), c => Assert.DoesNotContain("problem", c.Classes));
 
         window.KeyPressQwerty(PhysicalKey.S, RawInputModifiers.Control);
         await WaitFor(() => !vm.IsDirty);
 
-        var saved = await new Xliff20Serializer().ReadFileAsync(path, TestContext.Current.CancellationToken);
-        var segment = saved.Units.Single().Segments.Single();
+        var segment = (await ReadAsync(path)).Units.Single().Segments.Single();
         Assert.Equal(new InlineContent(
         [
             new InlineText("Szia "),
@@ -346,9 +276,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task EditingATaggedSegment_RendersWithTheReadOnlyTargetHidden()
     {
-        var path = _files.Write("tagged.xlf", TestFiles.Sample);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, vm, _) = await OpenAsync("tagged.xlf", TestFiles.Sample);
         var tagged = vm.Segments[2];
         vm.SelectedSegment = tagged;
         Dispatcher.UIThread.RunJobs();
@@ -364,28 +292,16 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task AProblemCode_IsOutlinedInTheEditor()
     {
-        var path = _files.Write("unknown.xlf", """
-            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
-              <file id="f1">
-                <unit id="u1">
-                  <segment><source>A<ph id="1"/></source><target>A<ph id="1"/><ph id="9"/></target></segment>
-                </unit>
-              </file>
-            </xliff>
-            """);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, _, _) = await OpenAsync("unknown.xlf", Xliff("""
+            <unit id="u1">
+              <segment><source>A<ph id="1"/></source><target>A<ph id="1"/><ph id="9"/></target></segment>
+            </unit>
+            """));
 
-        Assert.Equal([[], ["problem"]], Chips(ContentBlock(window, "target")).Select(ProblemClass));
+        Assert.Equal([false, true], Chips(One<InlineContentBlock>(window, "target")).Select(IsProblem));
 
         Click(window, TargetFrames(window)[0]);
-        Assert.Equal([[], ["problem"]], EditorChips(Assert.Single(VisibleEditors(window))).Select(ProblemClass));
-    }
-
-    private static Border IssueBadge(Window window)
-    {
-        Dispatcher.UIThread.RunJobs();
-        return window.GetVisualDescendants().OfType<Border>().Single(b => b.Classes.Contains("issueBadge"));
+        Assert.Equal([false, true], EditorChips(Assert.Single(VisibleEditors(window))).Select(IsProblem));
     }
 
     // ---------------------------------------------------------------- keyboard workflow (step 7)
@@ -393,9 +309,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task CtrlDownAndCtrlUp_MoveBetweenSegments_AndTheEditorFollows()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, vm, _) = await OpenAsync("sample.xlf", TestFiles.Sample);
 
         Press(window, PhysicalKey.ArrowDown, RawInputModifiers.Control); // nothing selected: the first segment
         Assert.Same(vm.Segments[0], vm.SelectedSegment);
@@ -414,16 +328,10 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task CtrlEnter_ConfirmsTheSegmentAndMovesOn()
     {
-        var path = _files.Write("pretranslated.xlf", """
-            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
-              <file id="f1">
-                <unit id="u1"><segment><source>Hello.</source><target>Szia.</target></segment></unit>
-                <unit id="u2"><segment><source>Bye.</source></segment></unit>
-              </file>
-            </xliff>
-            """);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, vm, _) = await OpenAsync("pretranslated.xlf", Xliff("""
+            <unit id="u1"><segment><source>Hello.</source><target>Szia.</target></segment></unit>
+            <unit id="u2"><segment><source>Bye.</source></segment></unit>
+            """));
         Click(window, TargetFrames(window)[0]);
 
         Press(window, PhysicalKey.Enter, RawInputModifiers.Control);
@@ -436,23 +344,17 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Press(window, PhysicalKey.Enter, RawInputModifiers.Control);
         Assert.Same(vm.Segments[1], vm.SelectedSegment);
         Assert.Equal("Initial", vm.Segments[1].State);
-        Assert.Equal("Translate the segment before confirming it.", window.FindControl<TextBlock>("StatusText")!.Text);
+        Assert.Equal("Translate the segment before confirming it.", StatusText(window));
     }
 
     [AvaloniaFact]
     public async Task CtrlShiftDown_GoesToTheNextSegmentWithCodeIssues()
     {
-        var path = _files.Write("issues.xlf", """
-            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
-              <file id="f1">
-                <unit id="u1"><segment><source>A<ph id="1"/></source><target>A<ph id="1"/></target></segment></unit>
-                <unit id="u2"><segment><source>B<ph id="1"/><ph id="2"/></source><target>B<ph id="2"/><ph id="1"/></target></segment></unit>
-                <unit id="u3"><segment><source>C<ph id="1"/></source><target>C</target></segment></unit>
-              </file>
-            </xliff>
-            """);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, vm, _) = await OpenAsync("issues.xlf", Xliff("""
+            <unit id="u1"><segment><source>A<ph id="1"/></source><target>A<ph id="1"/></target></segment></unit>
+            <unit id="u2"><segment><source>B<ph id="1"/><ph id="2"/></source><target>B<ph id="2"/><ph id="1"/></target></segment></unit>
+            <unit id="u3"><segment><source>C<ph id="1"/></source><target>C</target></segment></unit>
+            """));
         Click(window, TargetFrames(window)[0]);
 
         // u2 only has codes reordered (info), so it's skipped; u3 is missing a code (a warning).
@@ -467,10 +369,8 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task CtrlInsert_CopiesTheSource_AskingFirstIfThereIsATranslation()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var dialogs = new FakeDialogs(path);
-        var (window, vm) = Show(dialogs);
-        await vm.LoadAsync(path);
+        var dialogs = new FakeDialogs(null);
+        var (window, vm, _) = await OpenAsync("sample.xlf", TestFiles.Sample, dialogs);
         Click(window, TargetFrames(window)[2]);
         var tagged = vm.Segments[2];
 
@@ -479,8 +379,7 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal("Press ⟨1⟩OK⟨/1⟩.", tagged.TargetText);
         Assert.Empty(dialogs.Asked);
 
-        window.KeyTextInput("!");
-        Dispatcher.UIThread.RunJobs();
+        Type(window, "!");
         Press(window, PhysicalKey.Insert, RawInputModifiers.Control); // the user cancels
         await WaitFor(() => dialogs.Asked.Count == 1);
         Assert.Equal(["confirm: Copy source"], dialogs.Asked);
@@ -494,12 +393,10 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task CopyingFromTheSourceColumn_KeepsTheCodes()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, vm, _) = await OpenAsync("sample.xlf", TestFiles.Sample);
         Click(window, TargetFrames(window)[2]);
 
-        var source = window.GetVisualDescendants().OfType<InlineContentBlock>().Where(b => b.Classes.Contains("source")).ElementAt(2);
+        var source = All<InlineContentBlock>(window, "source")[2];
         source.Focus();
         source.SelectAll();
         Press(window, PhysicalKey.C, RawInputModifiers.Control);
@@ -511,15 +408,13 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.DoesNotContain(vm.Segments[2].Issues, i => i.Code is not null); // only "same as source"
     }
 
+    // ---------------------------------------------------------------- matches, translation memory, concordance
+
     [AvaloniaFact]
     public async Task ThePane_ShowsTheMatches_AndCtrlNumberOrItsButtonInsertsOne()
     {
-        var path = _files.Write("matches.xlf", MatchesTests.WithMatches);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
-        var tm = new InMemoryTranslationMemory();
-        tm.Add(new TmEntry(InlineContent.FromText("Press OK."), InlineContent.FromText("Nyomd meg: OK.")));
-        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "Project TM", "en", "hu"));
+        var (window, vm, _) = await OpenAsync("matches.xlf", MatchesTests.WithMatches);
+        await UseMemoryAsync(vm, "Project TM", ("Press OK.", "Nyomd meg: OK."));
         var status = window.FindControl<TextBlock>("MatchesStatus")!;
         Assert.Equal("Select a segment to see its matches.", status.Text);
 
@@ -528,10 +423,10 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.False(status.IsVisible);
         Assert.Equal("Project TM (en → hu)", window.FindControl<TextBlock>("MemoryName")!.Text);
         Assert.Equal(["Ctrl+1 96%", "Ctrl+2 90%"], MatchRows(window).Select(r =>
-            $"{r.GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("insertMatch")).Content} {r.GetVisualDescendants().OfType<Border>().Single(b => b.Classes.Contains("matchScore")).GetLogicalDescendants().OfType<TextBlock>().Single().Text}"));
+            $"{One<Button>(r, "insertMatch").Content} {One<Border>(r, "matchScore").GetLogicalDescendants().OfType<TextBlock>().Single().Text}"));
 
         // The file's match has a word the current source doesn't: struck through.
-        var fileMatchSource = MatchRows(window)[1].GetVisualDescendants().OfType<InlineContentBlock>().Single(b => b.Classes.Contains("matchSource"));
+        var fileMatchSource = One<InlineContentBlock>(MatchRows(window)[1], "matchSource");
         var removed = Assert.Single(fileMatchSource.Inlines!.OfType<Run>(), r => r.TextDecorations is not null);
         Assert.Equal(" now", removed.Text);
 
@@ -540,13 +435,13 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Press(window, PhysicalKey.Digit2, RawInputModifiers.Control);
         Assert.Equal("Most nyomd meg: ⟨1⟩OK⟨/1⟩.", vm.Segments[2].TargetText);
         Assert.Equal(2, EditorChips(editor).Count);
-        Assert.Equal("Inserted the 90% match.", window.FindControl<TextBlock>("StatusText")!.Text);
+        Assert.Equal("Inserted the 90% match.", StatusText(window));
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
 
         // The button does the same, without taking the keyboard from the editor.
-        Click(window, MatchRows(window)[0].GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("insertMatch")));
+        Click(window, One<Button>(MatchRows(window)[0], "insertMatch"));
         Assert.Equal("Nyomd meg: OK.", vm.Segments[2].TargetText);
-        Assert.StartsWith("Inserted the 96% match.", window.FindControl<TextBlock>("StatusText")!.Text, StringComparison.Ordinal);
+        Assert.StartsWith("Inserted the 96% match.", StatusText(window), StringComparison.Ordinal);
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
 
         // Ctrl+Z undoes the insertion.
@@ -555,31 +450,13 @@ public sealed class MainWindowHeadlessTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task HelpOpenLogFolder_SaysWhereTheLogsAre_WhenTheFolderCantBeShown()
-    {
-        var (window, vm) = Show(new FakeDialogs(null) { FolderOpens = false });
-
-        window.FindControl<MenuItem>("OpenLogFolderItem")!.Command!.Execute(null);
-        await WaitFor(() => vm.Notice is not null);
-
-        Assert.Equal("_Help", window.FindControl<MenuItem>("HelpMenu")!.Header);
-        Assert.EndsWith(MainWindowViewModel.LogFolder, window.FindControl<SelectableTextBlock>("NoticeText")!.Text, StringComparison.Ordinal);
-    }
-
-    [AvaloniaFact]
     public async Task TheMenu_OpensATm_AndCtrlEnterFeedsTheRepetitionBelow()
     {
-        var path = _files.Write("repetitions.xlf", """
-            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
-              <file id="f1">
-                <unit id="u1"><segment><source>Hello world.</source></segment></unit>
-                <unit id="u2"><segment><source>Hello world.</source></segment></unit>
-              </file>
-            </xliff>
-            """);
-        var dialogs = new FakeDialogs(path) { MemoryToCreate = _files.PathOf("project.sctm") };
-        var (window, vm) = Show(dialogs);
-        await vm.LoadAsync(path);
+        var dialogs = new FakeDialogs(null) { MemoryToCreate = _files.PathOf("project.sctm") };
+        var (window, vm, _) = await OpenAsync("repetitions.xlf", Xliff("""
+            <unit id="u1"><segment><source>Hello world.</source></segment></unit>
+            <unit id="u2"><segment><source>Hello world.</source></segment></unit>
+            """), dialogs);
         // Items of a closed submenu aren't kept up to date, so their commands are asked.
         var closeItem = window.FindControl<MenuItem>("CloseMemoryItem")!;
         Assert.False(closeItem.Command!.CanExecute(null));
@@ -599,23 +476,17 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Same(vm.Segments[1].EditModel, editor.Model);
         Assert.Equal("Helló világ.", editor.Editor.Document.Text);
         Assert.Equal("Initial", vm.Segments[1].State);
-        Assert.Equal("Inserted the 100% match automatically. Confirm it with Ctrl+Enter.", window.FindControl<TextBlock>("StatusText")!.Text);
+        Assert.Equal("Inserted the 100% match automatically. Confirm it with Ctrl+Enter.", StatusText(window));
         await vm.ShutDownAsync();
     }
 
     [AvaloniaFact]
     public async Task TheNoticeLine_SaysWhenASegmentWasntStored()
     {
-        var path = _files.Write("errors.xlf", """
-            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
-              <file id="f1">
-                <unit id="u1"><segment><source>Open <ph id="1" canDelete="no"/>.</source><target>Megnyitás.</target></segment></unit>
-                <unit id="u2"><segment><source>Next.</source></segment></unit>
-              </file>
-            </xliff>
-            """);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
+        var (window, vm, _) = await OpenAsync("errors.xlf", Xliff("""
+            <unit id="u1"><segment><source>Open <ph id="1" canDelete="no"/>.</source><target>Megnyitás.</target></segment></unit>
+            <unit id="u2"><segment><source>Next.</source></segment></unit>
+            """));
         await vm.UseTranslationMemoryAsync(OpenTranslationMemory.Create(_files.PathOf("project.sctm"), "en", "hu"));
         var notice = window.FindControl<SelectableTextBlock>("NoticeText")!;
         Assert.False(notice.IsVisible);
@@ -634,16 +505,13 @@ public sealed class MainWindowHeadlessTests : IDisposable
     {
         var tmPath = _files.PathOf("project.sctm");
         var settings = new JsonSettingsStore(_files.PathOf("settings.json"));
-        var vm = new MainWindowViewModel(new Xliff20Serializer(), new FakeDialogs(null) { MemoryToOpen = tmPath }, settings);
-        var window = new MainWindow { DataContext = vm };
-        window.Show();
+        var (window, vm) = Show(new FakeDialogs(null) { MemoryToOpen = tmPath }, settings);
         SqliteTranslationMemory.Create(tmPath, "en", "hu").Dispose();
         await vm.OpenTranslationMemoryCommand.ExecuteAsync(null);
-        var closed = false;
-        window.Closed += (_, _) => closed = true;
+        var closed = TrackClosed(window);
 
         window.Close();
-        await WaitFor(() => closed);
+        await WaitFor(closed);
 
         Assert.Null(vm.TranslationMemory);
         Assert.Equal(tmPath, settings.Load().TranslationMemoryPath);
@@ -652,17 +520,12 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task CtrlK_SearchesTheSelection_AndInsertKeepsTheKeyboardInTheEditor()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
-        var tm = new InMemoryTranslationMemory();
-        tm.Add(new TmEntry(InlineContent.FromText("Hello there."), InlineContent.FromText("Szia, helló.")));
-        tm.Add(new TmEntry(InlineContent.FromText("Goodbye, world."), InlineContent.FromText("Viszlát, világ.")));
-        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "TM", "en", "hu"));
+        var (window, vm, _) = await OpenAsync("sample.xlf", TestFiles.Sample);
+        await UseMemoryAsync(vm, "TM", ("Hello there.", "Szia, helló."), ("Goodbye, world.", "Viszlát, világ."));
 
         // A selection in the source column: its sources are searched.
         Click(window, TargetFrames(window)[0]);
-        var source = ContentBlocks(window, "source")[0];
+        var source = All<InlineContentBlock>(window, "source")[0];
         source.SelectionStart = 0;
         source.SelectionEnd = 5;
         Press(window, PhysicalKey.K, RawInputModifiers.Control);
@@ -670,21 +533,20 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.Equal(1, window.FindControl<TabControl>("PaneTabs")!.SelectedIndex);
         Assert.Equal(("Hello", false), (vm.Concordance.Query, vm.Concordance.SearchTargets));
         var row = Assert.Single(ConcordanceRows(window));
-        var hit = Assert.Single(row.GetVisualDescendants().OfType<InlineContentBlock>().Single(b => b.Classes.Contains("resultSource")).Inlines!.OfType<Run>(), r => r.FontWeight == Avalonia.Media.FontWeight.Bold);
+        var hit = Assert.Single(One<InlineContentBlock>(row, "resultSource").Inlines!.OfType<Run>(), r => r.FontWeight == FontWeight.Bold);
         Assert.Equal("Hello", hit.Text);
 
         // A selection in the editor: the translations are searched.
         source.SelectionEnd = 0;
         var editor = Assert.Single(VisibleEditors(window));
-        window.KeyTextInput("Szia világ");
-        Dispatcher.UIThread.RunJobs();
+        Type(window, "Szia világ");
         editor.Editor.Select(5, 5);
         Press(window, PhysicalKey.K, RawInputModifiers.Control);
         await WaitFor(() => vm.Concordance.SearchTask.IsCompleted);
         Assert.Equal(("világ", true), (vm.Concordance.Query, vm.Concordance.SearchTargets));
 
         // Insert goes in at the caret, the selected term stays, and the editor keeps the keyboard.
-        Click(window, Assert.Single(ConcordanceRows(window)).GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("insertResult")));
+        Click(window, One<Button>(Assert.Single(ConcordanceRows(window)), "insertResult"));
         Assert.Equal("Szia világViszlát, világ.", vm.Segments[0].TargetText);
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
 
@@ -698,12 +560,8 @@ public sealed class MainWindowHeadlessTests : IDisposable
     [AvaloniaFact]
     public async Task CtrlK_WithoutASelection_OpensTheSearchBox_EnterSearches_EscapeReturns()
     {
-        var path = _files.Write("sample.xlf", TestFiles.Sample);
-        var (window, vm) = Show(path);
-        await vm.LoadAsync(path);
-        var tm = new InMemoryTranslationMemory();
-        tm.Add(new TmEntry(InlineContent.FromText("Save the file."), InlineContent.FromText("Mentsd a fájlt.")));
-        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, "TM", "en", "hu"));
+        var (window, vm, _) = await OpenAsync("sample.xlf", TestFiles.Sample);
+        await UseMemoryAsync(vm, "TM", ("Save the file.", "Mentsd a fájlt."));
         Click(window, TargetFrames(window)[0]);
         var editor = Assert.Single(VisibleEditors(window));
 
@@ -720,211 +578,67 @@ public sealed class MainWindowHeadlessTests : IDisposable
         Assert.True(editor.Editor.TextArea.IsKeyboardFocusWithin);
     }
 
-    private static List<InlineContentBlock> ContentBlocks(Window window, string role)
-    {
-        Dispatcher.UIThread.RunJobs();
-        return window.GetVisualDescendants().OfType<InlineContentBlock>().Where(b => b.Classes.Contains(role)).ToList();
-    }
-
-    private static List<Border> ConcordanceRows(Window window)
-    {
-        Dispatcher.UIThread.RunJobs();
-        return window.FindControl<ItemsControl>("ConcordanceList")!.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("match")).ToList();
-    }
-
-    private static List<Border> MatchRows(Window window)
-    {
-        Dispatcher.UIThread.RunJobs();
-        return window.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("match")).ToList();
-    }
-
-    // The real confirmation window, through the real dialog service.
-    [AvaloniaFact]
-    public async Task OpenFolder_CreatesTheFolder_AndOneThatCantBeCreated_IsFalseNotACrash()
-    {
-        var owner = new Window();
-        owner.Show();
-        var dialogs = new AvaloniaDialogService(owner);
-        var nested = _files.PathOf(Path.Combine("logs", "deeper"));
-
-        // Whether a file manager opened is the platform's business (the headless one has none).
-        await dialogs.OpenFolderAsync(nested);
-
-        Assert.True(Directory.Exists(nested));
-        var underAFile = Path.Combine(_files.Write("a file", ""), "logs");
-        Assert.False(await dialogs.OpenFolderAsync(underAFile));
-    }
-
-    [AvaloniaTheory]
-    [InlineData("ConfirmButton", true)]
-    [InlineData("CancelButton", false)]
-    public async Task ConfirmDialog_ReturnsTheClickedChoice(string button, bool expected)
-    {
-        var owner = new Window();
-        owner.Show();
-        var answer = new AvaloniaDialogService(owner).ConfirmAsync("Copy source", "Replace?", "Replace");
-        Dispatcher.UIThread.RunJobs();
-        var dialog = owner.OwnedWindows.OfType<ConfirmDialog>().Single();
-        Assert.Equal("Replace", dialog.FindControl<Button>("ConfirmButton")!.Content);
-
-        dialog.FindControl<Button>(button)!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await WaitFor(() => answer.IsCompleted);
-
-        Assert.Equal(expected, await answer);
-        owner.Close();
-    }
+    // ---------------------------------------------------------------- help
 
     [AvaloniaFact]
-    public async Task TargetLanguageDialog_AcceptsOnlyAValidCode()
+    public async Task HelpOpenLogFolder_SaysWhereTheLogsAre_WhenTheFolderCantBeShown()
     {
-        var owner = new Window();
-        owner.Show();
-        var answer = new AvaloniaDialogService(owner).AskTargetLanguageAsync("en", t => LanguageTag.Problem(t, "en"));
-        Dispatcher.UIThread.RunJobs();
-        var dialog = owner.OwnedWindows.OfType<TargetLanguageDialog>().Single();
-        var box = dialog.FindControl<TextBox>("LanguageBox")!;
-        var ok = dialog.FindControl<Button>("OkButton")!;
-        Assert.False(ok.IsEnabled);
-        Assert.True(box.IsFocused);
+        var (window, vm) = Show(new FakeDialogs(null) { FolderOpens = false });
 
-        dialog.KeyTextInput("EN");
-        Dispatcher.UIThread.RunJobs();
-        Assert.False(ok.IsEnabled);
-        Assert.Equal("That's the source language (en).", dialog.FindControl<TextBlock>("Problem")!.Text);
+        window.FindControl<MenuItem>("OpenLogFolderItem")!.Command!.Execute(null);
+        await WaitFor(() => vm.Notice is not null);
 
-        box.Text = "hu ";
-        Dispatcher.UIThread.RunJobs();
-        Assert.True(ok.IsEnabled);
-        Press(dialog, PhysicalKey.Enter);
-        await WaitFor(() => answer.IsCompleted);
-
-        Assert.Equal("hu", await answer);
-        owner.Close();
+        Assert.Equal("_Help", window.FindControl<MenuItem>("HelpMenu")!.Header);
+        Assert.EndsWith(MainWindowViewModel.LogFolder, window.FindControl<SelectableTextBlock>("NoticeText")!.Text, StringComparison.Ordinal);
     }
 
-    [AvaloniaFact]
-    public async Task TargetLanguageDialog_Escape_MeansCancel()
+    // ---------------------------------------------------------------- helpers
+
+    /// <summary>A document with one file, <c>en</c> to <c>hu</c>, holding <paramref name="units"/>.</summary>
+    private static string Xliff(string units) => $"""
+        <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+          <file id="f1">
+        {units}
+          </file>
+        </xliff>
+        """;
+
+    /// <summary>Writes the file, shows the window and loads the file into it.</summary>
+    private async Task<(MainWindow Window, MainWindowViewModel ViewModel, string Path)> OpenAsync(
+        string name, string content, FakeDialogs? dialogs = null)
     {
-        var owner = new Window();
-        owner.Show();
-        var answer = new AvaloniaDialogService(owner).AskTargetLanguageAsync("en", t => LanguageTag.Problem(t, "en"));
-        Dispatcher.UIThread.RunJobs();
-
-        Press(owner.OwnedWindows.OfType<TargetLanguageDialog>().Single(), PhysicalKey.Escape);
-        await WaitFor(() => answer.IsCompleted);
-
-        Assert.Null(await answer);
-        owner.Close();
+        var path = _files.Write(name, content);
+        var (window, vm) = Show(dialogs ?? new FakeDialogs(path));
+        await vm.LoadAsync(path);
+        return (window, vm, path);
     }
 
-    [AvaloniaFact]
-    public async Task ConfirmDialog_ClosedWithoutAnswer_MeansNo()
+    private static async Task<TranslationDocument> ReadAsync(string path) =>
+        await new Xliff20Serializer().ReadFileAsync(path, TestContext.Current.CancellationToken);
+
+    private static async Task UseMemoryAsync(MainWindowViewModel vm, string name, params (string Source, string Target)[] entries)
     {
-        var owner = new Window();
-        owner.Show();
-        var answer = new AvaloniaDialogService(owner).ConfirmAsync("Copy source", "Replace?", "Replace");
-        Dispatcher.UIThread.RunJobs();
-
-        owner.OwnedWindows.OfType<ConfirmDialog>().Single().Close();
-        await WaitFor(() => answer.IsCompleted);
-
-        Assert.False(await answer);
-        owner.Close();
+        var tm = new InMemoryTranslationMemory();
+        foreach (var (source, target) in entries)
+            tm.Add(new TmEntry(InlineContent.FromText(source), InlineContent.FromText(target)));
+        await vm.UseTranslationMemoryAsync(new OpenTranslationMemory(tm, name, "en", "hu"));
     }
 
-    private static void Press(Window window, PhysicalKey key, RawInputModifiers modifiers = RawInputModifiers.None)
+    private static void Type(Window window, string text)
     {
-        window.KeyPressQwerty(key, modifiers);
+        window.KeyTextInput(text);
         Dispatcher.UIThread.RunJobs();
     }
 
-    private static string[] ProblemClass(Border chip) => [.. chip.Classes.Where(c => c == "problem")];
+    private static string? StatusText(Window window) => window.FindControl<TextBlock>("StatusText")!.Text;
 
-    private static List<Border> EditorChips(TargetEditor editor)
-    {
-        Dispatcher.UIThread.RunJobs();
-        return editor.Editor.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("chip")).ToList();
-    }
+    private static Border IssueBadge(Window window) => One<Border>(window, "issueBadge");
 
-    private static InlineContentBlock ContentBlock(Window window, string role)
-    {
-        Dispatcher.UIThread.RunJobs();
-        return window.GetVisualDescendants().OfType<InlineContentBlock>().Single(b => b.Classes.Contains(role));
-    }
+    private static List<Border> SourceChips(Window window) => Chips(One<InlineContentBlock>(window, "source"));
 
-    private static List<Border> Chips(InlineContentBlock block) =>
-        block.Inlines!.OfType<InlineUIContainer>().Select(c => Assert.IsType<Border>(c.Child)).ToList();
+    private static bool IsProblem(Border chip) => chip.Classes.Contains("problem");
 
-    private static string Label(Border chip) =>
-        string.Join(" ", chip.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text));
+    private static List<Border> MatchRows(Window window) => All<Border>(window.FindControl<ItemsControl>("MatchList")!, "match");
 
-    private static string InlineText(Inline inline) => inline switch
-    {
-        Run run => run.Text ?? "",
-        InlineUIContainer { Child: Border chip } => chip.GetLogicalDescendants().OfType<TextBlock>().First(t => t.Classes.Contains("label")).Text ?? "",
-        _ => throw new InvalidOperationException($"Unexpected inline {inline.GetType().Name}."),
-    };
-
-    private static (Window Owner, Task<UnsavedChangesChoice> Prompt, UnsavedChangesDialog Dialog) ShowPrompt()
-    {
-        var owner = new Window();
-        owner.Show();
-        var prompt = new AvaloniaDialogService(owner).AskToSaveChangesAsync("sample.xlf");
-        Dispatcher.UIThread.RunJobs();
-        return (owner, prompt, owner.OwnedWindows.OfType<UnsavedChangesDialog>().Single());
-    }
-
-    private static (MainWindow Window, MainWindowViewModel ViewModel) Show(string path) => Show(new FakeDialogs(path));
-
-    private static (MainWindow Window, MainWindowViewModel ViewModel) Show(FakeDialogs dialogs)
-    {
-        var vm = new MainWindowViewModel(new Xliff20Serializer(), dialogs);
-        var window = new MainWindow { DataContext = vm };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-        return (window, vm);
-    }
-
-    private static List<Border> TargetFrames(Window window)
-    {
-        Dispatcher.UIThread.RunJobs();
-        return window.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("targetFrame")).ToList();
-    }
-
-    private static List<InlineContentBlock> TargetViews(Window window)
-    {
-        Dispatcher.UIThread.RunJobs();
-        return window.GetVisualDescendants().OfType<InlineContentBlock>().Where(b => b.Classes.Contains("target")).ToList();
-    }
-
-    private static List<TargetEditor> VisibleEditors(Window window)
-    {
-        Dispatcher.UIThread.RunJobs();
-        return window.GetVisualDescendants().OfType<TargetEditor>().Where(e => e.IsEffectivelyVisible).ToList();
-    }
-
-    private static string PlainText(InlineContentBlock block) => string.Concat((block.Inlines ?? []).Select(InlineText));
-
-    private static void Click(Window window, Control control, bool onText = false)
-    {
-        var point = control.TranslatePoint(onText ? new Point(8, control.Bounds.Height / 2) : new Point(4, 4), window)!.Value;
-        window.MouseDown(point, MouseButton.Left);
-        window.MouseUp(point, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-    }
-
-    // Commands run async file I/O; keep the dispatcher going until the effect is visible.
-    private static async Task WaitFor(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!condition())
-        {
-            if (DateTime.UtcNow > deadline)
-                throw new TimeoutException("The window did not reach the expected state.");
-            Dispatcher.UIThread.RunJobs();
-            await Task.Delay(10, TestContext.Current.CancellationToken);
-        }
-
-        Dispatcher.UIThread.RunJobs();
-    }
+    private static List<Border> ConcordanceRows(Window window) => All<Border>(window.FindControl<ItemsControl>("ConcordanceList")!, "match");
 }
