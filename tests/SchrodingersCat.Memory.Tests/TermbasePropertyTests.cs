@@ -99,8 +99,8 @@ public class TermbasePropertyTests
             }
         });
 
-    // Any damage, to the bytes or to a value, either opens to entries the termbase could have stored or fails with
-    // TermbaseFormatException; and the file is closed either way.
+    // Any damage, to the bytes or to a value, either opens to entries the termbase could have stored, exactly as the
+    // file holds them, or fails with TermbaseFormatException; and the file is closed either way.
     [Fact]
     public void DamagedFiles_FailOnlyWithTermbaseFormatException() =>
         Gen.Select(
@@ -121,14 +121,13 @@ public class TermbasePropertyTests
                 try
                 {
                     using var opened = SqliteTermbase.Open(path);
-                    var loaded = opened.Index.Entries().ToList();
-                    Assert.Equal(loaded, TermIndex.Of(loaded).Entries());
-                    Assert.All(loaded, e => Assert.NotEmpty(e.Entry.Source));
-                    Assert.All(loaded, e => Assert.Equal(TimeSpan.Zero, e.Entry.Changed.Offset));
+                    AssertAsStored(path, [.. opened.Index.Entries()]);
                 }
                 catch (TermbaseFormatException)
                 {
                 }
+
+                SqliteTermbaseTests.AssertClosed(path, delete: false);
             }
             finally
             {
@@ -189,6 +188,35 @@ public class TermbasePropertyTests
                 }
         }
     }
+
+    // The entries loaded are the file's rows, read here apart from Load and checked against what the termbase writes:
+    // every entry once, a positive id, and its terms, each side numbered from 0, source first, and no other terms.
+    private static void AssertAsStored(string path, List<StoredTermEntry> loaded)
+    {
+        var entries = SqliteTermbaseTests.Rows(path, "SELECT id, note, changed, changed_by FROM entries ORDER BY id");
+        var terms = SqliteTermbaseTests.Rows(path, "SELECT entry, side, position, text, status, note FROM terms ORDER BY entry, side, position");
+        Assert.Equal(entries.Count, loaded.Count);
+        Assert.Equal(terms.Count, loaded.Sum(e => e.Entry.Source.Count + e.Entry.Target.Count));
+
+        var next = 0;
+        for (var i = 0; i < loaded.Count; i++)
+        {
+            var (id, entry) = loaded[i];
+            Assert.True(id.Value > 0);
+            Assert.Equal([id.Value, Bytes(entry.Note), entry.Changed.UtcTicks, Bytes(entry.ChangedBy)], entries[i]);
+            Assert.Equal(TimeSpan.Zero, entry.Changed.Offset);
+            foreach (var (side, list) in new[] { (0L, entry.Source), (1L, entry.Target) })
+            {
+                for (var position = 0; position < list.Count; position++)
+                {
+                    var term = list[position];
+                    Assert.Equal([id.Value, side, (long)position, Bytes(term.Text), (long)term.Status, Bytes(term.Note)], terms[next++]);
+                }
+            }
+        }
+    }
+
+    private static byte[]? Bytes(string? text) => text is null ? null : TermbaseText.Write(text);
 
     private static void AssertSame(TermIndex expected, TermIndex actual)
     {

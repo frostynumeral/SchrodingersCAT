@@ -54,8 +54,8 @@ public sealed class TermRecord
     public string? MarkerId { get; init; }
 
     /// <summary>
-    /// What the terminology check works out from the record, once however many segments it checks: a termbase's
-    /// records are kept with its index, so a source with many terms doesn't classify them for every segment again.
+    /// What the terminology check works out from the record, once however many segments it checks: a termbase's term
+    /// source keeps the records it found, so a source with many terms doesn't classify them for every segment again.
     /// Two threads may both work it out, with the same result.
     /// </summary>
     internal TerminologyCheck.RecordTerms Checked => field ??= TerminologyCheck.RecordTerms.Of(this);

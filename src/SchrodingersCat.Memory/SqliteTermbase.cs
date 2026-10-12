@@ -9,7 +9,7 @@ namespace SchrodingersCat.Memory;
 /// </summary>
 /// <remarks>
 /// <para><b>Reading</b> is from memory: <see cref="Open"/> reads every entry into <see cref="Index"/> (200,000 entries
-/// in about 1.8 s, see step 3 of the design), so call it on a background thread. After each write commits,
+/// in about 1.7 s, see step 3 of the design), so call it on a background thread. After each write commits,
 /// <see cref="Index"/> is replaced by a new snapshot; it can be read from any thread, while the writes run one at a
 /// time.</para>
 /// <para><b>Untrusted files:</b> a termbase can come from someone else. Opening one checks its format, version and
@@ -25,7 +25,7 @@ public sealed class SqliteTermbase : ITermbase
     private const string Format = "SchrodingersCat.TB";
 
     // How often loading checks for cancellation, in entries.
-    private const int CheckEvery = 4_096;
+    internal const int CheckEvery = 4_096;
 
     // A term's side, as stored.
     private const long SourceSide = 0;
@@ -108,7 +108,10 @@ public sealed class SqliteTermbase : ITermbase
     /// </summary>
     /// <exception cref="TermbaseFormatException">The file isn't a termbase, is damaged, or is from another format version.</exception>
     /// <exception cref="OperationCanceledException">Cancelled; the file is closed again.</exception>
-    public static SqliteTermbase Open(string path, CancellationToken cancellationToken = default)
+    public static SqliteTermbase Open(string path, CancellationToken cancellationToken = default) => Open(path, checkpoint: null, cancellationToken);
+
+    // checkpoint runs where loading checks for cancellation, before it checks: for tests, which cancel there.
+    internal static SqliteTermbase Open(string path, Action? checkpoint, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(path);
         if (!File.Exists(path))
@@ -135,10 +138,15 @@ public sealed class SqliteTermbase : ITermbase
             var meta = new Dictionary<string, string>();
             using (var command = connection.CreateCommand())
             {
-                command.CommandText = "SELECT key, value FROM meta";
+                // Text only: GetString would turn a number or a BLOB into text, which the writes (MetaLong) wouldn't read.
+                command.CommandText = "SELECT key, value, typeof(key) = 'text' AND typeof(value) = 'text' FROM meta";
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
+                {
+                    if (reader.GetInt64(2) != 1)
+                        throw new TermbaseFormatException($"'{name}' has a damaged setting.");
                     meta[reader.GetString(0)] = reader.GetString(1);
+                }
             }
 
             if (meta.GetValueOrDefault("format") != Format)
@@ -153,7 +161,7 @@ public sealed class SqliteTermbase : ITermbase
                 throw new TermbaseFormatException($"'{name}' has no ids left.");
             MetaNumber(meta.GetValueOrDefault("deleted_since_compact"));
 
-            var index = TermIndex.Of(Load(connection, name, cancellationToken));
+            var index = TermIndex.Of(Load(connection, name, checkpoint, cancellationToken));
             return new SqliteTermbase(connection, source, target, index);
         }
         catch (Exception ex)
@@ -179,7 +187,7 @@ public sealed class SqliteTermbase : ITermbase
             return [];
 
         using var transaction = _connection.BeginTransaction();
-        var next = NextId();
+        var next = NextIds(list.Count);
         using var insertEntry = Command(
             "INSERT INTO entries(id, note, changed, changed_by) VALUES($id, $note, $changed, $changedBy)", "$id", "$note", "$changed", "$changedBy");
         using var insertTerm = TermCommand();
@@ -285,14 +293,17 @@ public sealed class SqliteTermbase : ITermbase
 
     // ---------------------------------------------------------------- storing
 
-    // The next id after both the last one stored and the last one deleted, so an id is never reused: a stale id in the
-    // app can't reach another entry.
-    private long NextId()
+    // The first of count new ids, the next after both the last one stored and the last one deleted, so an id is never
+    // reused: a stale id in the app can't reach another entry. Fails before anything is written if the last of them
+    // would pass long.MaxValue, as a wrapped id would be negative and the file could no longer be opened.
+    private long NextIds(int count)
     {
         var highest = (long)Scalar("SELECT coalesce(max(id), 0) FROM entries")!;
         try
         {
-            return checked(Math.Max(highest, MetaLong("last_deleted_id")) + 1);
+            var first = checked(Math.Max(highest, MetaLong("last_deleted_id")) + 1);
+            _ = checked(first + (count - 1));
+            return first;
         }
         catch (OverflowException ex)
         {
@@ -343,7 +354,12 @@ public sealed class SqliteTermbase : ITermbase
     {
         try
         {
-            return MetaNumber(Scalar("SELECT value FROM meta WHERE key = $key", ("$key", key)) as string);
+            return Scalar("SELECT value FROM meta WHERE key = $key", ("$key", key)) switch
+            {
+                null => 0,
+                string value => MetaNumber(value),
+                var other => throw new FormatException($"A {other.GetType().Name} isn't a count."),
+            };
         }
         catch (FormatException ex)
         {
@@ -362,7 +378,7 @@ public sealed class SqliteTermbase : ITermbase
     // Every entry, in the order of its id: entries and terms are read side by side, each in the order it is stored,
     // and every value is checked, so a damaged file can't give an entry the termbase couldn't have stored. Each row is
     // read in one call (GetValues), as reading a column at a time costs most of the time loading takes.
-    private static IEnumerable<StoredTermEntry> Load(SqliteConnection connection, string name, CancellationToken cancellationToken)
+    private static IEnumerable<StoredTermEntry> Load(SqliteConnection connection, string name, Action? checkpoint, CancellationToken cancellationToken)
     {
         using var entriesCommand = connection.CreateCommand();
         entriesCommand.CommandText = "SELECT id, note, changed, changed_by FROM entries ORDER BY id";
@@ -382,7 +398,10 @@ public sealed class SqliteTermbase : ITermbase
         while (Next(entries, entry))
         {
             if (++count % CheckEvery == 0)
+            {
+                checkpoint?.Invoke();
                 cancellationToken.ThrowIfCancellationRequested();
+            }
 
             var id = Integer(entry[0]);
             StoredTermEntry stored;

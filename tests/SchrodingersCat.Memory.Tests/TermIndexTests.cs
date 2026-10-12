@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Models;
 
@@ -412,20 +413,43 @@ public class TermIndexTests
         Assert.Throws<OperationCanceledException>(() => TermIndex.Empty.WithRange(Failing().Select(e => e.Id.Value < 5_000 ? e : throw new OperationCanceledException())));
     }
 
-    // The check's records are made once per entry, and kept by later snapshots for the entries they keep.
+    // The check's records are made once per entry by each term source, and kept by the source, not by the index: a
+    // record costs nearly as much as its entry in the index, so one kept for every entry ever found would grow past the
+    // memory budget while the termbase is open.
     [Fact]
-    public void TheTermSource_KeepsEachEntrysRecord()
+    public void TheTermSource_KeepsEachEntrysRecord_AndTheIndexDoesnt()
     {
         var index = Index(["file"], ["folder"]);
         var text = Text("Move the file to the folder.");
 
-        var first = index.ToTermSource("client").Find(text);
-        var later = index.With(new TermEntryId(3), Entry("disk")).ToTermSource("client").Find(text);
-
+        var terms = index.ToTermSource("client");
+        var first = terms.Find(text);
         Assert.Equal(2, first.Count);
-        Assert.All(first.Zip(later), pair => Assert.Same(pair.First, pair.Second));
+        Assert.All(first.Zip(terms.Find(text)), pair => Assert.Same(pair.First, pair.Second));
         Assert.NotSame(first[0], index.ToTermSource("other").Find(text)[0]);
+
+        // A later snapshot's source takes over the previous source's records, except an entry changed since, and only
+        // for the same termbase.
+        var later = index.With(new TermEntryId(3), Entry("disk")).With(new TermEntryId(2), Entry("folder", "mappa"));
+        var next = later.ToTermSource("client", terms).Find(text);
+        Assert.Same(first[0], next[0]);
+        Assert.NotSame(first[1], next[1]);
+        Assert.Equal(["mappa"], next[1].Translations);
+        Assert.NotSame(first[0], later.ToTermSource("client").Find(text)[0]);
+        Assert.NotSame(first[0], later.ToTermSource("other", terms).Find(text)[0]);
+
+        var records = RecordsOfASourceDropped(index, text);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.Equal(2, records.Length);
+        Assert.All(records, r => Assert.False(r.TryGetTarget(out _)));
+        GC.KeepAlive(index);
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference<TermRecord>[] RecordsOfASourceDropped(TermIndex index, QaText text) =>
+        [.. index.ToTermSource("client").Find(text).Select(r => new WeakReference<TermRecord>(r))];
 
     // Many terms filed under one key (a common first word) don't copy that key's bucket per term.
     [Fact]

@@ -175,7 +175,7 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
     editor can point at an entry.
 - **Untrusted files**, as for the TM: `Open` requires exactly the expected tables, compared with their SQL text (no
   triggers, views or indexes of the file's own, and no table changed by `ALTER TABLE`), the format, version and
-  languages in `meta` and no other keys, sets `trusted_schema=OFF`, doesn't pool connections, and checks every value
+  languages in `meta` (stored as text) and no other keys, sets `trusted_schema=OFF`, doesn't pool connections, and checks every value
   it loads; anything else throws `TermbaseFormatException`, the termbase's format exception.
 - **Loading** reads every entry into the index when the termbase opens, on a background thread, at startup too.
   Until it's done the terms list shows "Loading…", the source has no marks, and the check uses the file's glossary
@@ -345,6 +345,22 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
 
      ¹ Adding the document's 50 most frequent words; see the corrections below.
 
+     Memory after use (measured after review, with the spike's termbase file and a document generated to the same
+     description, 20.8 hits per segment): the rows above measured the index right after loading, before any lookup.
+     The fifth row kept each entry's check record with the index once a lookup had found it (its lists, and each term
+     and translation trimmed, keyed and classified), and the index's entries are shared by every later snapshot, so
+     the records stayed while the termbase was open: one check of the document found 25,443 entries and added 19.5 MB
+     (about 770 bytes a record; 209 MB in all), and a record for every entry would add 190 MB (380 MB). Keeping at most
+     4,096 records (a slot per entry's hash) bounded that, but the document's check thrashed it: 650 ms, as slow as
+     keeping none (600 ms, against 400 ms with every record kept; this document's check is slower than the spike's in
+     the table, so compare these three only with each other). So the term source keeps the records of the entries it
+     found, and the index none: the index is 187 MB (937 bytes per entry, the record's field gone) however long it is
+     open, re-checking takes as long as with records kept, and the records go with the source (21 MB for this document,
+     the dictionary's nodes included). A new snapshot's source takes over the previous one's records
+     (`ToTermSource`'s `previous`; an entry changed since gets a new record): re-checking in full the units a new term
+     affects (100 adds as in the table, 40 units on average) took p95 70 ms with a fresh source, and 38 ms with the
+     records taken over, as with records kept in the index.
+
      Other timings: the import of 200,000 entries 2.6 s (a 48.7 MB file); one update 5 ms; deleting 20,000 entries
      in one call 0.33 s; `Compact` after deleting 70% of them 0.09 s (48.7 → 13.7 MB).
    - **Where the time went:** in lookups, terms with punctuation filed under their first word run or first
@@ -370,12 +386,15 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
        77 ms, or 47 ms with the units in parallel: the fallback if the cache isn't there.
      - **Re-checking the document** takes 0.48 s on one thread; step 5 may still run it off the UI thread (0.26 s
        in parallel), as it follows opening or loading the termbase.
-     - **The index** is 189 MB (945 bytes per entry), near the budget: if a larger termbase needs it, notes leave
-       the index first (the pane would read them from the file).
+     - **The index** is 189 MB (945 bytes per entry) as measured, 187 MB without the record field (above), near the
+       budget: if a larger termbase needs it, notes leave the index first (the pane would read them from the file).
+       The check's records are kept by its term source, not the index (21 MB for the document): step 5 makes a term
+       source per document checked and drops it with the document, never one for the whole session, and after a
+       write makes the new snapshot's source from the document's previous one.
    - **Also in this step:** the TM's schema check ignored any object named like an automatic index with `LIKE
      'sqlite_autoindex_%'`, where `_` matches any character, so a trigger named `sqliteXautoindexX…` passed unseen;
      it now ignores only an index whose name matches by `GLOB` and that has no SQL. In Core, a `TermRecord` copies
-     its lists and keeps what the terminology check works out from it, and `Words.Fold` returns text that is folded
+     its lists and keeps what the terminology check works out from it (`TermRecord.Checked`), and `Words.Fold` returns text that is folded
      already as it is.
 4. **Exchange:** TBX 2 and 3 import (DCA and DCT), TBX 2 export (TBX 3 as an option), CSV import and export.
    - Sample files of every variant, from other tools where their licences allow; round trips through TBX keep

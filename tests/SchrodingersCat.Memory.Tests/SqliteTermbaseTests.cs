@@ -105,7 +105,91 @@ public sealed class SqliteTermbaseTests : IDisposable
             termbase.Add(Entry("file"));
 
         Assert.Throws<OperationCanceledException>(() => SqliteTermbase.Open(path, new CancellationToken(canceled: true)));
-        File.Delete(path);
+        AssertClosed(path);
+    }
+
+    // Cancelled while the entries load (on other threads, through TermIndex's Parallel.ForEach): the same exception, not
+    // an AggregateException, and the file is closed.
+    [Fact]
+    public void Open_CanBeCancelledWhileLoading_AndClosesTheFile()
+    {
+        var path = PathOf("a.sctb");
+        using (var termbase = SqliteTermbase.Create(path, "en", "hu"))
+            termbase.AddRange([.. Enumerable.Range(0, SqliteTermbase.CheckEvery * 2 + 10).Select(i => Entry($"term {i}"))]);
+
+        using var cancel = new CancellationTokenSource();
+        var checks = 0;
+        Assert.Throws<OperationCanceledException>(() => SqliteTermbase.Open(
+            path,
+            () =>
+            {
+                if (++checks == 1)
+                    cancel.Cancel();
+            },
+            cancel.Token));
+        Assert.Equal(1, checks);
+        AssertClosed(path);
+    }
+
+    // The ids of a batch are checked as a whole before anything is written: one past long.MaxValue would wrap to a
+    // negative id, and the file could no longer be opened.
+    [Theory]
+    [InlineData("UPDATE terms SET entry = 9223372036854775806 WHERE entry = 1; UPDATE entries SET id = 9223372036854775806 WHERE id = 1")]
+    [InlineData("DELETE FROM terms; DELETE FROM entries; INSERT INTO meta VALUES('last_deleted_id', '9223372036854775806')")]
+    public void AddRange_PastTheLastId_FailsBeforeWriting(string sql)
+    {
+        var path = PathOf("a.sctb");
+        using (var termbase = SqliteTermbase.Create(path, "en", "hu"))
+            termbase.Add(Entry("first"));
+        Sql(path, sql);
+
+        using (var termbase = SqliteTermbase.Open(path))
+        {
+            var before = termbase.Index.Entries().ToList();
+            Assert.Throws<TermbaseFormatException>(() => termbase.AddRange([Entry("a"), Entry("b"), Entry("c")]));
+            Assert.Equal(before, termbase.Index.Entries());
+            Assert.Throws<TermbaseFormatException>(() => termbase.AddRange([Entry("a"), Entry("b")]));
+            Assert.Equal(long.MaxValue, termbase.Add(Entry("last")).Value);
+            Assert.Throws<TermbaseFormatException>(() => termbase.Add(Entry("one more")));
+        }
+
+        using var reopened = SqliteTermbase.Open(path);
+        Assert.Equal(long.MaxValue, reopened.Index.Entries().Last().Id.Value);
+        Assert.All(reopened.Index.Entries(), e => Assert.True(e.Id.Value > 0));
+    }
+
+    // A setting stored as a number or a BLOB, which only a file written otherwise has (meta is STRICT): GetString would
+    // read it as text, and the writes wouldn't, so last_deleted_id = 100 would count as 0 and deleted ids come again.
+    [Theory]
+    [InlineData("INSERT INTO meta VALUES('last_deleted_id', 100)")]
+    [InlineData("INSERT INTO meta VALUES('last_deleted_id', x'313030')")]
+    [InlineData("INSERT INTO meta VALUES(x'6c6173745f64656c657465645f6964', '100')")]
+    public void Open_ASettingThatIsntText_IsRefused(string insert)
+    {
+        var path = PathOf("a.sctb");
+        using (var termbase = SqliteTermbase.Create(path, "en", "hu"))
+            termbase.Add(Entry("file"));
+
+        // meta's SQL without STRICT while the value goes in, then as it was, so the schema check still passes.
+        const string Strict = "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT, WITHOUT ROWID";
+        const string Loose = "CREATE TABLE meta(key BLOB PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID";
+        Sql(path, $"PRAGMA writable_schema = ON; UPDATE sqlite_schema SET sql = '{Loose}' WHERE name = 'meta'");
+        Sql(path, insert);
+        Sql(path, $"PRAGMA writable_schema = ON; UPDATE sqlite_schema SET sql = '{Strict}' WHERE name = 'meta'");
+        Assert.Contains(Rows(path, "SELECT typeof(key), typeof(value) FROM meta"), r => (string)r[0]! != "text" || (string)r[1]! != "text");
+
+        Assert.Throws<TermbaseFormatException>(() => SqliteTermbase.Open(path));
+        AssertClosed(path);
+    }
+
+    // AssertClosed sees an open termbase, so its checks aren't vacuous.
+    [Fact]
+    public void AssertClosed_SeesAnOpenTermbase()
+    {
+        var path = PathOf("a.sctb");
+        using (var termbase = SqliteTermbase.Create(path, "en", "hu"))
+            Assert.ThrowsAny<Exception>(() => AssertClosed(path, delete: false));
+        AssertClosed(path);
     }
 
     public static TheoryData<string> Untrusted =>
@@ -165,7 +249,7 @@ public sealed class SqliteTermbaseTests : IDisposable
         var error = Assert.Throws<TermbaseFormatException>(() => SqliteTermbase.Open(path));
         if (damage.Contains("'2'", StringComparison.Ordinal))
             Assert.Contains("another version (2)", error.Message, StringComparison.Ordinal);
-        File.Delete(path);
+        AssertClosed(path);
     }
 
     public static TheoryData<string> Damage =>
@@ -205,12 +289,49 @@ public sealed class SqliteTermbaseTests : IDisposable
 
         var error = Assert.Throws<TermbaseFormatException>(() => SqliteTermbase.Open(path));
         Assert.Contains("damaged", error.Message, StringComparison.Ordinal);
-        File.Delete(path);
+        AssertClosed(path);
     }
 
     private string PathOf(string name) => Path.Combine(_directory, name);
 
     private static TermEntry Entry(string term) => new([new Term(term)], [], null, Monday, null);
+
+    /// <summary>
+    /// Fails if this process still has the file open, then deletes it. On Linux, where deleting an open file succeeds,
+    /// by the process's open files (<c>/proc/self/fd</c>); elsewhere by opening it unshared, which an open SQLite
+    /// connection prevents on Windows.
+    /// </summary>
+    internal static void AssertClosed(string path, bool delete = true)
+    {
+        var full = Path.GetFullPath(path);
+        if (OperatingSystem.IsLinux())
+        {
+            var open = new List<string>();
+            foreach (var fd in Directory.EnumerateFileSystemEntries("/proc/self/fd"))
+            {
+                try
+                {
+                    if (new FileInfo(fd).LinkTarget is { } target)
+                        open.Add(target);
+                }
+                catch (IOException)
+                {
+                    // Closed meanwhile.
+                }
+            }
+
+            Assert.DoesNotContain(full, open);
+        }
+        else
+        {
+            using (File.Open(full, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+            }
+        }
+
+        if (delete)
+            File.Delete(full);
+    }
 
     internal static List<object?[]> Rows(string path, string sql)
     {

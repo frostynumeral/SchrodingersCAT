@@ -123,9 +123,20 @@ public sealed class TermIndex
 
     /// <summary>
     /// This index as the terminology check's term source (section 5): each entry found, as a record from the named
-    /// termbase. It stays with this index; a termbase that changes gives the check a new one.
+    /// termbase. It stays with this index; a termbase that changes gives the check a new one. It keeps the record of
+    /// each entry it found (about 800 bytes each), so keep a source only as long as what it checks, such as one
+    /// document, not for as long as the termbase is open.
     /// </summary>
-    public ITermSource ToTermSource(string termbaseName) => new TermSource(this, TermOrigin.OfTermbase(termbaseName));
+    /// <param name="termbaseName">The termbase's name, for the check's messages.</param>
+    /// <param name="previous">
+    /// The source the same check used before the termbase changed, if any: the new source keeps using its records (an
+    /// entry changed since gets a new one), so re-checking after a write doesn't make them all again.
+    /// </param>
+    public ITermSource ToTermSource(string termbaseName, ITermSource? previous = null)
+    {
+        var origin = TermOrigin.OfTermbase(termbaseName);
+        return new TermSource(this, origin, previous is TermSource { Origin: var same } kept && same.Equals(origin) ? kept.Records : new(ReferenceEqualityComparer.Instance));
+    }
 
     /// <summary>What <see cref="Find"/> finds, by trying every term of every entry: what the index must agree with.</summary>
     internal IReadOnlyList<TermHit> Scan(QaText source)
@@ -402,10 +413,6 @@ public sealed class TermIndex
     // An entry, and its source terms classified once, in the entry's order.
     private sealed class Indexed(TermEntry entry, ImmutableArray<TermPattern> patterns)
     {
-        // The entry as the check's record, kept for the next lookup: the check works out what it needs from a record
-        // once, so a record made anew for every segment would cost that every time.
-        private TermRecord? _record;
-
         public TermEntry Entry { get; } = entry;
 
         public ImmutableArray<TermPattern> Patterns { get; } = patterns;
@@ -414,15 +421,6 @@ public sealed class TermIndex
         {
             ArgumentNullException.ThrowIfNull(entry);
             return new(entry, [.. entry.Source.Select(t => TermPattern.Of(t.Text))]);
-        }
-
-        // Two threads may both make it, with the same result.
-        public TermRecord RecordFrom(TermOrigin origin)
-        {
-            var record = _record;
-            if (record is null || !record.Origin.Equals(origin))
-                _record = record = Entry.ToRecord(origin);
-            return record;
         }
     }
 
@@ -579,9 +577,20 @@ public sealed class TermIndex
         }
     }
 
-    // The check's term source over one index.
-    private sealed class TermSource(TermIndex index, TermOrigin origin) : ITermSource
+    // The check's term source over one index. It keeps the record of each entry it found: the check works out what it
+    // needs from a record once (TermRecord.Checked), so a record made anew for every segment would cost that every
+    // time. A record costs about 800 bytes, nearly as much as its entry in the index, so the records stay with the
+    // source, not the index, and go with it (step 3 of docs/design/termbase.md). Any thread may look up; two may both
+    // make a record, and one is kept.
+    private sealed class TermSource(TermIndex index, TermOrigin origin, ConcurrentDictionary<Indexed, TermRecord> records) : ITermSource
     {
-        public IReadOnlyList<TermRecord> Find(QaText source) => [.. index.FindIndexed(source).Select(h => h.Indexed.RecordFrom(origin))];
+        public TermOrigin Origin => origin;
+
+        // By the entry's place in the index, which a changed entry doesn't keep, so it never gets its old record (which
+        // stays until the sources sharing it go). Shared with the sources that follow this one (ToTermSource's previous).
+        public ConcurrentDictionary<Indexed, TermRecord> Records => records;
+
+        public IReadOnlyList<TermRecord> Find(QaText source) =>
+            [.. index.FindIndexed(source).Select(h => records.GetOrAdd(h.Indexed, static (indexed, origin) => indexed.Entry.ToRecord(origin), origin))];
     }
 }

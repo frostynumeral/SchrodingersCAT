@@ -35,8 +35,10 @@ public sealed class InMemoryTermbase : ITermbase
         if (list.Count == 0)
             return [];
 
+        // Checked, as the SQLite termbase's ids are: an id past long.MaxValue would wrap to a negative one.
+        var last = checked(_lastId + list.Count);
         var stored = list.Select((entry, i) => new StoredTermEntry(new TermEntryId(_lastId + 1 + i), entry)).ToList();
-        _lastId += list.Count;
+        _lastId = last;
         _index = _index.WithRange(stored);
         return [.. stored.Select(s => s.Id)];
     }
