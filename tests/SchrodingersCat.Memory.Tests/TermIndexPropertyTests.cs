@@ -12,11 +12,6 @@ namespace SchrodingersCat.Memory.Tests;
 /// </summary>
 public class TermIndexPropertyTests
 {
-    private static readonly Gen<string> AnyTerm = Gen.Frequency(
-        (2, TermGen.Term),
-        (1, Gen.Char['\0', '\uFFFF'].Array[0, 6].Select(c => new string(c))),
-        (1, Gen.OneOfConst("", " ", "\uD800", "\uDC00", "￼", "￿", "\u0001", "́", "゙", "\U0001D400")));
-
     // Documents' sources, and terms cut from them anywhere: half words, half folds, lone surrogates.
     private static readonly Gen<(InlineContent[] Texts, StoredTermEntry[] Entries)> DocumentCase =
         from document in XliffGen.Document
@@ -70,10 +65,20 @@ public class TermIndexPropertyTests
             }
         });
 
+    // Folding is each character folded; text folded already comes back as it is, without a copy.
+    [Fact]
+    public void Fold_IsEachCharacterFolded() =>
+        Gen.Frequency((1, Gen.String), (1, TermGen.AnyTerm), (1, TermGen.Term)).Sample(text =>
+        {
+            Assert.Equal(string.Concat(text.Select(Words.FoldOne)), Words.Fold(text));
+            if (text.All(c => Words.FoldOne(c) == c.ToString()))
+                Assert.Same(text, Words.Fold(text));
+        });
+
     // FindTerm is the first place FindAll finds; and with no codes, the check's search is the rule's.
     [Fact]
     public void FindTerm_IsTheFirstOfFindAll() =>
-        Gen.Select(TermGen.Content, AnyTerm).Sample((content, term) =>
+        Gen.Select(TermGen.Content, TermGen.AnyTerm).Sample((content, term) =>
         {
             var source = QaText.Of(content);
             var all = Words.FindAll(PreparedText.Of(source.Text), TermPattern.Of(term)).ToList();
@@ -148,7 +153,7 @@ public class TermIndexPropertyTests
 
     [Fact]
     public void Lookups_NeverThrow() =>
-        Gen.Select(Gen.Select(AnyTerm.Array[1, 3], AnyTerm.Array[0, 2]).Array[0, 6], Gen.Frequency(
+        Gen.Select(Gen.Select(TermGen.AnyTerm.Array[1, 3], TermGen.AnyTerm.Array[0, 2]).Array[0, 6], Gen.Frequency(
             (1, TermGen.Content.Array[1, 3]),
             (1, XliffGen.Document.Select(d => d.Units.SelectMany(u => u.Segments).Select(s => s.Source).ToArray())))).Sample((entries, texts) =>
         {

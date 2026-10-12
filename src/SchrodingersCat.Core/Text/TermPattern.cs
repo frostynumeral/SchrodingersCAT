@@ -29,7 +29,7 @@ internal sealed class TermPattern
         Key = Rule switch
         {
             TermRule.Words => KeyOf(Words.WordRun(Phrase[0], 0), Phrase[0]),
-            TermRule.Punctuated => KeyOf(FirstRun(Needle), Needle),
+            TermRule.Punctuated => PunctuatedKey(Needle),
             TermRule.Folded => Needle[..1],
             _ => "",
         };
@@ -55,23 +55,22 @@ internal sealed class TermPattern
     public bool EndsInPunctuation { get; }
 
     /// <summary>
-    /// What any text the term is in has somewhere in its folded form: the first word run (<see cref="Words.WordRun"/>)
-    /// of a term with words, the first folded character of a term without; "" for <see cref="TermRule.None"/>.
+    /// What any text the term is in has where it starts, folded: the first word run (<see cref="Words.WordRun"/>) of a
+    /// term with words; the needle up to its first space of a term with punctuation (<c>c#</c>, <c>.net</c>,
+    /// <c>wi-fi</c>), apostrophes and hyphens as one, code marks in the text skipped; the first folded character of a
+    /// term in a script without spaces, or with no words; "" for <see cref="TermRule.None"/>. Cut at
+    /// <see cref="Words.MaxKeyLength"/> characters.
     /// </summary>
     public string Key { get; }
 
-    // The needle's first word run: .NET under "net", C# under "c".
-    private static string FirstRun(string needle)
+    private static string PunctuatedKey(string needle)
     {
-        for (var i = 0; i < needle.Length; i++)
-        {
-            if (Words.IsKeyChar(needle[i]))
-                return Words.WordRun(needle, i);
-        }
-
-        return "";
+        var space = needle.IndexOf(' ', StringComparison.Ordinal);
+        var length = Math.Min(space < 0 ? needle.Length : space, Words.MaxKeyLength);
+        return length == needle.Length ? needle : needle[..length];
     }
 
     // Letters always fold to word characters, so a run is never empty; if one were, the first character still keys it.
-    private static string KeyOf(string run, string folded) => run.Length > 0 ? run : folded[..1];
+    // A run that is the whole folded word is that string, so the key costs nothing more to keep.
+    private static string KeyOf(string run, string folded) => run.Length == 0 ? folded[..1] : run == folded ? folded : run;
 }

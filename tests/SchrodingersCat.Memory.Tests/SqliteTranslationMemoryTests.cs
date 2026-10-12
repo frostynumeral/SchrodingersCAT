@@ -186,6 +186,26 @@ public sealed class SqliteTranslationMemoryTests : IDisposable
         Assert.Throws<TmFormatException>(() => SqliteTranslationMemory.Open(path));
     }
 
+    // In LIKE, _ matches any character: the schema check must not take this for one of SQLite's automatic indexes.
+    [Fact]
+    public void Open_ATriggerNamedLikeAnAutomaticIndex_IsRefused()
+    {
+        var path = PathOf("a.sctm");
+        SqliteTranslationMemory.Create(path, "en", "hu").Dispose();
+        Sql(path, "CREATE TRIGGER sqliteXautoindexXevil AFTER INSERT ON entries BEGIN DELETE FROM meta; END");
+
+        Assert.Throws<TmFormatException>(() => SqliteTranslationMemory.Open(path));
+    }
+
+    [Fact]
+    public void Open_ATermbase_IsRefused()
+    {
+        var path = PathOf("a.sctb");
+        SqliteTermbase.Create(path, "en", "hu").Dispose();
+
+        Assert.Throws<TmFormatException>(() => SqliteTranslationMemory.Open(path));
+    }
+
     [Fact]
     public void Open_AnotherFormatVersion_IsRefused()
     {

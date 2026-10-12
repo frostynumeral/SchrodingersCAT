@@ -104,9 +104,12 @@ public sealed class QaText
         Words.FindAll(Prepared, term).Where(r => !IsInCode(r.Start) && !IsInCode(r.Start + r.Length - 1));
 
     /// <summary>The first place <see cref="FindAll"/> finds the term; null if there's none.</summary>
-    internal (int Start, int Length)? FindTerm(string term)
+    internal (int Start, int Length)? FindTerm(string term) => FindFirst(TermPattern.Of(term));
+
+    /// <summary>The first place <see cref="FindAll"/> finds the term, classified already; null if there's none.</summary>
+    internal (int Start, int Length)? FindFirst(TermPattern term)
     {
-        foreach (var range in FindAll(TermPattern.Of(term)))
+        foreach (var range in FindAll(term))
             return range;
         return null;
     }

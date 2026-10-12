@@ -344,6 +344,107 @@ public class TermIndexTests
         Assert.Equal(with.Find(text), of.Find(text));
     }
 
+    [Fact]
+    public void WithRange_IsRepeatedWith_AndOf()
+    {
+        StoredTermEntry[] entries =
+            [new(new TermEntryId(3), Entry("manager")), new(new TermEntryId(1), Entry("file")), new(new TermEntryId(3), Entry("folder"))];
+        var start = Index(["file manager"]);
+        var text = Text("the file manager folder");
+
+        var range = start.WithRange(entries);
+        var with = entries.Aggregate(start, (index, e) => index.With(e.Id, e.Entry));
+
+        Assert.Equal(with.Entries(), range.Entries());
+        Assert.Equal(with.Find(text), range.Find(text));
+        Assert.Equal(TermIndex.Of(with.Entries()).Find(text), range.Find(text));
+        Assert.Equal(1, start.Count);
+    }
+
+    [Fact]
+    public void WithRange_OfNothing_IsTheSameIndex()
+    {
+        var index = Index(["file"]);
+
+        Assert.Same(index, index.WithRange([]));
+    }
+
+    // An id set twice in one batch keeps only its last entry: the first one's term isn't found any more.
+    [Fact]
+    public void AnIdSetTwiceInOneBatch_KeepsOnlyTheLastEntry()
+    {
+        var file = new StoredTermEntry(new TermEntryId(1), Entry("file"));
+        var files = new StoredTermEntry(new TermEntryId(1), new TermEntry([new Term("file manager"), new Term("folder")], [], null, Monday, null));
+
+        foreach (var index in new[] { TermIndex.Of([file, files]), TermIndex.Empty.WithRange([file, files]), Index(["file"]).WithRange([files, file, files]) })
+        {
+            var hit = Assert.Single(index.Find(Text("the file manager file folder")));
+            Assert.Equal([(0, 4, 12), (1, 22, 6)], hit.Occurrences.Select(o => (o.Term, o.Start, o.Length)));
+        }
+    }
+
+    // Terms with punctuation are filed under their characters up to the first space, so many starting alike (.NET-like
+    // names, e- words) are each tried only where the text has their characters.
+    [Fact]
+    public void TermsWithPunctuationStartingAlike_AreFoundByTheirOwnCharacters()
+    {
+        var index = Index([".alpha"], [".beta"], ["e-mail"], ["e-book"], ["e-book reader"], ["e"]);
+
+        var hits = index.Find(Text("Read .beta e-books on an e-book reader."));
+
+        Assert.Equal([2, 4, 6, 5], hits.Select(h => h.Id.Value));
+        Assert.Equal([(5, 5), (11, 6), (11, 1), (25, 13)], hits.Select(h => (h.Occurrences[0].Start, h.Occurrences[0].Length)));
+        Assert.Equal([(11, 6), (25, 6)], hits[1].Occurrences.Select(o => (o.Start, o.Length)));
+    }
+
+    // Reading the entries may fail (a damaged termbase file, cancelling): building the index throws that, as it is.
+    [Fact]
+    public void Of_ThrowsWhatReadingTheEntriesThrew()
+    {
+        static IEnumerable<StoredTermEntry> Failing()
+        {
+            for (var i = 1; i <= 10_000; i++)
+                yield return new StoredTermEntry(new TermEntryId(i), Entry($"term {i}"));
+            throw new InvalidDataException("damaged");
+        }
+
+        Assert.Equal("damaged", Assert.Throws<InvalidDataException>(() => TermIndex.Of(Failing())).Message);
+        Assert.Throws<OperationCanceledException>(() => TermIndex.Empty.WithRange(Failing().Select(e => e.Id.Value < 5_000 ? e : throw new OperationCanceledException())));
+    }
+
+    // The check's records are made once per entry, and kept by later snapshots for the entries they keep.
+    [Fact]
+    public void TheTermSource_KeepsEachEntrysRecord()
+    {
+        var index = Index(["file"], ["folder"]);
+        var text = Text("Move the file to the folder.");
+
+        var first = index.ToTermSource("client").Find(text);
+        var later = index.With(new TermEntryId(3), Entry("disk")).ToTermSource("client").Find(text);
+
+        Assert.Equal(2, first.Count);
+        Assert.All(first.Zip(later), pair => Assert.Same(pair.First, pair.Second));
+        Assert.NotSame(first[0], index.ToTermSource("other").Find(text)[0]);
+    }
+
+    // Many terms filed under one key (a common first word) don't copy that key's bucket per term.
+    [Fact]
+    public void ManyTermsUnderOneKey_AreIndexedAndRemovedInLinearTime()
+    {
+        var entries = Enumerable.Range(0, 20_000)
+            .Select(i => new StoredTermEntry(new TermEntryId(i + 1), Entry($"file {i}")))
+            .ToList();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        var index = TermIndex.Of(entries).WithoutRange(entries.Where((_, i) => i % 2 == 0).Select(e => e.Id));
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(2), $"{clock.Elapsed}");
+        var rest = TermIndex.Of(entries.Where((_, i) => i % 2 == 1));
+        Assert.Equal(rest.Entries(), index.Entries());
+        Assert.Equal([2L], index.Find(Text("file 1")).Select(h => h.Id.Value));
+        Assert.Empty(index.Find(Text("file 0")));
+    }
+
     // ---------------------------------------------------------------- entries
 
     [Fact]
