@@ -52,6 +52,9 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     public string Label { get; }
 
+    /// <summary>The unit's checks, shared with its other segments.</summary>
+    internal UnitCheck Check => _check;
+
     /// <summary>The unit the segment belongs to.</summary>
     public TranslationUnit Unit => _unit;
 
@@ -99,8 +102,8 @@ public sealed partial class SegmentViewModel : ObservableObject
             ContentRuns.Build(_segment.Source, _unit, _check.Hints, OpenMarkersBefore(s => s.Source), TermMarks()),
             ProblemCodes(IsMissing));
 
-    // The source as the term rule reads it; the source never changes.
-    private QaText SourceQa => field ??= QaText.Of(_segment.Source);
+    /// <summary>The source as the term rule reads it; the source never changes.</summary>
+    internal QaText SourceQa => field ??= QaText.Of(_segment.Source);
 
     /// <summary>
     /// The open termbase's entries found in the source (section 6 of <c>docs/design/termbase.md</c>), in the order of
@@ -125,6 +128,26 @@ public sealed partial class SegmentViewModel : ObservableObject
 
     /// <summary>The translations Ctrl+T offers for this segment.</summary>
     public IReadOnlyList<TermChoice> TermChoices => TermChoice.For(TermHits);
+
+    /// <summary>
+    /// After a write to the termbase (step 6): hits cached for <paramref name="before"/> become those of
+    /// <paramref name="after"/> without a lookup. If <paramref name="found"/> is null, no entry the write changed is
+    /// in the source, before or after, so the hits stay; otherwise the hits of the <paramref name="changed"/> entries
+    /// are replaced by these (the changed and new entries' hits in this source), and the marks and the terms follow.
+    /// Hits cached for another snapshot, or none, stay as they are, and are looked up again when asked.
+    /// </summary>
+    internal void RebaseTermHits(TermIndex before, TermIndex after, IReadOnlyCollection<TermEntryId> changed, IEnumerable<TermHit>? found)
+    {
+        if (ReferenceEquals(_termHitsFor, before))
+        {
+            if (found is not null)
+                _termHits = TermIndex.Merge(_termHits, changed, found);
+            _termHitsFor = after;
+        }
+
+        if (found is not null)
+            OnTermsChanged();
+    }
 
     /// <summary>Called when the termbase changes (opened, closed, loaded, or no longer serving the document).</summary>
     internal void OnTermsChanged()

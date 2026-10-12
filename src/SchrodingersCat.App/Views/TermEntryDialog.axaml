@@ -1,0 +1,69 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SchrodingersCat.App.ViewModels"
+        x:Class="SchrodingersCat.App.Views.TermEntryDialog"
+        x:DataType="vm:TermEntryEditorViewModel"
+        Title="{Binding Title}" Width="760" SizeToContent="Height" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <!-- Ctrl+Enter saves and Escape cancels (TermEntryDialog.axaml.cs). -->
+    <Window.Styles>
+        <Style Selector="TextBlock.columnHeader">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,8,0,2" />
+        </Style>
+    </Window.Styles>
+    <Window.DataTemplates>
+        <!-- A term: its text, status and note, and a button that removes it. -->
+        <DataTemplate x:DataType="vm:TermRowViewModel">
+            <Grid ColumnDefinitions="2*,110,1.5*,Auto" ColumnSpacing="4" Margin="0,0,0,4">
+                <TextBox Grid.Column="0" Classes="termText" Text="{Binding Text}" PlaceholderText="Term"
+                         AutomationProperties.Name="Term" />
+                <ComboBox Grid.Column="1" Classes="termStatus" HorizontalAlignment="Stretch"
+                          ItemsSource="{x:Static vm:TermRowViewModel.StatusNames}" SelectedIndex="{Binding StatusIndex}"
+                          AutomationProperties.Name="Status" />
+                <TextBox Grid.Column="2" Classes="termNote" Text="{Binding Note}" PlaceholderText="Note on this term"
+                         AutomationProperties.Name="Note on this term" />
+                <Button Grid.Column="3" Classes="removeTerm" Content="×" Padding="8,2" VerticalAlignment="Center"
+                        Command="{Binding $parent[Window].((vm:TermEntryEditorViewModel)DataContext).RemoveRowCommand, FallbackValue={x:Null}}"
+                        CommandParameter="{Binding}" ToolTip.Tip="Remove this term" AutomationProperties.Name="Remove this term" />
+            </Grid>
+        </DataTemplate>
+    </Window.DataTemplates>
+    <StackPanel Margin="20" Spacing="4">
+        <TextBlock x:Name="HeaderText" Text="{Binding Header}" Opacity="0.6" TextWrapping="Wrap" />
+
+        <!-- Adding: where the terms go, when entries have the source term already (section 6). -->
+        <StackPanel IsVisible="{Binding HasExisting}" Spacing="2">
+            <TextBlock Classes="columnHeader" Text="This source term is in the termbase already:" />
+            <ListBox x:Name="ExistingList" ItemsSource="{Binding Existing}" SelectedItem="{Binding SelectedExisting}" MaxHeight="120"
+                     AutomationProperties.Name="Where the terms go">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ExistingEntryChoice">
+                        <TextBlock Text="{Binding Label}" TextWrapping="Wrap" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock x:Name="MergeSummaryText" Text="{Binding MergeSummary}" Opacity="0.7" TextWrapping="Wrap"
+                       IsVisible="{Binding MergeSummary, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+
+        <TextBlock Classes="columnHeader" Text="{Binding SourceHeader}" />
+        <ItemsControl x:Name="SourceRows" ItemsSource="{Binding SourceTerms}" />
+        <Button x:Name="AddSynonymButton" Content="Add synonym" Command="{Binding AddSynonymCommand}" FontSize="12" />
+
+        <TextBlock Classes="columnHeader" Text="{Binding TargetHeader}" />
+        <ItemsControl x:Name="TargetRows" ItemsSource="{Binding TargetTerms}" />
+        <Button x:Name="AddTranslationButton" Content="Add translation" Command="{Binding AddTranslationCommand}" FontSize="12" />
+
+        <TextBlock Classes="columnHeader" Text="Note on the entry (definition, context, the client's instruction)" />
+        <TextBox x:Name="EntryNoteBox" Text="{Binding EntryNote}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="48"
+                 AutomationProperties.Name="Note on the entry" />
+
+        <TextBlock x:Name="ProblemText" Text="{Binding Problem}" Foreground="#E53935" TextWrapping="Wrap" Margin="0,8,0,0"
+                   IsVisible="{Binding Problem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button x:Name="SaveButton" Classes="accent" Content="Save" Click="OnSave" ToolTip.Tip="Ctrl+Enter" />
+            <Button x:Name="CancelButton" Content="Cancel" Click="OnCancel" ToolTip.Tip="Escape" />
+        </StackPanel>
+    </StackPanel>
+</Window>

@@ -1,0 +1,77 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SchrodingersCat.App.ViewModels"
+        x:Class="SchrodingersCat.App.Views.CsvImportDialog"
+        x:DataType="vm:CsvImportViewModel"
+        Title="Import CSV" Width="760" SizeToContent="Height" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <StackPanel Margin="20" Spacing="8">
+        <!-- The encoding: asked when the file isn't UTF-8 and has no BOM (a BOM decides). -->
+        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+            <TextBlock Text="Encoding:" VerticalAlignment="Center" />
+            <ComboBox x:Name="EncodingBox" Grid.Column="1" MinWidth="280" ItemsSource="{Binding Encodings}" SelectedItem="{Binding SelectedEncoding}"
+                      IsEnabled="{Binding CanChooseEncoding}" AutomationProperties.Name="Encoding">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:CsvEncodingChoice">
+                        <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </Grid>
+        <TextBlock x:Name="EncodingMessageText" Text="{Binding EncodingMessage}" Opacity="0.7" TextWrapping="Wrap"
+                   IsVisible="{Binding EncodingMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <!-- The first rows, decoded with the chosen encoding. -->
+        <TextBlock Text="The first rows:" FontWeight="SemiBold" Margin="0,8,0,0" />
+        <Border BorderBrush="#40808080" BorderThickness="1" CornerRadius="4" Padding="4">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                <ItemsControl x:Name="PreviewRows" ItemsSource="{Binding Preview}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:CsvPreviewRow">
+                            <ItemsControl ItemsSource="{Binding Cells}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="x:String">
+                                        <TextBlock Classes="previewCell" Text="{Binding}" Width="160" Margin="0,0,8,2" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+        <TextBlock x:Name="SummaryText" Text="{Binding Summary}" Opacity="0.7"
+                   IsVisible="{Binding Summary, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <!-- The columns, guessed from the header. -->
+        <CheckBox x:Name="HeaderBox" Content="The first row names the columns" IsChecked="{Binding FirstRowIsHeader}" />
+        <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+            <TextBlock Text="Source terms:" VerticalAlignment="Center" />
+            <ComboBox x:Name="SourceColumnBox" Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding Columns}" SelectedIndex="{Binding SourceColumn}"
+                      AutomationProperties.Name="Source terms column" />
+            <TextBlock Grid.Column="2" Text="Translations:" VerticalAlignment="Center" />
+            <ComboBox x:Name="TargetColumnBox" Grid.Column="3" HorizontalAlignment="Stretch" ItemsSource="{Binding Columns}" SelectedIndex="{Binding TargetColumn}"
+                      AutomationProperties.Name="Translations column" />
+            <TextBlock Grid.Row="1" Text="Note:" VerticalAlignment="Center" />
+            <ComboBox x:Name="NoteColumnBox" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding OptionalColumns}" SelectedIndex="{Binding NoteColumn}"
+                      AutomationProperties.Name="Note column" />
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="Status:" VerticalAlignment="Center" />
+            <ComboBox x:Name="StatusColumnBox" Grid.Row="1" Grid.Column="3" HorizontalAlignment="Stretch" ItemsSource="{Binding OptionalColumns}" SelectedIndex="{Binding StatusColumn}"
+                      AutomationProperties.Name="Status column" />
+        </Grid>
+        <TextBlock x:Name="ColumnMessageText" Text="{Binding ColumnMessage}" Opacity="0.7" TextWrapping="Wrap"
+                   IsVisible="{Binding ColumnMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="ProblemText" Text="{Binding Problem}" Foreground="#E53935" TextWrapping="Wrap"
+                   IsVisible="{Binding Problem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button x:Name="ImportButton" Classes="accent" Content="Import" IsDefault="True" IsEnabled="{Binding CanImport}" Click="OnImport" />
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" Click="OnCancel" />
+        </StackPanel>
+    </StackPanel>
+</Window>

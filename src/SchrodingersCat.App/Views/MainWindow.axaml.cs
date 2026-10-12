@@ -31,7 +31,8 @@ public partial class MainWindow : Window
     }
 
     // The segment shortcuts (design section 4), Ctrl+1 … Ctrl+9 (insert a match), Ctrl+Shift+1 … Ctrl+Shift+9
-    // (delete a match's entry), Ctrl+K (concordance), Ctrl+T (insert a term) and F8 (check the document) are seen
+    // (delete a match's entry), Ctrl+K (concordance), Ctrl+T (insert a term), Ctrl+E (add a term) and F8 (check the
+    // document) are seen
     // before the editor: AvaloniaEdit would take Ctrl+Up/Down, Ctrl+Enter and Ctrl+Insert for itself, so they can't be
     // window key bindings, which only get unhandled keys.
     private void OnShortcut(object? sender, KeyEventArgs e)
@@ -50,6 +51,13 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             OpenTermPicker(viewModel);
+            return;
+        }
+
+        if (e.Key == Key.E && e.KeyModifiers == KeyModifiers.Control)
+        {
+            e.Handled = true;
+            AddTermAsync(viewModel).Forget();
             return;
         }
 
@@ -95,6 +103,40 @@ public partial class MainWindow : Window
         editor.OpenTermPicker(choices);
     }
 
+    // Ctrl+E and Termbase → Add term… (section 6 of docs/design/termbase.md): the entry dialog with the selected row's
+    // source selection and the editor's selection filled in (codes as spaces); afterwards the keyboard goes back to the
+    // editor.
+    private async Task AddTermAsync(MainWindowViewModel viewModel)
+    {
+        var source = SourceSelection(viewModel.SelectedSegment);
+        var target = this.GetVisualDescendants().OfType<TargetEditor>().FirstOrDefault(t => t.IsEffectivelyVisible)?.Model is { HasSelection: true } model
+            ? ConcordanceViewModel.TextOf(model.SelectedContent())
+            : null;
+        await viewModel.AddTermCommand.ExecuteAsync(new TermSelection(source, target));
+        FocusEditorSoon();
+    }
+
+    private void OnAddTerm(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+            AddTermAsync(viewModel).Forget();
+    }
+
+    // The selected text of a source block, as the concordance searches it (codes as spaces): the selected row's if it
+    // has one, else the focused block's, else any.
+    private string? SourceSelection(SegmentViewModel? selected)
+    {
+        var block = SourceBlocks().OrderByDescending(b => b.DataContext == selected && selected is not null).ThenByDescending(b => b.IsKeyboardFocusWithin).FirstOrDefault();
+        return block is null ? null : ConcordanceViewModel.TextOf(Selection(block));
+    }
+
+    // The source blocks with a selection.
+    private List<InlineContentBlock> SourceBlocks() =>
+        [.. this.GetVisualDescendants().OfType<InlineContentBlock>().Where(b => b.Classes.Contains("source") && b.SelectionStart != b.SelectionEnd)];
+
+    private static Core.Models.InlineContent Selection(InlineContentBlock block) =>
+        ContentRuns.Slice(block.Runs ?? [], Math.Min(block.SelectionStart, block.SelectionEnd), Math.Max(block.SelectionStart, block.SelectionEnd));
+
     // Ctrl+K: the concordance for the selected text, the editor's (searching translations) or a source's (searching
     // sources); without a selection, the search box. Codes in the selection become spaces.
     private void SearchSelection(MainWindowViewModel viewModel)
@@ -118,14 +160,9 @@ public partial class MainWindow : Window
 
         // A source's selection: the focused block's, else any (clicking a source selects its row, and the editor
         // then takes the keyboard, so the block may not have it).
-        var sources = this.GetVisualDescendants().OfType<InlineContentBlock>().Where(b => b.Classes.Contains("source")).ToList();
-        var block = sources.FirstOrDefault(b => b.IsKeyboardFocusWithin && b.SelectionStart != b.SelectionEnd)
-            ?? sources.FirstOrDefault(b => b.SelectionStart != b.SelectionEnd);
-        if (block is null)
-            return null;
-
-        var content = ContentRuns.Slice(block.Runs ?? [], Math.Min(block.SelectionStart, block.SelectionEnd), Math.Max(block.SelectionStart, block.SelectionEnd));
-        return (ConcordanceViewModel.TextOf(content), false);
+        var sources = SourceBlocks();
+        var block = sources.FirstOrDefault(b => b.IsKeyboardFocusWithin) ?? sources.FirstOrDefault();
+        return block is null ? null : (ConcordanceViewModel.TextOf(Selection(block)), false);
     }
 
     // A click on a report entry (not on its Dismiss button) opens its segment; a click beside the entries, nothing.

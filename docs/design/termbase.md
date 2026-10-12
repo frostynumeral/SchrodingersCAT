@@ -440,7 +440,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
    list, the source marks, Ctrl+T, and the checks using it.
    - View-model tests with real `.sctb` files; headless tests for the list, the marks, the picker and inserting.
    - **Decisions:**
-     - The menu has New…, Open… and Close; Import and Export come with step 4.
+     - The menu has New…, Open… and Close; Import and Export come with step 4 (added to the menu in step 6).
      - Opening loads in the background while the termbase already open stays in use, as a file or a TM that fails to
        open leaves the current one; a newer Open, Close or shutting down cancels the load, and a termbase that opened
        all the same is closed. A damaged remembered termbase is forgotten, a missing one kept, as for the TM.
@@ -458,9 +458,62 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      - The term picker sits where the code picker does (below the editor, not at the caret); both can move to the
        caret later together. A term replaces the selection (`Paste`'s rule), so a placeholder word can be selected and
        replaced.
-6. **App: adding and editing terms.** Ctrl+E, the entry dialog, editing and deleting from the list, re-checking
-   only the affected units.
+6. **App: adding and editing terms.** *(Done 2026-10-12.)* Ctrl+E, the entry dialog, editing and deleting from the
+   list, re-checking only the affected units; and Import… and Export… in the Termbase menu, with step 4's formats.
    - View-model and headless tests, including adding a translation to an existing entry.
+   - **Decisions:**
+     - **Finding the affected units** as step 3 decided: `TermProbe` (Memory, public) classifies one entry's terms
+       once and tries them on each segment's `QaText` (`IsIn` stops at the first place). The old and the new version
+       of every entry a write changed are probed, so a unit that loses a renamed or deleted term loses its marks and
+       issues too.
+     - **Re-checking them:** the marks, the terms list and Ctrl+T's choices follow from each segment's cached hits plus
+       the changed entries' (`TermIndex.Merge`), without a lookup. The check itself runs on the affected units with
+       the new snapshot's term source, which takes over the previous one's records, not with the cached hits: those
+       would be a second term source to keep in step with the first, and step 3's spike measured the two at p95 38 ms
+       and 36 ms. A throwaway measurement here (4,713 segments in 1,450 units, 20,000 entries, Release, the commit to an
+       in-memory termbase included): 17 ms for a rare term once warm; about 170 ms for the first write after opening a
+       document (each segment's source is prepared for the term rule once, and the code paths warm up), and 0.5 to
+       0.8 ms per affected unit. So past 64 affected units the whole document is checked again in the background
+       instead (a term in every segment took 800 ms on the UI thread); only the affected units there would race a
+       whole-document re-check still running with the previous source.
+     - **Writes run in `OpenTermbase`'s queue** (`WriteAsync`), which returns the snapshots just before and after the
+       write. If the document's snapshot isn't the one the write started from (another write or a re-check came in
+       between, or a write from outside the app's queue), it takes the latest and checks every unit again, as when the
+       termbase opens. A termbase closed or replaced while the dialog was open gets nothing written. An edit replaces
+       the whole entry, so it is written only if the entry in the queue is still the one the dialog opened on (the
+       committed snapshot then): a write still queued when it opened (a Ctrl+E addition, an import) would otherwise be
+       undone without a word. A changed entry is reported and left as it is; the translator edits it again.
+     - **Adding to an existing entry:** the dialog lists the entries with a source term the same as the first one
+       typed (`TermIndex.WithSourceTerm`: folded, whitespace collapsed, the check's "same term"; homonyms all listed),
+       the first chosen, as a translation for a term the termbase has usually belongs to its entry; "Make a new
+       entry" is one choice away. The rows' terms the entry lacks are appended (source synonyms and translations);
+       the terms it has keep their stored status and note (Edit changes those); a note it doesn't contain is appended
+       on a new line. The merge runs in the queue on the entry as it is then, so nothing written to it meanwhile is
+       lost; a gone entry is reported, never added as a new one. `WithSourceTerm` takes the index's candidates in the
+       term's own text, and scans every entry for a term with a literal U+FFFC (which the rule takes for a code) or
+       one the rule doesn't find whole in its own text; the property test compares it with a scan.
+     - **The dialog:** a new term's status is Unspecified (section 1); terms are trimmed and blank rows dropped; an
+       entry without translations is allowed (as step 4's import keeps one), one without a source term isn't, nor the
+       same term twice on one side. Ctrl+E without a selection opens it empty; it is refused as Ctrl+T is (loading, no
+       termbase, doesn't serve), in the segment's status line, and works without a document.
+     - **Deleting** always asks (no undo); `Delete` and `Compact` run as one work item (`Compact` decides itself
+       whether it's worth it; its failure is reported, the entry is gone all the same). Stale ids give a notice, never
+       an exception. Terms have no stored-target link to follow, as TM entries do: what follows a change is every
+       cached view of the entry (hits, marks, list, picker).
+     - **Import:** the format by the extension (`.tbx`/`.xml` TBX; `.csv`/`.tsv`/`.txt` CSV), else by the first
+       character after a BOM and whitespace (`<` is TBX). CSV goes through a dialog: the encoding (UTF-8, UTF-16, and
+       Windows-1250, 1251, 1252, 1253, 1254, 1257 and ISO-8859-2; Windows-1252 proposed when the file isn't UTF-8; a
+       BOM decides and disables the choice), the first eight rows decoded, the header switch, and the columns guessed
+       by `TermCsv.GuessColumns`. The preview and the column lists stop at 100 columns (a control per cell on the UI
+       thread: a hostile file with hundreds of thousands of columns would hang the dialog; a guess past them counts as
+       no guess). Parsing, turning the rows into entries (seconds for millions of rows) and stamping them run off the
+       UI thread. One `AddRange`. Entries without a date get the import's, not the user (they are the
+       client's terms). The whole document is checked again, as many units change.
+     - **Export** writes what the termbase holds when asked (the snapshot, not waiting for queued writes), atomically
+       (tmp + move, the TMX export's code, now shared). The picker's file type decides the format (TBX 2, TBX 3,
+       CSV); where a desktop doesn't report it, the extension does (`.csv` CSV, else TBX 2).
+     - The new UI's manual checks (shortcut layouts, IME and screen readers in the dialog, RTL terms, a real Excel CSV,
+       the export picker per desktop) are in `docs/testing/editor-manual-checks.md`, for a person.
 7. **Documentation:** CLAUDE.md, and mark this proposal implemented.
 
 ## Open questions

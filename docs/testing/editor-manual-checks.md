@@ -140,3 +140,17 @@ Open a document with an en→hu termbase (and `samples/demo.en-he.xlf` with an e
 - **Tooltip with the real renderer:** hovering a term in the source shows its tooltip. The headless test can't prove it lands on the text, because headless drawing records no glyphs.
 - **RTL** (`samples/demo.en-he.xlf` with an en→he termbase): underlines and tooltips land on the right Hebrew words across bidi runs; translations in the list and picker are aligned and ordered correctly; an inserted term lands at the logical caret.
 - **Ctrl+T on macOS:** whether it should be Cmd+T instead, and that localised keyboard layouts don't type a character instead.
+
+## Adding and editing terms, import and export (step 6 of docs/design/termbase.md)
+
+Open a document with an en→hu termbase (and `samples/demo.en-he.xlf` with an en→he one).
+
+- **Ctrl+E on macOS and other layouts:** whether it should be Cmd+E; that layouts where Ctrl+E types a character (or AltGr layouts on Windows) still open the dialog; that Termbase → Add term… shows the shortcut as the desktop writes it.
+- **Selections:** with text selected in the active row's source and in its editor, Ctrl+E fills both in (codes as spaces); with a selection left in another row's source, the active row's wins.
+- **IME:** composing CJK text in the dialog's term and note boxes, and Ctrl+Enter during composition (it should commit the text, not save half of it).
+- **Screen readers** (Narrator, VoiceOver, Orca): each row's term box, status list, note box and × button are announced with their names; the list of existing entries ("Make a new entry", "Add to “file” → …") reads its choices and which is selected; the problem line is announced when a save is refused.
+- **RTL** (en→he termbase): Hebrew terms typed in the dialog's target rows display and edit correctly, and come back in the right order in the terms list and the marks.
+- **Context menu:** right-click (and the menu key, and Shift+F10) on a term row opens Edit entry… / Delete entry…; the confirmation's Escape cancels.
+- **CSV import dialog** with a real Excel file in a legacy encoding (e.g. a Hungarian Excel "CSV (comma delimited)" in Windows-1250): the dialog asks for the encoding, the preview shows the accented letters right once it's chosen, and the guessed columns are right.
+- **Export picker:** on each desktop (GTK or the portal on Linux, macOS, Windows), the file-type choice (TBX 2, TBX 3, CSV) decides the format written, and a desktop that doesn't report it falls back to the extension (`.csv` is CSV, anything else TBX 2).
+- **Export into another CAT tool:** still step 4's pending hand check (docs/design/termbase.md): import the TBX 2, TBX 3 and CSV exports into at least one other tool.

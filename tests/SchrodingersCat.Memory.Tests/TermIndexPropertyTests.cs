@@ -167,6 +167,62 @@ public class TermIndexPropertyTests
             }
         });
 
+    // A probe finds what an index of its entry alone finds, and IsIn says whether it finds anything (step 6).
+    [Fact]
+    public void AProbe_FindsWhatAnIndexOfItsEntryFinds() =>
+        Gen.Frequency((2, TermGen.Case), (1, DocumentCase)).Sample(@case =>
+        {
+            foreach (var stored in @case.Entries)
+            {
+                var probe = TermProbe.Of(stored.Entry);
+                var alone = TermIndex.Of([stored]);
+                foreach (var source in @case.Texts.Select(QaText.Of))
+                {
+                    var hit = probe.Find(source, stored.Id);
+                    Assert.Equal(alone.Find(source).SingleOrDefault(), hit);
+                    Assert.Equal(hit is not null, probe.IsIn(source));
+                }
+            }
+        });
+
+    // Hits found before a random script of writes, merged with the probes of the entries it changed, are what the
+    // index after it finds: what a segment's cached hits follow a write with (step 6).
+    [Fact]
+    public void MergedHits_EqualAFindAfterTheWrites() =>
+        Gen.Select(TermGen.Case, Gen.Select(Gen.Int[0, 2], Gen.Int[0, 8], TermGen.Entry(TermGen.Term)).Array[1, 6]).Sample((@case, script) =>
+        {
+            var before = TermIndex.Of(@case.Entries);
+            var after = before;
+            var changed = new HashSet<TermEntryId>();
+            foreach (var (operation, number, entry) in script)
+            {
+                var id = new TermEntryId(number);
+                after = operation == 0 ? after.Without(id) : after.With(id, entry);
+                changed.Add(id);
+            }
+
+            foreach (var source in @case.Texts.Select(QaText.Of))
+            {
+                var found = changed.Select(id => after.Find(id) is { } entry ? TermProbe.Of(entry).Find(source, id) : null).OfType<TermHit>();
+                Assert.Equal(after.Find(source), TermIndex.Merge(before.Find(source), changed, found));
+            }
+        });
+
+    // The entries with a source term are those a scan of every entry finds by the same-term key, for the termbase's own
+    // terms and for any text (step 6: the entry dialog's existing entries).
+    [Fact]
+    public void WithSourceTerm_EqualsAScanBySameTermKey() =>
+        Gen.Select(Gen.Frequency((2, TermGen.Case), (1, DocumentCase)), TermGen.AnyTerm.Array[0, 3]).Sample((@case, extra) =>
+        {
+            var index = TermIndex.Of(@case.Entries);
+            foreach (var term in @case.Entries.SelectMany(e => e.Entry.Source).Select(t => t.Text).Concat(extra))
+            {
+                var key = Words.SameTermKey(term);
+                var expected = key.Length == 0 ? [] : index.Entries().Where(e => e.Entry.Source.Any(t => Words.SameTermKey(t.Text) == key)).ToList();
+                Assert.Equal(expected, index.WithSourceTerm(term));
+            }
+        });
+
     // The generators make what the properties are about: hits by each part of the rule, across codes, refused by the
     // code rule, repeated, overlapping between entries, and with several synonyms.
     [Fact]

@@ -7,9 +7,10 @@ namespace SchrodingersCat.App.Services;
 /// disposing waits for the queued work, then closes the termbase.
 /// </summary>
 /// <remarks>
-/// Lookups read <see cref="Index"/>, an immutable snapshot, from any thread without waiting. Writes (step 6) go
-/// through a queue on a background thread, one at a time and in the order asked, as the TM's operations do
-/// (<see cref="OpenTranslationMemory"/>); step 5 makes none, but disposing keeps the same contract.
+/// Lookups read <see cref="Index"/>, an immutable snapshot, from any thread without waiting. Writes (adding, editing,
+/// deleting and importing entries, step 6) go through a queue on a background thread (<see cref="WriteAsync{T}"/>),
+/// one at a time and in the order asked, as the TM's operations do (<see cref="OpenTranslationMemory"/>), so the UI
+/// waits for none of them.
 /// </remarks>
 /// <param name="name">How the app names the termbase: the file name without its extension, as the check's messages say "the termbase “client”".</param>
 public sealed class OpenTermbase(ITermbase termbase, string name) : IAsyncDisposable
@@ -69,8 +70,24 @@ public sealed class OpenTermbase(ITermbase termbase, string name) : IAsyncDispos
         Termbase.Dispose();
     }
 
+    /// <summary>
+    /// Queues a write and returns its result with the snapshots just before and just after it, taken in the queue, so
+    /// the document can tell whether it missed another write in between (step 6).
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">The termbase was closed.</exception>
+    internal Task<TermWrite<T>> WriteAsync<T>(Func<ITermbase, T> write)
+    {
+        ArgumentNullException.ThrowIfNull(write);
+        return Enqueue(() =>
+        {
+            var before = Index;
+            var result = write(Termbase);
+            return new TermWrite<T>(before, Index, result);
+        });
+    }
+
     // As OpenTranslationMemory's queue: each operation continues the previous one, whatever its outcome, and the token
-    // is never passed to ContinueWith. Step 6 queues its writes here.
+    // is never passed to ContinueWith.
     internal Task<T> Enqueue<T>(Func<T> work)
     {
         lock (_gate)
@@ -85,3 +102,6 @@ public sealed class OpenTermbase(ITermbase termbase, string name) : IAsyncDispos
     private static OpenTermbase Wrap(SqliteTermbase termbase, string path) =>
         new(termbase, System.IO.Path.GetFileNameWithoutExtension(path)) { Path = path };
 }
+
+/// <summary>A write's result, and the termbase's snapshots just before and just after it.</summary>
+internal sealed record TermWrite<T>(TermIndex Before, TermIndex After, T Result);
