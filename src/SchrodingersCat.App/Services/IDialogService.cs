@@ -104,7 +104,7 @@ public interface IDialogService
 
     /// <summary>
     /// Asks how to read a CSV file (its encoding, which columns hold what), showing its first rows. The import (one
-    /// <see cref="CsvImportViewModel.TryImport"/> made), or null if they cancelled.
+    /// <see cref="CsvImportViewModel.ImportAsync"/> made), or null if they cancelled.
     /// </summary>
     Task<TermImport?> ChooseCsvImportAsync(CsvImportViewModel import);
 

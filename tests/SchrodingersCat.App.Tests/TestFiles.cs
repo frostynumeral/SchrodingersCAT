@@ -208,7 +208,7 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
             return await choose(import);
 
         await import.Parsing;
-        return import.TryImport();
+        return await import.ImportAsync();
     }
 
     /// <summary>Whether the system's file manager manages to show a folder.</summary>

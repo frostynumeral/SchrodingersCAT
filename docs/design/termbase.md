@@ -479,7 +479,10 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      - **Writes run in `OpenTermbase`'s queue** (`WriteAsync`), which returns the snapshots just before and after the
        write. If the document's snapshot isn't the one the write started from (another write or a re-check came in
        between, or a write from outside the app's queue), it takes the latest and checks every unit again, as when the
-       termbase opens. A termbase closed or replaced while the dialog was open gets nothing written.
+       termbase opens. A termbase closed or replaced while the dialog was open gets nothing written. An edit replaces
+       the whole entry, so it is written only if the entry in the queue is still the one the dialog opened on (the
+       committed snapshot then): a write still queued when it opened (a Ctrl+E addition, an import) would otherwise be
+       undone without a word. A changed entry is reported and left as it is; the translator edits it again.
      - **Adding to an existing entry:** the dialog lists the entries with a source term the same as the first one
        typed (`TermIndex.WithSourceTerm`: folded, whitespace collapsed, the check's "same term"; homonyms all listed),
        the first chosen, as a translation for a term the termbase has usually belongs to its entry; "Make a new
@@ -501,7 +504,10 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
        character after a BOM and whitespace (`<` is TBX). CSV goes through a dialog: the encoding (UTF-8, UTF-16, and
        Windows-1250, 1251, 1252, 1253, 1254, 1257 and ISO-8859-2; Windows-1252 proposed when the file isn't UTF-8; a
        BOM decides and disables the choice), the first eight rows decoded, the header switch, and the columns guessed
-       by `TermCsv.GuessColumns`. One `AddRange`. Entries without a date get the import's, not the user (they are the
+       by `TermCsv.GuessColumns`. The preview and the column lists stop at 100 columns (a control per cell on the UI
+       thread: a hostile file with hundreds of thousands of columns would hang the dialog; a guess past them counts as
+       no guess). Parsing, turning the rows into entries (seconds for millions of rows) and stamping them run off the
+       UI thread. One `AddRange`. Entries without a date get the import's, not the user (they are the
        client's terms). The whole document is checked again, as many units change.
      - **Export** writes what the termbase holds when asked (the snapshot, not waiting for queued writes), atomically
        (tmp + move, the TMX export's code, now shared). The picker's file type decides the format (TBX 2, TBX 3,

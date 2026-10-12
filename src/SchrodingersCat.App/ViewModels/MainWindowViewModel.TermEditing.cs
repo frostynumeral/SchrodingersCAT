@@ -18,6 +18,7 @@ public sealed partial class MainWindowViewModel
         Written,
         Unchanged,
         NotFound,
+        Changed,
     }
 
     /// <summary>
@@ -95,14 +96,26 @@ public sealed partial class MainWindowViewModel
             return;
 
         var (changed, changedBy) = (DateTimeOffset.UtcNow, Environment.UserName);
-        var write = await WriteTermsAsync(termbase, $"Could not update the entry in {termbase.Name}",
-            t => t.Update(hit.Id, edit.Entry with { Changed = changed, ChangedBy = changedBy }));
+        // The dialog showed the entry as committed then; a write still queued (a Ctrl+E addition, an import) may change it
+        // before this one runs. The edit replaces the whole entry, so it is written only onto the version it was made
+        // from: otherwise it would undo that write without a word.
+        var write = await WriteTermsAsync(termbase, $"Could not update the entry in {termbase.Name}", t =>
+        {
+            if (t.Index.Find(hit.Id) is not { } now)
+                return EntryWrite.NotFound;
+            if (now != current)
+                return EntryWrite.Changed;
+            return t.Update(hit.Id, edit.Entry with { Changed = changed, ChangedBy = changedBy }) ? EntryWrite.Written : EntryWrite.NotFound;
+        });
         if (write is null)
             return;
 
-        Notice = write.Result
-            ? $"Updated the entry {TermName(edit.Entry)} in {termbase.Name}."
-            : $"The entry {TermName(current)} is no longer in {termbase.Name}, so it wasn't updated.";
+        Notice = write.Result switch
+        {
+            EntryWrite.Written => $"Updated the entry {TermName(edit.Entry)} in {termbase.Name}.",
+            EntryWrite.Changed => $"The entry {TermName(current)} in {termbase.Name} changed while it was being edited, so it wasn't updated. Edit it again to start from the change.",
+            _ => $"The entry {TermName(current)} is no longer in {termbase.Name}, so it wasn't updated.",
+        };
         ApplyTermWrite(termbase, write, [hit.Id]);
     }
 
@@ -350,12 +363,13 @@ public sealed partial class MainWindowViewModel
         if (!StillOpen(termbase, "nothing was imported"))
             return;
 
+        // Stamped in the queue, off the UI thread: an import can have millions of entries.
         var now = DateTimeOffset.UtcNow;
-        var entries = import.Entries.Select(e => e.Changed == default ? e with { Changed = now } : e).ToList();
-        if (await WriteTermsAsync(termbase, $"Could not import {name}", t => t.AddRange(entries)) is null)
+        if (await WriteTermsAsync(termbase, $"Could not import {name}",
+            t => t.AddRange([.. import.Entries.Select(e => e.Changed == default ? e with { Changed = now } : e)])) is null)
             return;
 
-        Notice = $"Imported {Count(entries.Count, "entry", "entries")} from {name} into {termbase.Name}.{report}";
+        Notice = $"Imported {Count(import.Entries.Count, "entry", "entries")} from {name} into {termbase.Name}.{report}";
         if (Termbase == termbase)
             OnTermsChanged();
     }

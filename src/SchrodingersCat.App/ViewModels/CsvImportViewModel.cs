@@ -21,6 +21,13 @@ public sealed partial class CsvImportViewModel : ObservableObject
     /// <summary>How many rows the preview shows.</summary>
     public const int PreviewRows = 8;
 
+    /// <summary>
+    /// How many columns the preview shows and the column lists offer. The preview draws a control per cell on the UI
+    /// thread, so a hostile file with hundreds of thousands of columns (within <see cref="TermCsv"/>'s cell limit) would
+    /// hang the dialog; a glossary needs four columns.
+    /// </summary>
+    public const int MaxColumns = 100;
+
     /// <summary>The label of "no column" in the note and status lists.</summary>
     public const string NoColumn = "(none)";
 
@@ -34,6 +41,9 @@ public sealed partial class CsvImportViewModel : ObservableObject
 
     // Counts the parses, so only the latest applies.
     private int _generation;
+
+    // The most cells a row of _table has, counted with the parse.
+    private int _width;
 
     // The columns were guessed once, from the first table parsed.
     private bool _guessed;
@@ -110,6 +120,11 @@ public sealed partial class CsvImportViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanImport))]
     public partial bool IsParsing { get; private set; }
 
+    /// <summary>The rows are being turned into entries (<see cref="ImportAsync"/>).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanImport))]
+    public partial bool IsImporting { get; private set; }
+
     /// <summary>The first row holds column names, not terms (the default, as most files have one).</summary>
     [ObservableProperty]
     public partial bool FirstRowIsHeader { get; set; } = true;
@@ -152,12 +167,15 @@ public sealed partial class CsvImportViewModel : ObservableObject
     [ObservableProperty]
     public partial string? Summary { get; private set; }
 
-    public bool CanImport => !IsParsing && _table is not null && Problem is null;
+    public bool CanImport => !IsParsing && !IsImporting && _table is not null && Problem is null;
 
-    /// <summary>The import of the parsed table with the chosen columns, or null with <see cref="Problem"/> set.</summary>
-    public TermImport? TryImport()
+    /// <summary>
+    /// The import of the parsed table with the chosen columns, or null with <see cref="Problem"/> set (or if the encoding
+    /// was changed meanwhile). Off the UI thread, as the parse: turning millions of rows into entries takes seconds.
+    /// </summary>
+    public async Task<TermImport?> ImportAsync()
     {
-        if (IsParsing || _table is null)
+        if (IsParsing || IsImporting || _table is not { } table)
             return null;
         if (ColumnProblem() is { } problem)
         {
@@ -165,7 +183,20 @@ public sealed partial class CsvImportViewModel : ObservableObject
             return null;
         }
 
-        return TermCsv.Import(_table, new CsvColumns(SourceColumn, TargetColumn, Optional(NoteColumn), Optional(StatusColumn)), FirstRowIsHeader);
+        var generation = _generation;
+        var (columns, header) = (new CsvColumns(SourceColumn, TargetColumn, Optional(NoteColumn), Optional(StatusColumn)), FirstRowIsHeader);
+        TermImport? import = null;
+        IsImporting = true;
+        try
+        {
+            await _runOffUiThread(() => import = TermCsv.Import(table, columns, header));
+        }
+        finally
+        {
+            IsImporting = false;
+        }
+
+        return generation == _generation ? import : null;
     }
 
     partial void OnFirstRowIsHeaderChanged(bool value) => ShowColumns();
@@ -186,12 +217,14 @@ public sealed partial class CsvImportViewModel : ObservableObject
         _table = null;
         IsParsing = true;
         CsvTable? table = null;
+        var width = 0;
         string? problem = null;
         await _runOffUiThread(() =>
         {
             try
             {
                 table = TermCsv.Parse(_bytes, encoding);
+                width = table.Rows.Select(r => r.Count).DefaultIfEmpty(0).Max();
             }
             catch (TermbaseFormatException ex)
             {
@@ -202,6 +235,7 @@ public sealed partial class CsvImportViewModel : ObservableObject
             return;
 
         _table = table;
+        _width = width;
         IsParsing = false;
         Preview.Clear();
         if (table is null)
@@ -211,10 +245,11 @@ public sealed partial class CsvImportViewModel : ObservableObject
             return;
         }
 
-        var width = table.Rows.Take(PreviewRows).Select(r => r.Count).DefaultIfEmpty(0).Max();
+        var previewWidth = Math.Min(MaxColumns, table.Rows.Take(PreviewRows).Select(r => r.Count).DefaultIfEmpty(0).Max());
         foreach (var row in table.Rows.Take(PreviewRows))
-            Preview.Add(new CsvPreviewRow([.. Enumerable.Range(0, width).Select(i => i < row.Count ? row[i] : "")]));
-        Summary = $"{table.Rows.Count} {(table.Rows.Count == 1 ? "row" : "rows")}, separated by {SeparatorName(table.Separator)}.";
+            Preview.Add(new CsvPreviewRow([.. Enumerable.Range(0, previewWidth).Select(i => i < row.Count ? row[i] : "")]));
+        Summary = $"{table.Rows.Count} {(table.Rows.Count == 1 ? "row" : "rows")}, separated by {SeparatorName(table.Separator)}."
+            + (width > MaxColumns ? $" Only the first {MaxColumns} of its {width} columns are shown." : "");
         ShowColumns();
         Problem = null;
         CheckColumns();
@@ -228,7 +263,7 @@ public sealed partial class CsvImportViewModel : ObservableObject
 
         var (source, target, note, status) = (SourceColumn, TargetColumn, NoteColumn, StatusColumn);
         var header = table.Rows.Count > 0 ? table.Rows[0] : [];
-        var count = Math.Max(2, table.Rows.Select(r => r.Count).DefaultIfEmpty(0).Max());
+        var count = Math.Max(2, Math.Min(MaxColumns, _width));
         Columns.Clear();
         OptionalColumns.Clear();
         OptionalColumns.Add(NoColumn);
@@ -242,9 +277,10 @@ public sealed partial class CsvImportViewModel : ObservableObject
         if (!_guessed)
         {
             _guessed = true;
-            if (TermCsv.GuessColumns(header, _sourceLanguage, _targetLanguage) is { } guess)
+            // A guess past the columns offered can't be shown: then the translator chooses.
+            if (TermCsv.GuessColumns(header, _sourceLanguage, _targetLanguage) is { } guess && guess.Source < count && guess.Target < count)
             {
-                (source, target, note, status) = (guess.Source, guess.Target, guess.Note is { } n ? n + 1 : 0, guess.Status is { } s ? s + 1 : 0);
+                (source, target, note, status) = (guess.Source, guess.Target, guess.Note is { } n && n < count ? n + 1 : 0, guess.Status is { } s && s < count ? s + 1 : 0);
             }
             else
             {

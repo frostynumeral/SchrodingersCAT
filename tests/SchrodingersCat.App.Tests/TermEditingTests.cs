@@ -402,6 +402,42 @@ public sealed class TermEditingTests : IAsyncDisposable
         Assert.Contains(vm.Segments[3].TermHits, h => h.Entry.Source[0].Text == "list");
     }
 
+    // An edit opened on an entry while a Ctrl+E addition to it waits in the queue is made from the older version: it is
+    // refused rather than written over the addition (it replaces the whole entry).
+    [AvaloniaFact]
+    public async Task AnEdit_OpenedWhileAnAdditionToTheEntryWaits_DoesntUndoIt()
+    {
+        var (vm, dialogs) = await OpenAsync();
+        var inner = new Hooked(Client) { Gate = new ManualResetEventSlim() };
+        await vm.UseTermbaseAsync(new OpenTermbase(inner, "client"));
+        await vm.TermCheck;
+        vm.SelectedSegment = vm.Segments[4];
+        var hit = vm.Terms.Single().Hit;
+        var edits = new Queue<Func<TermEntryEditorViewModel, TermEntryEdit?>>(
+        [
+            editor => editor.TrySave(), // into the existing "file" entry
+            editor =>
+            {
+                editor.EntryNote = "Edited.";
+                return editor.TrySave();
+            },
+        ]);
+        dialogs.EditTermEntry = editor => edits.Dequeue()(editor);
+
+        var adding = vm.AddTermCommand.ExecuteAsync(new TermSelection("file", "dosszié"));
+        var editing = vm.EditTermEntryCommand.ExecuteAsync(hit);
+        inner.Gate.Set();
+        await Task.WhenAll(adding, editing);
+        await vm.TermCheck;
+
+        var stored = inner.Index.Find(hit.Id)!;
+        Assert.Contains(stored.Target, t => t.Text == "dosszié");
+        Assert.Equal("Computer files only.", stored.Note);
+        Assert.Equal("The entry “file” in client changed while it was being edited, so it wasn't updated. Edit it again to start from the change.", vm.Notice);
+        Assert.Null(vm.ErrorMessage);
+        AssertUpToDate(vm);
+    }
+
     // The document didn't have the snapshot the write started from: it takes the latest, and checks every unit again.
     [Fact]
     public async Task AWriteAfterASnapshotTheDocumentMissed_RechecksEverything()

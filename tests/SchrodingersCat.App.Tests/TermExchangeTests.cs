@@ -159,7 +159,7 @@ public sealed class TermExchangeTests : IAsyncDisposable
         Assert.Equal((0, 1, 3), (import.SourceColumn, import.TargetColumn, import.NoteColumn)); // "magyar" is Hungarian's native name
         Assert.Null(import.ColumnMessage);
         Assert.True(import.CanImport);
-        var imported = import.TryImport()!;
+        var imported = (await import.ImportAsync())!;
         Assert.Equal(["őr"], imported.Entries[1].Target.Select(t => t.Text));
         Assert.Equal("Őrség: guard duty", imported.Entries[1].Note);
     }
@@ -174,7 +174,7 @@ public sealed class TermExchangeTests : IAsyncDisposable
 
         Assert.NotNull(import.Problem);
         Assert.False(import.CanImport);
-        Assert.Null(import.TryImport());
+        Assert.Null(await import.ImportAsync());
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public sealed class TermExchangeTests : IAsyncDisposable
         Assert.Equal("UTF-8", import.SelectedEncoding.Label);
         Assert.Equal(["1: en", "2: hu", "3: Comment", "Column 4"], import.Columns); // a row has an extra cell
         Assert.Equal((0, 1, 3, 0), (import.SourceColumn, import.TargetColumn, import.NoteColumn, import.StatusColumn));
-        Assert.Equal("First line\nsecond line", import.TryImport()!.Entries[0].Note);
+        Assert.Equal("First line\nsecond line", (await import.ImportAsync())!.Entries[0].Note);
 
         var utf16 = new CsvImportViewModel(File.ReadAllBytes(Sample("utf16-tab.txt")), "en", "hu", Task.Run);
         await utf16.Parsing;
@@ -195,7 +195,57 @@ public sealed class TermExchangeTests : IAsyncDisposable
         Assert.False(utf16.CanChooseEncoding);
         Assert.Equal("UTF-16", utf16.SelectedEncoding.Label);
         Assert.Equal((0, 1, 0, 3), (utf16.SourceColumn, utf16.TargetColumn, utf16.NoteColumn, utf16.StatusColumn));
-        Assert.Equal(TermStatus.Preferred, utf16.TryImport()!.Entries[0].Source[0].Status);
+        Assert.Equal(TermStatus.Preferred, (await utf16.ImportAsync())!.Entries[0].Source[0].Status);
+    }
+
+    // A control per cell on the UI thread: a file with thousands of columns shows only the first MaxColumns.
+    [Fact]
+    public async Task TheCsvDialog_ShowsAndOffersAtMostMaxColumns_OfAWideFile()
+    {
+        var bytes = Encoding.UTF8.GetBytes("en,hu" + new string(',', 5000) + "\nfile,fájl\n");
+        var import = new CsvImportViewModel(bytes, "en", "hu", Task.Run);
+        await import.Parsing;
+
+        Assert.All(import.Preview, r => Assert.Equal(CsvImportViewModel.MaxColumns, r.Cells.Count));
+        Assert.Equal(CsvImportViewModel.MaxColumns, import.Columns.Count);
+        Assert.Equal(CsvImportViewModel.MaxColumns + 1, import.OptionalColumns.Count);
+        Assert.Equal($"2 rows, separated by commas. Only the first {CsvImportViewModel.MaxColumns} of its 5002 columns are shown.", import.Summary);
+        Assert.Equal((0, 1), (import.SourceColumn, import.TargetColumn));
+        Assert.Equal(["fájl"], (await import.ImportAsync())!.Entries.Single().Target.Select(t => t.Text));
+
+        // A guessed column past them can't be chosen: the translator is asked to check.
+        var far = new CsvImportViewModel(Encoding.UTF8.GetBytes("en" + new string(',', 150) + "hu\nfile" + new string(',', 150) + "fájl\n"), "en", "hu", Task.Run);
+        await far.Parsing;
+        Assert.Equal((0, 1), (far.SourceColumn, far.TargetColumn));
+        Assert.Equal("Couldn't tell the en and hu columns from the first row; check them.", far.ColumnMessage);
+    }
+
+    // Turning the rows into entries takes seconds for millions of rows: it runs off the UI thread, as the parse does, and
+    // Import is disabled meanwhile.
+    [Fact]
+    public async Task TheCsvDialog_ImportsOffTheUiThread()
+    {
+        var held = new List<TaskCompletionSource>();
+        var import = new CsvImportViewModel(Encoding.UTF8.GetBytes("en,hu\nfile,fájl\n"), "en", "hu", async work =>
+        {
+            var gate = new TaskCompletionSource();
+            held.Add(gate);
+            await gate.Task;
+            work();
+        });
+        held[0].SetResult();
+        await import.Parsing;
+        Assert.True(import.CanImport);
+
+        var importing = import.ImportAsync();
+        Assert.Equal(2, held.Count);
+        Assert.False(importing.IsCompleted);
+        Assert.True(import.IsImporting);
+        Assert.False(import.CanImport);
+
+        held[1].SetResult();
+        Assert.Equal(["file"], (await importing)!.Entries.Select(e => e.Source[0].Text));
+        Assert.True(import.CanImport);
     }
 
     [Fact]
@@ -208,12 +258,12 @@ public sealed class TermExchangeTests : IAsyncDisposable
 
         import.FirstRowIsHeader = false;
         Assert.Equal(["Column 1", "Column 2"], import.Columns);
-        Assert.Equal(2, import.TryImport()!.Entries.Count);
+        Assert.Equal(2, (await import.ImportAsync())!.Entries.Count);
 
         import.TargetColumn = 0;
         Assert.Equal("The source and the translations can't be in the same column.", import.Problem);
         Assert.False(import.CanImport);
-        Assert.Null(import.TryImport());
+        Assert.Null(await import.ImportAsync());
         import.TargetColumn = 1;
         Assert.Null(import.Problem);
     }

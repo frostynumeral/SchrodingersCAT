@@ -1,6 +1,7 @@
 using System.Text;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
 
 namespace SchrodingersCat.App.Views;
@@ -23,9 +24,12 @@ public partial class CsvImportDialog : Window
         DataContext = import ?? throw new ArgumentNullException(nameof(import));
     }
 
-    private void OnImport(object? sender, RoutedEventArgs e)
+    // The import runs off the UI thread (Import is disabled meanwhile); the dialog closes with it.
+    private void OnImport(object? sender, RoutedEventArgs e) => ImportAsync().Forget();
+
+    private async Task ImportAsync()
     {
-        if (((CsvImportViewModel)DataContext!).TryImport() is { } import)
+        if (await ((CsvImportViewModel)DataContext!).ImportAsync() is { } import && IsVisible)
             Close(import);
     }
 
