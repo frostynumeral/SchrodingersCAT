@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-SchrödingersCAT is an early-stage CAT (computer-assisted translation) tool in C#/.NET. It has three parts: `SchrodingersCat.Core`, a UI-independent domain model plus an XLIFF 2.x serializer; `SchrodingersCat.Memory`, the translation memory (see `docs/design/translation-memory.md` and `docs/design/tm-maintenance.md`); and `SchrodingersCat.App`, an Avalonia desktop editor built on both.
+SchrödingersCAT is an early-stage CAT (computer-assisted translation) tool in C#/.NET. It has three parts: `SchrodingersCat.Core`, a UI-independent domain model plus an XLIFF 2.x serializer; `SchrodingersCat.Memory`, the translation memory and the termbase (see `docs/design/translation-memory.md`, `docs/design/tm-maintenance.md` and `docs/design/termbase.md`); and `SchrodingersCat.App`, an Avalonia desktop editor built on both.
 
 ## Commands
 
@@ -44,8 +44,8 @@ A map of the code. The details of each part are in [docs/architecture.md](docs/a
 - **Checks** (Core, `Checks/`): `InlineCodeHints` and `InlineCodeChecker` (target codes against source codes). Design: `docs/design/inline-code-editing.md`. [Details](docs/architecture.md#checks)
 - **Checks/Qa** (Core, `Checks/Qa/`, `Text/`): `QaChecker`, `IQaCheck`s, `QaText`, terminology (`TermRecord`, `ITermSource`, `GlossaryReader`), `DocumentChecker`, and the shared tokenizer/term rule in `Text/Words`. Design: `docs/design/qa-checks.md`, `docs/design/termbase.md`. [Details](docs/architecture.md#checksqa)
 - **Xliff** (Core, `Xliff/`): `Xliff20Serializer` (XLIFF 2.0/2.1/2.2 core), `WriteFileAsync` (atomic save). [Details](docs/architecture.md#xliff)
-- **App** (`SchrodingersCat.App`, Avalonia 12, CommunityToolkit.Mvvm): `MainWindowViewModel`, `SegmentViewModel`, `TargetEditModel`/`TargetEditor`, chips, matches, concordance, QA tab, TM menu and entry maintenance, settings. Designs: `inline-code-editing.md`, `qa-checks.md`, `translation-memory.md`, `tm-maintenance.md`. [Details](docs/architecture.md#app)
-- **Memory** (`SchrodingersCat.Memory`): `ITranslationMemory` (`InMemoryTranslationMemory`, `SqliteTranslationMemory`), `MatchScore`, `Ranking`, `CodeTransfer`, `Tmx`, `Concordance`, `SourceDiff`, `XliffMatches`, and the termbase (`TermEntry`, `TermIndex`, `ITermbase`, `SqliteTermbase`). Designs: `translation-memory.md`, `tm-maintenance.md`, `termbase.md`. [Details](docs/architecture.md#memory)
+- **App** (`SchrodingersCat.App`, Avalonia 12, CommunityToolkit.Mvvm): `MainWindowViewModel`, `SegmentViewModel`, `TargetEditModel`/`TargetEditor`, chips, matches, concordance, QA tab, TM menu and entry maintenance, the termbase (menu, terms list and source marks, Ctrl+T, Ctrl+E and the entry dialog, TBX/CSV import and export), settings. Designs: `inline-code-editing.md`, `qa-checks.md`, `translation-memory.md`, `tm-maintenance.md`, `termbase.md`. [Details](docs/architecture.md#app)
+- **Memory** (`SchrodingersCat.Memory`): `ITranslationMemory` (`InMemoryTranslationMemory`, `SqliteTranslationMemory`), `MatchScore`, `Ranking`, `CodeTransfer`, `Tmx`, `Concordance`, `SourceDiff`, `XliffMatches`, and the termbase (`TermEntry`, `TermIndex`, `TermProbe`, `ITermbase`, `SqliteTermbase`, `Tbx`, `TermCsv`). Designs: `translation-memory.md`, `tm-maintenance.md`, `termbase.md`. [Details](docs/architecture.md#memory)
 - **TestSupport** (`tests/SchrodingersCat.TestSupport`): the shared CsCheck generators (`XliffGen`, `DocumentBuilder`). [Details](docs/architecture.md#testsupport)
 - **Logging**: `Microsoft.Extensions.Logging`; the app's rolling log file. [Details](docs/architecture.md#logging)
 
