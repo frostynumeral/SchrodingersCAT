@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<martif type="TBX-Basic" xml:lang="en">
+  <martifHeader>
+    <fileDesc>
+      <sourceDesc>
+        <p>Hand-written sample for SchrodingersCAT's tests: declared ISO-8859-1.</p>
+      </sourceDesc>
+    </fileDesc>
+  </martifHeader>
+  <text>
+    <body>
+      <termEntry id="e1">
+        <langSet xml:lang="en">
+          <tig>
+            <term>coffee</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="hu">
+          <tig>
+            <term>kávé</term>
+          </tig>
+          <tig>
+            <term>feketekávé</term>
+            <termNote type="administrativeStatus">admittedTerm-admn-sts</termNote>
+            <note>Black, without milk; spelt 'fekete kávé' too.</note>
+          </tig>
+        </langSet>
+      </termEntry>
+    </body>
+  </text>
+</martif>

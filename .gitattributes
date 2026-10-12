@@ -1,2 +1,5 @@
 # Check out text files with LF on every platform, matching .editorconfig.
 * text=auto eol=lf
+
+# The termbase samples are byte-exact test inputs (CRLF, BOMs, UTF-16, Windows-1250): never normalise them.
+samples/termbase/** -text

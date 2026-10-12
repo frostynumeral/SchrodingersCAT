@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tbx type="TBX-Basic" style="dca" xml:lang="en" xmlns="urn:iso:std:iso:30042:ed-2">
+  <tbxHeader>
+    <fileDesc>
+      <sourceDesc>
+        <p>Hand-written sample for SchrodingersCAT's tests: TBX 3, TBX-Basic, DCA style.</p>
+      </sourceDesc>
+    </fileDesc>
+  </tbxHeader>
+  <text>
+    <body>
+      <conceptEntry id="c1">
+        <descrip type="definition">A container for files.</descrip>
+        <transacGrp>
+          <transac type="transactionType">modification</transac>
+          <date>2025-03-14T11:26:53.5+02:00</date>
+          <transacNote type="responsibility">bela</transacNote>
+        </transacGrp>
+        <langSec xml:lang="en">
+          <termSec>
+            <term>folder</term>
+            <termNote type="administrativeStatus">preferredTerm-admn-sts</termNote>
+            <termNote type="partOfSpeech">noun</termNote>
+          </termSec>
+          <termSec>
+            <term>directory</term>
+            <termNoteGrp>
+              <termNote type="administrativeStatus">supersededTerm-admn-sts</termNote>
+            </termNoteGrp>
+          </termSec>
+        </langSec>
+        <langSec xml:lang="hu">
+          <descripGrp>
+            <descrip type="definition">Fájlok tárolója.</descrip>
+          </descripGrp>
+          <termSec>
+            <term>mappa</term>
+            <termNote type="administrativeStatus">admittedTerm-admn-sts</termNote>
+            <note>Informal.</note>
+          </termSec>
+        </langSec>
+      </conceptEntry>
+      <conceptEntry id="c2">
+        <langSec xml:lang="en-GB">
+          <termSec>
+            <term>colour</term>
+          </termSec>
+        </langSec>
+        <langSec xml:lang="hu">
+          <termSec>
+            <term>szín</term>
+          </termSec>
+        </langSec>
+        <xref target="https://example.com/colour">Colour chart</xref>
+      </conceptEntry>
+    </body>
+  </text>
+</tbx>
