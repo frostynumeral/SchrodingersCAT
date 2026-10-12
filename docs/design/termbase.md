@@ -125,17 +125,20 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
 - **An in-memory index**, built when the termbase opens (step 2, `TermIndex`):
   - each source term is classified once (`TermPattern`: words, punctuation or substring) and filed under one key in
     one dictionary: a word term under its first folded word run (`fájl`), cut at 16 characters;
-  - a term with punctuation under its first word run too, with code marks skipped (`C#` under `c`, `.NET` under
-    `net`, `Wi-Fi` under `wi`). Not under its first token: `Wi-Fi` in `W<ph/>i-Fi` has the tokens `w`, `i`, `fi`,
-    which a first-token key would miss, though the rule finds it;
+  - a term with punctuation under its characters up to its first space, folded, apostrophes and hyphens as one
+    (`C#` under `c#`, `.NET` under `.net`, `Wi-Fi settings` under `wi-fi`), cut at 16 characters too. Step 2 filed
+    these under their first word run (`.NET` under `net`); the step 3 spike changed it (see below), because the
+    spike's 1,600 terms starting `e-` all landed under `e`, tried at every word beginning with an `e`;
   - terms in scripts without spaces, and terms with no words (`%`), under their first folded character. This
     replaces the short list of symbol-only terms checked every time that this section first proposed: one
     dictionary serves every kind;
-  - a lookup probes, at every place of the source's folded text, its character and the beginnings of the word run
-    starting there (up to the longest key), so every key a term found in the text can have is probed; the
-    candidates are then confirmed by the rule itself, on the source tokenised and folded once per lookup
-    (`PreparedText`, cached on the `QaText` the check reuses). The property tests check that the index finds
-    exactly what trying every term of every entry finds.
+  - a lookup probes each of the source's words with the beginnings of its word run (up to the longest key), and
+    each place of its folded text with its character and, where a word may begin, the beginnings of its characters
+    up to whitespace, code marks skipped as the rule skips them (so `Wi-Fi` is found in `W<ph/>i-Fi`); so every key
+    a term found in the text can have is probed. Keys are 64-bit hashes, and a bit per hash rules out most probes
+    without a lookup. The candidates are then confirmed by the rule itself, on the source tokenised and folded once
+    per lookup (`PreparedText`, cached on the `QaText` the check reuses). The property tests check that the index
+    finds exactly what trying every term of every entry finds.
 - **Why in memory:** the QA check runs synchronously after every edit, on the UI thread, and has to look terms up
   there; the TM's queue answers later. Termbases are small next to TMs (thousands to tens of thousands of entries;
   the spike in step 3 measures 200,000). Writes still go to SQLite through a queue. Lookups read an immutable
@@ -149,12 +152,31 @@ public enum TermStatus { Unspecified, Preferred, Admitted, Forbidden }
 
 - **A SQLite file** per termbase (`*.sctb`), as for the TM: one file to copy and back up, crash-safe, through the
   same `Microsoft.Data.Sqlite`.
-- **Tables:** `meta` (format `SchrodingersCat.TB`, version, languages), `entries` (id, note, changed, changed by)
-  and `terms` (entry id, side, text, status, note, order). Ids work as the TM's do: they increase and are never
-  reused, so the editor can point at an entry.
-- **Untrusted files**, as for the TM: `Open` requires exactly the expected tables and indexes (no triggers or views
-  of the file's own), the format and version in `meta`, sets `trusted_schema=OFF`, doesn't pool connections, and
-  anything else, or a damaged entry found later, throws a format exception.
+- **Tables** (decided in step 3; `STRICT`, so a value of the wrong type can't be stored through SQLite):
+
+  ```sql
+  CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT, WITHOUT ROWID
+  CREATE TABLE entries(id INTEGER PRIMARY KEY, note BLOB, changed INTEGER NOT NULL, changed_by BLOB) STRICT
+  CREATE TABLE terms(entry INTEGER NOT NULL, side INTEGER NOT NULL, position INTEGER NOT NULL, text BLOB NOT NULL,
+      status INTEGER NOT NULL, note BLOB, PRIMARY KEY(entry, side, position)) STRICT, WITHOUT ROWID
+  ```
+
+  - `meta` holds `format` (`SchrodingersCat.TB`), `version` (1), `source_language` and `target_language`, and, once
+    entries were deleted, `last_deleted_id` and `deleted_since_compact` (digits only).
+  - `terms` is stored in the order of its key, so loading reads it in one pass beside `entries`, and an entry's
+    terms are one range of it. `side` is 0 for the source, 1 for the target; `position` counts from 0 within a side
+    (`order` is an SQL keyword); `status` is `(int)TermStatus`, pinned by a test.
+  - Strings (terms, notes, the user) are raw UTF-16 BLOBs, so nothing is lost (lone surrogates, U+0000, U+FFFF); an
+    empty BLOB is the empty string, `NULL` is null. They are never searched in SQL: every lookup is the index's. Not
+    the TM's content format, which would build an `InlineContent` per string while loading.
+  - `changed` is UTC ticks; both termbases store `Changed` as UTC, so a snapshot after a write equals one after
+    reopening.
+  - Ids work as the TM's do: they increase and are never reused (the highest id deleted is kept in `meta`), so the
+    editor can point at an entry.
+- **Untrusted files**, as for the TM: `Open` requires exactly the expected tables, compared with their SQL text (no
+  triggers, views or indexes of the file's own, and no table changed by `ALTER TABLE`), the format, version and
+  languages in `meta` (stored as text) and no other keys, sets `trusted_schema=OFF`, doesn't pool connections, and checks every value
+  it loads; anything else throws `TermbaseFormatException`, the termbase's format exception.
 - **Loading** reads every entry into the index when the termbase opens, on a background thread, at startup too.
   Until it's done the terms list shows "Loading…", the source has no marks, and the check uses the file's glossary
   only; when it's done, the checks re-run.
@@ -275,27 +297,105 @@ entries by folded term, and says "The glossary translates …". Step 1 changes i
 
 Each step ends with passing tests, zero warnings and green CI, and can be merged on its own.
 
-1. **Core: the check and the rule.** The term record with origin and forbidden translations, `ITermSource` as its
+1. **Core: the check and the rule.** *(Done 2026-10-12.)* The term record with origin and forbidden translations, `ITermSource` as its
    own argument to `QaChecker.Check`, per-segment lookup, messages naming origins, and the punctuation rule in
    `Words.FindTerm`.
    - Examples: a termbase record alone, the same term from both origins, synonyms, homonyms, a forbidden
      translation, a record with only forbidden translations, `C#`, `C++`, `.NET`, `Wi-Fi`, and their suffixed forms (`e-mail` → `e-mailt`, `Wi-Fi` → `Wi-Fi-t`) in sources and targets.
    - The property tests' rules hold with a term source: arbitrary targets never throw, and a target containing an
      allowed translation reports nothing for it.
-2. **Entries and the index:** `TermEntry`, `Term`, the in-memory index, finding every occurrence, and `QaText`'s
+2. **Entries and the index:** *(Done 2026-10-12.)* `TermEntry`, `Term`, the in-memory index, finding every occurrence, and `QaText`'s
    mapping of a range to element pieces.
    - Examples per rule: suffixes, case and accents, scripts without spaces, mixed scripts (`このprofileを開く`),
      symbol terms, `C#`, `C++`, `.NET`, `Wi-Fi`, overlapping terms, a hit across a code, and a term that occurs only
      in `equiv` text (not found).
    - Properties: every hit's range is inside the text and the term rule finds the term there; the index finds what
      a scan of every entry finds, with generated terms that include punctuation.
-3. **Storage spike and SQLite termbase:** `Create`, `Open`, add, update, delete, load into the index.
+3. **Storage spike and SQLite termbase:** *(Done 2026-10-12.)* `Create`, `Open`, add, update, delete, load into the
+   index.
    - The spike measures a generated termbase of 200,000 entries and a document of 5,000 segments, against these
      budgets: loading under 2 s; one segment's terms p95 under 5 ms; adding a term, with its re-check, under 50 ms;
      re-checking the whole document under 1 s; the index under 200 MB. If the design misses one, the step records
      why and what was chosen instead.
    - Untrusted-file tests as for the TM; a property that random edit scripts keep the file and an in-memory termbase
      equal.
+   - **Spike** (throwaway, not kept): 200,000 entries in one `AddRange`. Source words from a vocabulary of 200,000
+     pseudo-words of 2–4 syllables (16 consonants × 5 vowels; a fifth with á, é, ő or ß), drawn by Zipf (s = 1),
+     a term's words from rank 100 on (function words seldom start a term). Source terms of 1 word 45%, 2 words
+     35%, 3 words 14%, 4–6 words 6%; 5% with punctuation (`X-Y`, `X.Y`, `.X`, `X#`, `X++`, `X/Y`, `X's`, `e-X`), 3%
+     without spaces (katakana, hanzi, Thai), 0.1% symbols, 1% with a first word over 16 characters, 2% homonyms; 1–4
+     synonyms, 0–3 translations, every status, notes on a fifth of the entries and on 5% of the terms, 5 users,
+     dates over two years. The document: 5,000 segments in 1,448 units, 3–27 words (10% 80–120; 24.7 on average)
+     with numbers and commas; 35% with 1–3 of the termbase's terms (30% with a suffix, 10% in upper case with a
+     typographic apostrophe or hyphen), 20% with codes, 5% Japanese; 70% translated, half of those with the term's
+     translation. A segment has 22.9 hits on average (0.93 per word): pessimistic, as nearly every content word is
+     a term. Adding a term: 100 adds (the document's 50 most frequent content words, 30 rare words, 20 with
+     punctuation or in katakana), each timed from the commit to the re-check of the units whose source has it.
+     Release build, i5-12400 (6 cores, 12 threads), NVMe SSD, Linux 7.0, .NET 10.0.12, SQLite 3.53.3, workstation
+     GC, the file in the page cache; memory is the growth of `GC.GetTotalMemory` after full collections.
+
+     | Version | Loading, median / p95 | One segment's terms, p50 / p95 | Adding a term + re-check, p50 / p95 | Re-checking the document | Index |
+     |---|---|---|---|---|---|
+     | Budget | 2 s | p95 5 ms | 50 ms | 1 s | 200 MB |
+     | First generator, the code as first measured | 2,007 / 2,082 ms | 0.21 / 0.98 ms | 51 / 1,519 ms¹ | 1,835 ms | 193 MB |
+     | Corrected generator, same code | 2,077 / 2,131 ms | 0.13 / 0.60 ms | 50 / 136 ms | 1,185 ms | 192 MB |
+     | + keys of terms with punctuation up to their first space, a bit per key, a phrase's second word compared first, records kept with the index | 2,059 / 2,144 ms | 0.036 / 0.19 ms | 29 / 73 ms | 489 ms | 196 MB |
+     | + loading reads each row in one call and classifies entries while it reads | 1,720 / 1,753 ms | 0.034 / 0.18 ms | 40 / 77 ms | 475 ms (257 ms in parallel) | 189 MB |
+     | + re-checking as step 6 will (below) | | | 14 / 51 ms (36 ms without the commit) | | |
+
+     ¹ Adding the document's 50 most frequent words; see the corrections below.
+
+     Memory after use (measured after review, with the spike's termbase file and a document generated to the same
+     description, 20.8 hits per segment): the rows above measured the index right after loading, before any lookup.
+     The fifth row kept each entry's check record with the index once a lookup had found it (its lists, and each term
+     and translation trimmed, keyed and classified), and the index's entries are shared by every later snapshot, so
+     the records stayed while the termbase was open: one check of the document found 25,443 entries and added 19.5 MB
+     (about 770 bytes a record; 209 MB in all), and a record for every entry would add 190 MB (380 MB). Keeping at most
+     4,096 records (a slot per entry's hash) bounded that, but the document's check thrashed it: 650 ms, as slow as
+     keeping none (600 ms, against 400 ms with every record kept; this document's check is slower than the spike's in
+     the table, so compare these three only with each other). So the term source keeps the records of the entries it
+     found, and the index none: the index is 187 MB (937 bytes per entry, the record's field gone) however long it is
+     open, re-checking takes as long as with records kept, and the records go with the source (21 MB for this document,
+     the dictionary's nodes included). A new snapshot's source takes over the previous one's records
+     (`ToTermSource`'s `previous`; an entry changed since gets a new record): re-checking in full the units a new term
+     affects (100 adds as in the table, 40 units on average) took p95 70 ms with a fresh source, and 38 ms with the
+     records taken over, as with records kept in the index.
+
+     Other timings: the import of 200,000 entries 2.6 s (a 48.7 MB file); one update 5 ms; deleting 20,000 entries
+     in one call 0.33 s; `Compact` after deleting 70% of them 0.09 s (48.7 → 13.7 MB).
+   - **Where the time went:** in lookups, terms with punctuation filed under their first word run or first
+     character (the 1,600 `e-` terms all under `e`, the 1,600 `.X` terms under `.`) were tried at every place with
+     that character, 2,300 candidates per segment, and every probed beginning, though most are no key, cost a lookup
+     in the immutable dictionary (2.6 million per pass over the document). In the check, every record was made anew
+     for every segment, and its terms and translations classified again (a regular expression each). In loading,
+     classifying the entries waited for the reading to end.
+   - **Corrections to the generator:** the first one drew words from 30,000 pseudo-words of 36 syllables, too few for
+     the termbase's single-word terms: every content word of the document was a term, and each of the 1,296
+     two-syllable words was the beginning of about 20 others, so a segment had 33.7 hits (1.33 per word). And it
+     measured adding the document's 50 most frequent words, which are function words (Zipf ranks 1–50) the
+     generator never makes terms: 224 of 1,433 units re-checked on average, up to 1,333. Its frequent words are now
+     the most frequent content words (ranks 100–149): 37 units on average, at most 95.
+   - **Decision:** the format of section 3 and the index of the fifth row. Every budget is met, adding a term only if
+     step 6 re-checks as the last row does:
+     - **Loading** takes 1.7 s, on a background thread with "Loading…" (section 3).
+     - **Adding a term:** step 6 finds the units to re-check by trying the new entry's own terms on each segment's
+       `QaText` (2.8 ms for 5,000 segments; through a one-entry `TermIndex` 20 ms, so step 6 adds a public way to
+       do that), and re-checks them with each segment's hits cached since its last check (section 6 caches them for
+       the marks anyway) plus the new entry's. The commit (`synchronous=FULL`, p95 22 ms) runs in the write queue,
+       so the UI waits only for the re-check, p95 about 36 ms. Re-checking the same units in full instead gives p95
+       77 ms, or 47 ms with the units in parallel: the fallback if the cache isn't there.
+     - **Re-checking the document** takes 0.48 s on one thread; step 5 may still run it off the UI thread (0.26 s
+       in parallel), as it follows opening or loading the termbase.
+     - **The index** is 189 MB (945 bytes per entry) as measured, 187 MB without the record field (above), near the
+       budget: if a larger termbase needs it, notes leave the index first (the pane would read them from the file).
+       The check's records are kept by its term source, not the index (21 MB for the document): step 5 makes a term
+       source per document checked and drops it with the document, never one for the whole session, and after a
+       write makes the new snapshot's source from the document's previous one.
+   - **Also in this step:** the TM's schema check ignored any object named like an automatic index with `LIKE
+     'sqlite_autoindex_%'`, where `_` matches any character, so a trigger named `sqliteXautoindexX…` passed unseen;
+     it now ignores only an index whose name matches by `GLOB` and that has no SQL. In Core, a `TermRecord` copies
+     its lists and keeps what the terminology check works out from it (`TermRecord.Checked`), and `Words.Fold` returns text that is folded
+     already as it is.
 4. **Exchange:** TBX 2 and 3 import (DCA and DCT), TBX 2 export (TBX 3 as an option), CSV import and export.
    - Sample files of every variant, from other tools where their licences allow; round trips through TBX keep
      entries, status (Unspecified included) and notes; CSV round trips keep what CSV can hold; damaged files fail

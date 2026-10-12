@@ -345,7 +345,8 @@ internal sealed class TerminologyCheck : IQaCheck
         var found = new List<Found>();
         foreach (var record in segment.Terms)
         {
-            if (Allowed(record).Count == 0)
+            var terms = record.Checked;
+            if (terms.Allowed.Count == 0)
                 continue;
 
             if (record.MarkerId is { } id && segment.HasSourceMarker(id))
@@ -361,10 +362,10 @@ internal sealed class TerminologyCheck : IQaCheck
                 continue;
             }
 
-            foreach (var term in record.Terms.Where(t => !string.IsNullOrWhiteSpace(t)))
+            foreach (var term in terms.Terms)
             {
-                if (segment.Source.FindTerm(term) is { } range)
-                    found.Add(new Found(record, Key(term), term.Trim(), range));
+                if (segment.Source.FindFirst(term.Pattern) is { } range)
+                    found.Add(new Found(record, term.Key, term.Text, range));
             }
         }
 
@@ -372,15 +373,15 @@ internal sealed class TerminologyCheck : IQaCheck
         foreach (var group in Groups([.. found.Where(f => f.Key.Length > 0)]))
         {
             var records = group.Select(f => f.Record).Distinct().ToList();
-            var translations = records.SelectMany(Allowed).DistinctBy(Key, StringComparer.Ordinal).ToList();
-            if (translations.Any(t => segment.Target.FindTerm(t) is not null))
+            var translations = records.SelectMany(r => r.Checked.Allowed).DistinctBy(t => t.Key, StringComparer.Ordinal).ToList();
+            if (translations.Any(t => segment.Target.FindFirst(t.Pattern) is not null))
                 continue;
 
             var first = group[0];
             var origins = records.Select(r => r.Origin).Distinct().OrderBy(o => o.Termbase is not null).ToList();
             var (start, length) = first.Range;
             yield return new QaIssue(Kind, IssueSeverity.Warning, segment.Segment,
-                $"{Describe(origins)} {(origins.Count == 1 ? "translates" : "translate")} “{first.Text}” as {string.Join(" or ", translations.Select(t => $"“{t}”"))}, which isn't in the target.")
+                $"{Describe(origins)} {(origins.Count == 1 ? "translates" : "translate")} “{first.Text}” as {string.Join(" or ", translations.Select(t => $"“{t.Text}”"))}, which isn't in the target.")
             {
                 Span = segment.Source.SpanOf(start, length),
                 SpanInSource = true,
@@ -410,14 +411,31 @@ internal sealed class TerminologyCheck : IQaCheck
             .Select(g => g.Select(i => found[i]).ToList())];
     }
 
-    // The record's translations that satisfy the check: trimmed, not empty, and not forbidden by the record.
-    private static List<string> Allowed(TermRecord record)
+    /// <summary>
+    /// A record's terms as the check looks for them (<see cref="TermRecord.Checked"/>): its source terms that aren't
+    /// blank, and its translations that satisfy the check (not blank, and not forbidden by the record), each trimmed,
+    /// with its key and classified for the term rule.
+    /// </summary>
+    internal sealed class RecordTerms
     {
-        var forbidden = record.ForbiddenTranslations.Where(t => t is not null).Select(Key).ToHashSet(StringComparer.Ordinal);
-        return [.. record.Translations
-            .Where(t => !string.IsNullOrWhiteSpace(t))
-            .Select(t => t.Trim())
-            .Where(t => !forbidden.Contains(Key(t)))];
+        private RecordTerms(List<Term> terms, List<Term> allowed) => (Terms, Allowed) = (terms, allowed);
+
+        public IReadOnlyList<Term> Terms { get; }
+
+        public IReadOnlyList<Term> Allowed { get; }
+
+        public static RecordTerms Of(TermRecord record)
+        {
+            var forbidden = record.ForbiddenTranslations.Where(t => t is not null).Select(Key).ToHashSet(StringComparer.Ordinal);
+            return new RecordTerms(
+                [.. record.Terms.Where(t => !string.IsNullOrWhiteSpace(t)).Select(Term.Of)],
+                [.. record.Translations.Where(t => !string.IsNullOrWhiteSpace(t)).Select(Term.Of).Where(t => !forbidden.Contains(t.Key))]);
+        }
+    }
+
+    internal sealed record Term(string Text, string Key, TermPattern Pattern)
+    {
+        public static Term Of(string term) => new(term.Trim(), TerminologyCheck.Key(term), TermPattern.Of(term.Trim()));
     }
 
     // "The file's glossary", "The termbase “client”", "The file's glossary and the termbase “client”".

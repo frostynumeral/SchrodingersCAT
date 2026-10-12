@@ -49,7 +49,8 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
         "CREATE TABLE features(feature INTEGER PRIMARY KEY, entries INTEGER NOT NULL)",
     ];
 
-    // What sqlite_schema must hold, beyond the automatic index of meta's primary key.
+    // What sqlite_schema must hold, beyond SQLite's automatic indexes (named sqlite_autoindex_…, without SQL). GLOB,
+    // not LIKE: in LIKE, _ matches any character, so a trigger named sqliteXautoindexX… would pass unseen.
     private static readonly HashSet<(string Type, string Name)> SchemaObjects =
     [
         ("table", "meta"), ("table", "entries"), ("index", "entries_pair"), ("table", "postings"), ("table", "features"),
@@ -115,7 +116,7 @@ public sealed class SqliteTranslationMemory : ITranslationMemory, IDisposable
             var objects = new HashSet<(string, string)>();
             using (var command = connection.CreateCommand())
             {
-                command.CommandText = "SELECT type, name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_autoindex_%'";
+                command.CommandText = "SELECT type, name FROM sqlite_schema WHERE NOT (type = 'index' AND name GLOB 'sqlite_autoindex_*' AND sql IS NULL)";
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
                     objects.Add((reader.GetString(0), reader.GetString(1)));

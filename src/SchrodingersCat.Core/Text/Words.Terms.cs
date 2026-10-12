@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 
@@ -51,14 +52,17 @@ internal static partial class Words
     // or in a script without spaces as a substring, one with punctuation as written, the others by their words.
     internal static (TermRule Rule, IReadOnlyList<string> Phrase, string Needle, bool EndsInPunctuation) Classify(string term)
     {
-        var termWords = Find(term).Select(w => w.Folded).ToList();
-        if (termWords.Count == 0 || NoSpaces().IsMatch(term))
+        string[] termWords = [.. Find(term).Select(w => w.Folded)];
+        if (termWords.Length == 0 || NoSpaces().IsMatch(term))
         {
             var needle = Fold(term.Trim());
             return (needle.Length == 0 ? TermRule.None : TermRule.Folded, [], needle, false);
         }
 
-        if (Tokens().Matches(term).Any(t => IsPunctuation(t.Value)))
+        var punctuated = false;
+        foreach (var token in Tokens().EnumerateMatches(term))
+            punctuated |= IsPunctuation(term.AsSpan(token.Index, token.Length));
+        if (punctuated)
         {
             // Whitespace in the needle is a single space, which stands for a run of whitespace in the text.
             var needle = string.Join(' ', Fold(term).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
@@ -140,18 +144,26 @@ internal static partial class Words
     private static IEnumerable<(int Start, int Length)> FindFolded(PreparedText text, string needle)
     {
         var folded = text.Folded;
-        var origin = text.Origin;
-        for (var at = 0; at + needle.Length <= folded.Length; at++)
+        for (var at = folded.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = at + 1 < folded.Length ? folded.IndexOf(needle, at + 1, StringComparison.Ordinal) : -1)
         {
-            if (at > 0 && origin[at] == origin[at - 1] || !folded.AsSpan(at).StartsWith(needle, StringComparison.Ordinal))
-                continue;
-
-            var end = at + needle.Length;
-            if (end < folded.Length && (origin[end] == origin[end - 1] || folded[end] is '゙' or '゚'))
-                continue;
-
-            yield return RangeOf(text.Text, origin, at, end);
+            if (FoldedAt(text, needle, at) is { } range)
+                yield return range;
         }
+    }
+
+    /// <summary>The term as a folded substring of the text (<see cref="FindFolded"/>) at this place of the folded text; null if it isn't there.</summary>
+    internal static (int Start, int Length)? FoldedAt(PreparedText text, string needle, int at)
+    {
+        var folded = text.Folded;
+        var origin = text.Origin;
+        if (at > 0 && origin[at] == origin[at - 1] || !folded.AsSpan(at).StartsWith(needle, StringComparison.Ordinal))
+            return null;
+
+        var end = at + needle.Length;
+        if (end < folded.Length && (origin[end] == origin[end - 1] || folded[end] is '゙' or '゚'))
+            return null;
+
+        return RangeOf(text.Text, origin, at, end);
     }
 
     /// <summary>
@@ -168,26 +180,54 @@ internal static partial class Words
     /// </summary>
     private static IEnumerable<(int Start, int Length)> FindPunctuated(PreparedText prepared, string needle, bool endsInPunctuation)
     {
+        var folded = prepared.Folded;
+        for (var at = NextStart(folded, needle[0], 0); at >= 0; at = NextStart(folded, needle[0], at + 1))
+        {
+            if (PunctuatedAt(prepared, needle, endsInPunctuation, at) is { } range)
+                yield return range;
+        }
+    }
+
+    /// <summary>The term with punctuation (<see cref="FindPunctuated"/>) at this place of the folded text; null if it isn't there.</summary>
+    internal static (int Start, int Length)? PunctuatedAt(PreparedText prepared, string needle, bool endsInPunctuation, int at)
+    {
         var text = prepared.Text;
         var folded = prepared.Folded;
         var origin = prepared.Origin;
-        for (var at = 0; at + needle.Length <= folded.Length; at++)
-        {
-            // Only where a character of the text starts (not in the middle of ß's "ss"), at a word beginning.
-            if (at > 0 && origin[at] == origin[at - 1] || !IsBoundary(text, origin[at], origin[at] - 1))
-                continue;
 
-            // It may end in the middle of a character's fold: the last word matches by its beginning (gros in groß).
-            if (MatchAt(folded, at, needle) is not { } end)
-                continue;
+        // Only where a character of the text starts (not in the middle of ß's "ss"), at a word beginning. It may end in
+        // the middle of a character's fold: the last word matches by its beginning (gros in groß). The characters are
+        // compared before the word beginning, which is slower to tell.
+        if (at + needle.Length > folded.Length || at > 0 && origin[at] == origin[at - 1]
+            || MatchAt(folded, at, needle) is not { } end || !IsBoundary(text, origin[at], origin[at] - 1))
+            return null;
 
-            var range = RangeOf(text, origin, at, end);
-            if (endsInPunctuation && !IsBoundary(text, range.Start + range.Length - 1, range.Start + range.Length))
-                continue;
+        var range = RangeOf(text, origin, at, end);
+        if (endsInPunctuation && !IsBoundary(text, range.Start + range.Length - 1, range.Start + range.Length))
+            return null;
 
-            yield return range;
-        }
+        return range;
     }
+
+    // The next place from here where the folded text has the needle's first character (or one of its variants): the
+    // only places MatchAt can match, found without trying every one.
+    private static int NextStart(string folded, char first, int from)
+    {
+        if (from >= folded.Length)
+            return -1;
+
+        var rest = folded.AsSpan(from);
+        var at = first switch
+        {
+            '\'' => rest.IndexOfAny(Apostrophes),
+            '-' => rest.IndexOfAny(Hyphens),
+            _ => rest.IndexOf(first),
+        };
+        return at < 0 ? -1 : from + at;
+    }
+
+    private static readonly SearchValues<char> Apostrophes = SearchValues.Create("'‘’＇");
+    private static readonly SearchValues<char> Hyphens = SearchValues.Create("-‐‑﹣－");
 
     // Where the needle ends in the folded text if it's there at this position; null if it isn't. A space in the needle
     // takes a run of whitespace and code marks; a code mark elsewhere is skipped.
@@ -217,7 +257,7 @@ internal static partial class Words
     }
 
     // Apostrophes as one character, and hyphens as one.
-    private static char Variant(char c) => c switch
+    internal static char Variant(char c) => c switch
     {
         '‘' or '’' or '＇' => '\'',
         '‐' or '‑' or '﹣' or '－' => '-',
@@ -253,7 +293,7 @@ internal static partial class Words
 
     // Whether a term's character next to the text's (before or after it) ends a word there: the text's isn't a
     // letter, mark, number or underscore, or one of the two is in a script without spaces and the other isn't.
-    private static bool IsBoundary(string text, int inside, int outside) =>
+    internal static bool IsBoundary(string text, int inside, int outside) =>
         outside < 0 || outside >= text.Length || !IsWordChar(text, outside) || IsNoSpaces(text, CharStart(text, outside)) != IsNoSpaces(text, CharStart(text, inside));
 
     // A letter, mark, number or underscore, as the tokenizer's words are made of; a surrogate pair as one character.

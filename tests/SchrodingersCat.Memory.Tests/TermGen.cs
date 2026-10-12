@@ -34,6 +34,12 @@ internal static class TermGen
     public static readonly Gen<string> Term =
         Gen.Select(Word, Gen.Select(Separator, Word).Array[0, 3], (first, rest) => first + string.Concat(rest.Select(r => r.Item1 + r.Item2)));
 
+    /// <summary>Terms, and any short string at all: lone surrogates, blanks, U+FFFC, U+FFFF, control characters.</summary>
+    public static readonly Gen<string> AnyTerm = Gen.Frequency(
+        (2, Term),
+        (1, Gen.Char['\0', '\uFFFF'].Array[0, 6].Select(c => new string(c))),
+        (1, Gen.OneOfConst("", " ", "\uD800", "\uDC00", "￼", "￿", "\u0001", "́", "゙", "\U0001D400")));
+
     // A part of a content: text, a separator, a standalone code (with or without equiv), half of a pair, or text with
     // a code somewhere inside (Split is where).
     private static readonly Gen<(int Kind, string Text, int Split)> Part = Gen.Frequency(
@@ -57,6 +63,26 @@ internal static class TermGen
             null,
             DateTimeOffset.UnixEpoch,
             null));
+
+    // A note or a user: none, empty, or anything, U+0000 included.
+    private static readonly Gen<string?> Note = Gen.Frequency(
+        (3, Gen.Const((string?)null)),
+        (1, Gen.Const<string?>("")),
+        (2, AnyTerm.Select(t => (string?)t)),
+        (1, AnyTerm.Select(t => (string?)$"a\0{t}")));
+
+    // Any instant, at any offset of whole minutes within ±14 hours, both its local and its UTC time in range.
+    private static readonly Gen<DateTimeOffset> Changed =
+        Gen.Select(Gen.Long[TimeSpan.TicksPerDay, DateTime.MaxValue.Ticks - TimeSpan.TicksPerDay], Gen.Int[-14 * 60, 14 * 60], (ticks, minutes) =>
+            new DateTimeOffset(ticks, TimeSpan.Zero).ToOffset(TimeSpan.FromMinutes(minutes)));
+
+    /// <summary>Entries with every field used: notes on terms and entries, users, and any date at any offset.</summary>
+    public static Gen<TermEntry> FullEntry(Gen<string> term)
+    {
+        var aTerm = Gen.Select(term, Status, Note, (text, status, note) => new Term(text, status) { Note = note });
+        return Gen.Select(aTerm.Array[1, 3], aTerm.Array[0, 3], Note, Changed, Note, (source, target, note, changed, changedBy) =>
+            new TermEntry(source, target, note, changed, changedBy));
+    }
 
     /// <summary>Entries with ids 1, 2, …</summary>
     public static Gen<StoredTermEntry[]> Entries(Gen<string> term) =>

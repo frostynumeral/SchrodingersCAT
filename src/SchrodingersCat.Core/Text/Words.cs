@@ -24,14 +24,19 @@ internal static partial class Words
     /// <summary>The words of a text, without punctuation, folded.</summary>
     internal static IEnumerable<WordToken> Find(string text)
     {
-        foreach (Match token in Tokens().Matches(text))
+        // The matches are read as positions only, so a word costs one string (its folded form) and nothing else.
+        var tokens = new List<(int Index, int Length)>();
+        foreach (var token in Tokens().EnumerateMatches(text))
         {
-            if (IsPunctuation(token.Value))
-                continue;
+            if (!IsPunctuation(text.AsSpan(token.Index, token.Length)))
+                tokens.Add((token.Index, token.Length));
+        }
 
-            var folded = Fold(token.Value);
+        foreach (var (index, length) in tokens)
+        {
+            var folded = Fold(text.Substring(index, length));
             if (folded.Length > 0)
-                yield return new WordToken(token.Index, token.Length, folded);
+                yield return new WordToken(index, length, folded);
         }
     }
 
@@ -75,7 +80,9 @@ internal static partial class Words
     private static partial Regex NoSpaces();
 
     /// <summary>The tokenizer's third kind: one character that isn't a letter, mark, number or underscore.</summary>
-    internal static bool IsPunctuation(string token) =>
+    internal static bool IsPunctuation(string token) => IsPunctuation(token.AsSpan());
+
+    internal static bool IsPunctuation(ReadOnlySpan<char> token) =>
         token.Length == 1 && token[0] != '_' && !IsWordCategory(CharUnicodeInfo.GetUnicodeCategory(token[0]));
 
     private static bool IsWordCategory(UnicodeCategory category) => category is
@@ -91,6 +98,13 @@ internal static partial class Words
     /// </summary>
     internal static string Fold(string text)
     {
+        // Most text is folded already (lower case, no accents): then it is its own folded form, and nothing is built.
+        var i = 0;
+        while (i < text.Length && (text[i] < 0x80 ? !char.IsAsciiLetterUpper(text[i]) : FoldOne(text[i]) is { Length: 1 } one && one[0] == text[i]))
+            i++;
+        if (i == text.Length)
+            return text;
+
         var folded = new StringBuilder(text.Length);
         foreach (var c in text)
         {

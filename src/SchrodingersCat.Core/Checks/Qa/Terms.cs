@@ -23,6 +23,7 @@ public sealed record TermOrigin
 /// (synonyms), the translations it allows, those it forbids, and where it comes from. A forbidden translation never
 /// satisfies the check, even if <see cref="Translations"/> lists it too. If the record is for a term annotation of the
 /// unit (<c>ref="#m1"</c>), <see cref="MarkerId"/> is that annotation's id, and the annotation's text is the term.
+/// The lists are copied, so a record can't change after the check has read it.
 /// </summary>
 public sealed class TermRecord
 {
@@ -32,8 +33,8 @@ public sealed class TermRecord
         ArgumentNullException.ThrowIfNull(translations);
         ArgumentNullException.ThrowIfNull(origin);
 
-        Terms = terms;
-        Translations = translations;
+        Terms = [.. terms];
+        Translations = [.. translations];
         Origin = origin;
     }
 
@@ -47,10 +48,17 @@ public sealed class TermRecord
     public IReadOnlyList<string> ForbiddenTranslations
     {
         get;
-        init => field = value ?? throw new ArgumentNullException(nameof(value));
+        init => field = value is null ? throw new ArgumentNullException(nameof(value)) : [.. value];
     } = [];
 
     public string? MarkerId { get; init; }
+
+    /// <summary>
+    /// What the terminology check works out from the record, once however many segments it checks: a termbase's term
+    /// source keeps the records it found, so a source with many terms doesn't classify them for every segment again.
+    /// Two threads may both work it out, with the same result.
+    /// </summary>
+    internal TerminologyCheck.RecordTerms Checked => field ??= TerminologyCheck.RecordTerms.Of(this);
 
     /// <summary>A glossary entry as a record from the file.</summary>
     public static TermRecord Of(GlossaryEntry entry)

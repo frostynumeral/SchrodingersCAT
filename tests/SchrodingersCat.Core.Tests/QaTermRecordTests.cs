@@ -25,6 +25,27 @@ public class QaTermRecordTests
         Assert.Equal((new TextSpan(0, 9, 6), true), (issue.Span!.Value, issue.SpanInSource));
     }
 
+    // The check works out what it needs from a record once, so a record keeps its own copies of the lists.
+    [Fact]
+    public void ARecordsLists_AreCopied()
+    {
+        List<string> terms = ["folder"];
+        List<string> translations = ["mappa"];
+        List<string> forbidden = ["könyvtár"];
+        var record = new TermRecord(terms, translations, Client) { ForbiddenTranslations = forbidden };
+        var unit = Unit(("Open the folder.", "Nyisd meg a mappát."));
+        Assert.Empty(Check(unit, record));
+
+        terms[0] = "file";
+        translations[0] = "fájl";
+        forbidden[0] = "mappa";
+
+        Assert.Equal(["folder"], record.Terms);
+        Assert.Equal(["mappa"], record.Translations);
+        Assert.Equal(["könyvtár"], record.ForbiddenTranslations);
+        Assert.Empty(Check(unit, record));
+    }
+
     [Theory]
     [InlineData("Nyisd meg a mappát.", false)]
     [InlineData("Nyisd meg a mappa-ablakot.", false)]
