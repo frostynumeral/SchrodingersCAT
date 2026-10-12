@@ -61,10 +61,25 @@
         <Style Selector="Border.matchScore.exact">
             <Setter Property="Background" Value="#7743A047" />
         </Style>
+
+        <!-- The terms list (section 6 of docs/design/termbase.md): forbidden translations struck through, preferred ones bold. -->
+        <Style Selector="Border.term">
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="Margin" Value="0,0,0,2" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Background" Value="#14808080" />
+        </Style>
+        <Style Selector="TextBlock.termTranslation.forbidden">
+            <Setter Property="TextDecorations" Value="Strikethrough" />
+            <Setter Property="Opacity" Value="0.6" />
+        </Style>
+        <Style Selector="TextBlock.termTranslation.preferred">
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
     </Window.Styles>
 
-    <!-- The segment shortcuts (Ctrl+Enter, Ctrl+Up/Down, Ctrl+Shift+Down, Ctrl+Insert) and Ctrl+1 … Ctrl+9 (insert a match)
-         are in MainWindow.axaml.cs. -->
+    <!-- The segment shortcuts (Ctrl+Enter, Ctrl+Up/Down, Ctrl+Shift+Down, Ctrl+Insert), Ctrl+1 … Ctrl+9 (insert a match)
+         and Ctrl+T (insert a term) are in MainWindow.axaml.cs. -->
     <Window.KeyBindings>
         <KeyBinding Gesture="Ctrl+O" Command="{Binding OpenCommand}" />
         <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveCommand}" />
@@ -82,6 +97,12 @@
                 <Separator />
                 <MenuItem x:Name="ImportTmxItem" Header="_Import TMX…" Command="{Binding ImportTmxCommand}" />
                 <MenuItem x:Name="ExportTmxItem" Header="_Export TMX…" Command="{Binding ExportTmxCommand}" />
+            </MenuItem>
+            <!-- Import and export (TBX, CSV) come with step 4 of docs/design/termbase.md. -->
+            <MenuItem x:Name="TermbaseMenu" Header="Term_base">
+                <MenuItem x:Name="NewTermbaseItem" Header="_New…" Command="{Binding NewTermbaseCommand}" />
+                <MenuItem x:Name="OpenTermbaseItem" Header="_Open…" Command="{Binding OpenTermbaseCommand}" />
+                <MenuItem x:Name="CloseTermbaseItem" Header="_Close" Command="{Binding CloseTermbaseCommand}" />
             </MenuItem>
             <MenuItem x:Name="HelpMenu" Header="_Help">
                 <MenuItem x:Name="OpenLogFolderItem" Header="Open _log folder" Command="{Binding OpenLogFolderCommand}" />
@@ -123,13 +144,54 @@
                        TextWrapping="Wrap" Foreground="#C75000" IsVisible="{Binding $self.Text, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
             <!-- The pane under the segments: the selected segment's matches (design section 6 of
                  docs/design/translation-memory.md), and the concordance (searching the TM for a word or phrase). -->
-            <Border x:Name="MatchesPane" DockPanel.Dock="Bottom" Classes="matchesPane" Margin="8,4,8,0" Height="230">
+            <Border x:Name="MatchesPane" DockPanel.Dock="Bottom" Classes="matchesPane" Margin="8,4,8,0" Height="280">
                 <TabControl x:Name="PaneTabs" SelectedIndex="{Binding PaneTab}" Padding="0">
                     <TabItem x:Name="MatchesTab" Header="Matches" FontSize="14">
                         <DockPanel>
                             <TextBlock x:Name="MemoryName" DockPanel.Dock="Top" Margin="4,0,4,4" Text="{Binding MemoryLabel}" Opacity="0.6" TextWrapping="Wrap" />
                             <TextBlock x:Name="MatchesStatus" DockPanel.Dock="Top" Margin="4,0" Opacity="0.6" Text="{Binding MatchesStatus}"
                                        IsVisible="{Binding MatchesStatus, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                            <!-- The selected segment's terms from the open termbase (section 6 of docs/design/termbase.md),
+                                 below the matches; hidden without a termbase. Ctrl+T inserts one through a picker. -->
+                            <Border x:Name="TermsPane" DockPanel.Dock="Bottom" Classes="matchesPane" MaxHeight="110" IsVisible="{Binding ShowsTerms}">
+                                <DockPanel>
+                                    <TextBlock x:Name="TermbaseName" DockPanel.Dock="Top" Margin="0,0,0,2" Text="{Binding TermbaseLabel}" Opacity="0.6" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="TermsStatus" DockPanel.Dock="Top" Opacity="0.6" Text="{Binding TermsStatus}"
+                                               IsVisible="{Binding TermsStatus, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    <ScrollViewer>
+                                        <ItemsControl x:Name="TermList" ItemsSource="{Binding Terms}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:TermViewModel">
+                                                    <Border Classes="term" ToolTip.Tip="{Binding Notes}">
+                                                        <DockPanel>
+                                                            <!-- Not focusable: clicking it leaves the keyboard in the editor. -->
+                                                            <Button DockPanel.Dock="Left" Classes="insertTerm" Content="Insert" Focusable="False" FontSize="11" Padding="6,1"
+                                                                    Margin="0,0,8,0" VerticalAlignment="Top" Command="{Binding InsertCommand}" CommandParameter="{Binding}"
+                                                                    ToolTip.Tip="Insert the first allowed translation at the caret (Ctrl+T picks one)" />
+                                                            <TextBlock DockPanel.Dock="Left" Classes="termSource" Text="{Binding SourceText}" Margin="0,0,8,0" />
+                                                            <TextBlock DockPanel.Dock="Left" Text="→" Opacity="0.6" Margin="0,0,8,0" />
+                                                            <ItemsControl Classes="termTranslations" ItemsSource="{Binding Translations}">
+                                                                <ItemsControl.ItemsPanel>
+                                                                    <ItemsPanelTemplate>
+                                                                        <WrapPanel />
+                                                                    </ItemsPanelTemplate>
+                                                                </ItemsControl.ItemsPanel>
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate x:DataType="vm:TermTranslation">
+                                                                        <TextBlock Classes="termTranslation" Classes.forbidden="{Binding IsForbidden}" Classes.preferred="{Binding IsPreferred}"
+                                                                                   Text="{Binding Text}" Margin="0,0,12,0" AutomationProperties.Name="{Binding AccessibleName}"
+                                                                                   ToolTip.Tip="{Binding Note}" />
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </DockPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </DockPanel>
+                            </Border>
                             <ScrollViewer>
                                 <ItemsControl x:Name="MatchList" ItemsSource="{Binding Matches}">
                                     <ItemsControl.ItemTemplate>

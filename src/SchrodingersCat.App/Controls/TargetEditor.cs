@@ -31,6 +31,8 @@ namespace SchrodingersCat.App.Controls;
 /// typing, Backspace/Delete, Enter, copy, cut, paste, undo and the code shortcuts (F9, Ctrl+Shift+F9) are routed to
 /// the model, whose result is drawn again. So every rule the model enforces holds in the editor too. Refusals go to
 /// <see cref="Status"/>.</para>
+/// <para>Two pickers open under the editor: the code picker (Ctrl+Shift+F9) and the term picker (Ctrl+T, opened by the
+/// window with the segment's terms, see <see cref="OpenTermPicker"/>).</para>
 /// </remarks>
 public sealed class TargetEditor : UserControl
 {
@@ -47,10 +49,8 @@ public sealed class TargetEditor : UserControl
         AvaloniaProperty.Register<TargetEditor, IReadOnlySet<string>?>(nameof(ProblemCodes));
 
     private readonly Dictionary<int, InlineElement> _chips = [];
-    private readonly Popup _picker;
-    private readonly TextBox _pickerFilter;
-    private readonly ListBox _pickerList;
-    private IReadOnlyList<CodeChoice> _choices = [];
+    private readonly Picker<CodeChoice> _codePicker;
+    private readonly Picker<TermChoice> _termPicker;
     private bool _rendering;
 
     static TargetEditor()
@@ -83,28 +83,27 @@ public sealed class TargetEditor : UserControl
         area.SelectionChanged += (_, _) => SyncSelection();
         area.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
 
-        // The code picker (Ctrl+Shift+F9): a filter box with type-ahead over the unit's source codes.
-        _pickerFilter = new TextBox { Name = "CodeFilter", PlaceholderText = "Type to find a code" };
-        _pickerFilter.TextChanged += (_, _) => FilterChoices();
-        _pickerList = new ListBox
-        {
-            Name = "CodeList",
-            MaxHeight = 240,
-            ItemTemplate = new FuncDataTemplate<CodeChoice>((_, _) => ChoiceView()),
-        };
-        _pickerList.Tapped += (_, _) => InsertChosenCode();
-        var pickerContent = new StackPanel { Spacing = 4, Width = 280, Children = { _pickerFilter, _pickerList } };
-        pickerContent.AddHandler(KeyDownEvent, OnPickerKeyDown, RoutingStrategies.Tunnel);
-        _picker = new Popup
-        {
-            PlacementTarget = this,
-            Placement = PlacementMode.BottomEdgeAlignedLeft,
-            IsLightDismissEnabled = true,
-            Child = new Border { Classes = { "codePicker" }, Padding = new Thickness(6), Child = pickerContent },
-        };
-        _picker.Closed += (_, _) => Editor.TextArea.Focus();
+        // The code picker (Ctrl+Shift+F9): type-ahead over the unit's source codes, the first missing one preselected
+        // (usually the one wanted next).
+        _codePicker = new Picker<CodeChoice>(
+            this, "CodeFilter", "CodeList", "Type to find a code", CodeChoiceView, (c, filter) => c.Matches(filter),
+            shown => shown.FirstOrDefault(c => c.IsMissing) ?? (shown.Count > 0 ? shown[0] : null),
+            choice => Apply(m => m.InsertCode(choice.CodeId)));
 
-        Content = new Panel { Children = { Editor, _picker } };
+        // The term picker (Ctrl+T, section 6 of docs/design/termbase.md): type-ahead over the segment's term
+        // translations, inserted as text.
+        _termPicker = new Picker<TermChoice>(
+            this, "TermFilter", "TermList", "Type to find a term", TermChoiceView, (c, filter) => c.Matches(filter),
+            shown => shown.Count > 0 ? shown[0] : null,
+            choice =>
+            {
+                if (Model is not { } model)
+                    return;
+                SyncSelection();
+                Status = TermInsertion.Apply(model, choice.Text);
+            });
+
+        Content = new Panel { Children = { Editor, _codePicker.Popup, _termPicker.Popup } };
     }
 
     /// <summary>The AvaloniaEdit control underneath.</summary>
@@ -131,7 +130,27 @@ public sealed class TargetEditor : UserControl
     }
 
     /// <summary>The code picker (Ctrl+Shift+F9).</summary>
-    public Popup CodePicker => _picker;
+    public Popup CodePicker => _codePicker.Popup;
+
+    /// <summary>The term picker (Ctrl+T).</summary>
+    public Popup TermPicker => _termPicker.Popup;
+
+    /// <summary>A picker is open and has the keyboard, so the window's shortcuts leave it alone.</summary>
+    public bool IsPickerOpen => CodePicker.IsOpen || TermPicker.IsOpen;
+
+    /// <summary>
+    /// Opens the term picker with these choices (the window asks for them on Ctrl+T); the chosen translation goes in
+    /// at the caret as text, replacing the selection.
+    /// </summary>
+    public void OpenTermPicker(IReadOnlyList<TermChoice> choices)
+    {
+        ArgumentNullException.ThrowIfNull(choices);
+        if (Model is null || choices.Count == 0)
+            return;
+
+        SyncSelection();
+        _termPicker.Open(choices);
+    }
 
     /// <summary>The code or annotation half drawn at a document offset, or null if the offset holds text.</summary>
     public InlineElement? ChipAt(int offset) => _chips.GetValueOrDefault(offset);
@@ -238,74 +257,36 @@ public sealed class TargetEditor : UserControl
         if (Model is not { } model)
             return;
 
-        _choices = CodeChoice.For(model);
-        if (_choices.Count == 0)
+        var choices = CodeChoice.For(model);
+        if (choices.Count == 0)
         {
             Status = "There are no codes in the source.";
             return;
         }
 
         SyncSelection();
-        _pickerFilter.Text = "";
-        FilterChoices();
-        _picker.IsOpen = true;
-        _pickerFilter.Focus();
+        _codePicker.Open(choices);
     }
 
-    // The first missing code is preselected: usually the one wanted next.
-    private void FilterChoices()
-    {
-        var shown = _choices.Where(c => c.Matches(_pickerFilter.Text ?? "")).ToList();
-        _pickerList.ItemsSource = shown;
-        _pickerList.SelectedItem = shown.FirstOrDefault(c => c.IsMissing) ?? shown.FirstOrDefault();
-    }
+    // A row of the code picker; it shows whichever choice the list gives it as its data context.
+    private static StackPanel CodeChoiceView() => ChoiceView<CodeChoice>(c => (c.Text, c.IsMissing ? "missing" : "in the target", c.Description));
 
-    private void OnPickerKeyDown(object? sender, KeyEventArgs e)
-    {
-        var count = _pickerList.ItemCount;
-        switch (e.Key)
-        {
-            case Key.Down when count > 0:
-                _pickerList.SelectedIndex = Math.Min(_pickerList.SelectedIndex + 1, count - 1);
-                break;
-            case Key.Up when count > 0:
-                _pickerList.SelectedIndex = Math.Max(_pickerList.SelectedIndex - 1, 0);
-                break;
-            case Key.Enter:
-                InsertChosenCode();
-                break;
-            case Key.Escape:
-                _picker.IsOpen = false;
-                break;
-            default:
-                return;
-        }
+    // A row of the term picker: the translation, the source term it translates, and the entry in the tooltip.
+    private static StackPanel TermChoiceView() => ChoiceView<TermChoice>(c => (c.Text, c.Source, c.Description));
 
-        e.Handled = true;
-    }
-
-    private void InsertChosenCode()
-    {
-        if (_pickerList.SelectedItem is not CodeChoice choice)
-            return;
-
-        _picker.IsOpen = false;
-        Apply(m => m.InsertCode(choice.CodeId));
-    }
-
-    // A row of the picker; it shows whichever choice the list gives it as its data context.
-    private static StackPanel ChoiceView()
+    private static StackPanel ChoiceView<T>(Func<T, (string Label, string Detail, string ToolTip)> show)
     {
         var label = new TextBlock { Classes = { "label" }, FontWeight = Avalonia.Media.FontWeight.SemiBold };
-        var state = new TextBlock { Opacity = 0.6 };
-        var view = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8, Children = { label, state } };
+        var detail = new TextBlock { Opacity = 0.6 };
+        var view = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8, Children = { label, detail } };
         view.DataContextChanged += (_, _) =>
         {
-            if (view.DataContext is not CodeChoice choice)
+            if (view.DataContext is not T choice)
                 return;
-            label.Text = choice.Text;
-            state.Text = choice.IsMissing ? "missing" : "in the target";
-            ToolTip.SetTip(view, choice.Description);
+            var (text, more, tip) = show(choice);
+            label.Text = text;
+            detail.Text = more;
+            ToolTip.SetTip(view, tip);
         };
         return view;
     }
@@ -374,6 +355,95 @@ public sealed class TargetEditor : UserControl
         }
 
         area.TextView.Redraw();
+    }
+
+    /// <summary>
+    /// A picker under the editor: a filter box with type-ahead over the choices, Up/Down, Enter or a tap to choose,
+    /// Escape to close. Closing gives the keyboard back to the editor.
+    /// </summary>
+    private sealed class Picker<T>
+        where T : class
+    {
+        private readonly TextBox _filter;
+        private readonly ListBox _list;
+        private readonly Func<T, string, bool> _matches;
+        private readonly Func<IReadOnlyList<T>, T?> _preselect;
+        private readonly Action<T> _choose;
+        private IReadOnlyList<T> _choices = [];
+
+        public Picker(
+            TargetEditor owner, string filterName, string listName, string placeholder, Func<Control> view,
+            Func<T, string, bool> matches, Func<IReadOnlyList<T>, T?> preselect, Action<T> choose)
+        {
+            _matches = matches;
+            _preselect = preselect;
+            _choose = choose;
+            _filter = new TextBox { Name = filterName, PlaceholderText = placeholder };
+            _filter.TextChanged += (_, _) => Filter();
+            _list = new ListBox { Name = listName, MaxHeight = 240, ItemTemplate = new FuncDataTemplate<T>((_, _) => view()) };
+            _list.Tapped += (_, _) => Choose();
+            var content = new StackPanel { Spacing = 4, Width = 280, Children = { _filter, _list } };
+            content.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
+            Popup = new Popup
+            {
+                PlacementTarget = owner,
+                Placement = PlacementMode.BottomEdgeAlignedLeft,
+                IsLightDismissEnabled = true,
+                Child = new Border { Classes = { "codePicker" }, Padding = new Thickness(6), Child = content },
+            };
+            Popup.Closed += (_, _) => owner.Editor.TextArea.Focus();
+        }
+
+        public Popup Popup { get; }
+
+        public void Open(IReadOnlyList<T> choices)
+        {
+            _choices = choices;
+            _filter.Text = "";
+            Filter();
+            Popup.IsOpen = true;
+            _filter.Focus();
+        }
+
+        private void Filter()
+        {
+            var shown = _choices.Where(c => _matches(c, _filter.Text ?? "")).ToList();
+            _list.ItemsSource = shown;
+            _list.SelectedItem = _preselect(shown);
+        }
+
+        private void OnKeyDown(object? sender, KeyEventArgs e)
+        {
+            var count = _list.ItemCount;
+            switch (e.Key)
+            {
+                case Key.Down when count > 0:
+                    _list.SelectedIndex = Math.Min(_list.SelectedIndex + 1, count - 1);
+                    break;
+                case Key.Up when count > 0:
+                    _list.SelectedIndex = Math.Max(_list.SelectedIndex - 1, 0);
+                    break;
+                case Key.Enter:
+                    Choose();
+                    break;
+                case Key.Escape:
+                    Popup.IsOpen = false;
+                    break;
+                default:
+                    return;
+            }
+
+            e.Handled = true;
+        }
+
+        private void Choose()
+        {
+            if (_list.SelectedItem is not T choice)
+                return;
+
+            Popup.IsOpen = false;
+            _choose(choice);
+        }
     }
 
     /// <summary>Draws each chip offset as a chip control.</summary>

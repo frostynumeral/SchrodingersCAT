@@ -122,6 +122,18 @@ public sealed partial class QaReportViewModel(MainWindowViewModel owner, IDialog
     private void Run()
     {
         owner.PaneTab = 2;
+        Refresh();
+    }
+
+    /// <summary>
+    /// The report has run (or tried to) since the document was opened, so it should follow what changes the whole
+    /// document's issues.
+    /// </summary>
+    internal bool HasRun => _entries.Count > 0 || Rows.Count > 0 || Status != Hint;
+
+    /// <summary>Checks the document and lists the issues again, without switching to the QA tab (after a termbase loads).</summary>
+    internal void Refresh()
+    {
         Clear();
         if (owner.Document is not { } document)
         {
@@ -197,7 +209,7 @@ public sealed partial class QaReportViewModel(MainWindowViewModel owner, IDialog
         if (!await dialogs.EditQaSettingsAsync(choices))
             return;
 
-        var ran = _entries.Count > 0 || Rows.Count > 0 || Status != Hint;
+        var ran = HasRun;
         // The report runs again anyway: following every segment's re-check first would only cost time.
         Clear();
         owner.UseQaOptions(choices.ToOptions());

@@ -401,9 +401,27 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      entries, status (Unspecified included) and notes; CSV round trips keep what CSV can hold; damaged files fail
      only with the format exception; a DOCTYPE is skipped, never processed; legacy encodings, formula prefixes, a client term starting with `'`, and a term with `|` (reported).
    - The export checked by hand in at least one other tool, with the result recorded here.
-5. **App: the termbase in the editor.** The Termbase menu, remembering and loading it, the terms list, the source
-   marks, Ctrl+T, and the checks using it.
+5. **App: the termbase in the editor.** *(Done 2026-10-12.)* The Termbase menu, remembering and loading it, the terms
+   list, the source marks, Ctrl+T, and the checks using it.
    - View-model tests with real `.sctb` files; headless tests for the list, the marks, the picker and inserting.
+   - **Decisions:**
+     - The menu has New…, Open… and Close; Import and Export come with step 4.
+     - Opening loads in the background while the termbase already open stays in use, as a file or a TM that fails to
+       open leaves the current one; a newer Open, Close or shutting down cancels the load, and a termbase that opened
+       all the same is closed. A damaged remembered termbase is forgotten, a missing one kept, as for the TM.
+     - A regional variant of the termbase's languages is served fully (a termbase has no scores to lower); a document
+       without `trgLang` is judged by its source language, and setting it later decides again.
+     - Each document gets its own term source (`DocumentTerms`), made with `ToTermSource(name, previous)` after each
+       snapshot. Its units are first checked with the file's glossary only; when the termbase serves the document
+       (opened, loaded, or the languages now fit), every unit is checked again off the UI thread, in parallel, and a
+       unit edited meanwhile keeps its own newer result. A QA report that has run is listed again, without switching
+       tabs.
+     - A termbase term that is also a term annotation gets the termbase's solid underline (its tooltip says what it
+       is). Units not to be translated get no marks and no terms. A `Run` can't have a tooltip, so the source block's
+       tooltip follows the term under the pointer.
+     - The term picker sits where the code picker does (below the editor, not at the caret); both can move to the
+       caret later together. A term replaces the selection (`Paste`'s rule), so a placeholder word can be selected and
+       replaced.
 6. **App: adding and editing terms.** Ctrl+E, the entry dialog, editing and deleting from the list, re-checking
    only the affected units.
    - View-model and headless tests, including adding a translation to an existing entry.

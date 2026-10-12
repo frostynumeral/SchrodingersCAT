@@ -17,6 +17,7 @@ public sealed partial class SegmentViewModel : ObservableObject
     private readonly TranslationUnit _unit;
     private readonly Segment _segment;
     private readonly Action _changed;
+    private readonly DocumentTerms? _terms;
     private TargetEditModel? _editModel;
     private IReadOnlyList<TmMatch>? _fileMatches;
     private bool _keepState;
@@ -28,13 +29,19 @@ public sealed partial class SegmentViewModel : ObservableObject
     private readonly HashSet<(QaIssueKind Kind, string Message)> _dismissed = [];
     private InlineContent? _dismissedFor;
 
+    // The termbase's hits in the source, and the snapshot they were found in (section 6: cached until it changes).
+    private IReadOnlyList<TermHit> _termHits = [];
+    private TermIndex? _termHitsFor;
+
     /// <param name="check">The unit's code check, shared with the unit's other segments.</param>
-    public SegmentViewModel(UnitCheck check, Segment segment, Action changed)
+    /// <param name="terms">The open termbase as the document sees it, for the marks and the terms list; null for none.</param>
+    public SegmentViewModel(UnitCheck check, Segment segment, Action changed, DocumentTerms? terms = null)
     {
         _check = check ?? throw new ArgumentNullException(nameof(check));
         _segment = segment ?? throw new ArgumentNullException(nameof(segment));
         _changed = changed ?? throw new ArgumentNullException(nameof(changed));
         _unit = check.Unit;
+        _terms = terms;
 
         Label = segment.Id is null ? _unit.Id : $"{_unit.Id} / {segment.Id}";
         StoredTarget = segment.State >= SegmentState.Translated ? segment.Target : null;
@@ -83,11 +90,84 @@ public sealed partial class SegmentViewModel : ObservableObject
         .Where(m => m.SegmentId is { } id ? id == _segment.Id : _unit.TranslatableSegments.Count() == 1)
         .Select(m => m.Match)];
 
-    /// <summary>The source with codes as chips; codes missing from the target are marked as problems.</summary>
+    /// <summary>
+    /// The source with codes as chips, and the termbase's terms underlined; codes missing from the target are marked as
+    /// problems.
+    /// </summary>
     public IReadOnlyList<ContentRun> SourceRuns =>
         ContentRuns.MarkProblems(
-            ContentRuns.Build(_segment.Source, _unit, _check.Hints, OpenMarkersBefore(s => s.Source)),
+            ContentRuns.Build(_segment.Source, _unit, _check.Hints, OpenMarkersBefore(s => s.Source), TermMarks()),
             ProblemCodes(IsMissing));
+
+    // The source as the term rule reads it; the source never changes.
+    private QaText SourceQa => field ??= QaText.Of(_segment.Source);
+
+    /// <summary>
+    /// The open termbase's entries found in the source (section 6 of <c>docs/design/termbase.md</c>), in the order of
+    /// their first place; none without a termbase, while it loads, or in a unit not to be translated. Looked up only
+    /// when asked (the rows the list shows, and the selected one), and kept until the termbase changes.
+    /// </summary>
+    public IReadOnlyList<TermHit> TermHits
+    {
+        get
+        {
+            if (_terms?.Index is not { } index || !_check.IsToTranslate)
+                return [];
+            if (!ReferenceEquals(_termHitsFor, index))
+            {
+                _termHits = index.Find(SourceQa);
+                _termHitsFor = index;
+            }
+
+            return _termHits;
+        }
+    }
+
+    /// <summary>The translations Ctrl+T offers for this segment.</summary>
+    public IReadOnlyList<TermChoice> TermChoices => TermChoice.For(TermHits);
+
+    /// <summary>Called when the termbase changes (opened, closed, loaded, or no longer serving the document).</summary>
+    internal void OnTermsChanged()
+    {
+        OnPropertyChanged(nameof(TermHits));
+        OnPropertyChanged(nameof(TermChoices));
+        OnPropertyChanged(nameof(SourceRuns));
+    }
+
+    /// <summary>
+    /// Inserts a term's translation at the caret as text (the terms list's Insert, Ctrl+T), replacing the selection, as
+    /// one undoable edit. The status line says what went in, or why it didn't.
+    /// </summary>
+    public void InsertTerm(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        EditStatus = TermInsertion.Apply(EditModel, text);
+    }
+
+    // Each occurrence's pieces of text, not the codes inside a hit (they keep their chips).
+    private List<TermMark>? TermMarks()
+    {
+        var hits = TermHits;
+        if (hits.Count == 0)
+            return null;
+
+        var name = _terms!.Name!;
+        var marks = new List<TermMark>();
+        foreach (var hit in hits)
+        {
+            var tip = TermTips.Of(hit, name);
+            foreach (var occurrence in hit.Occurrences)
+            {
+                foreach (var span in SourceQa.SpansOf(occurrence.Start, occurrence.Length))
+                {
+                    if (_segment.Source[span.Element] is InlineText)
+                        marks.Add(new TermMark(span.Element, span.Start, span.Length, tip));
+                }
+            }
+        }
+
+        return marks;
+    }
 
     /// <summary>The target with codes as chips, for the rows not being edited; empty when not translated.</summary>
     public IReadOnlyList<ContentRun> TargetRuns => _segment.Target is null

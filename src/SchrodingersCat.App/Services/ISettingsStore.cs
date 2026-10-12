@@ -6,7 +6,11 @@ namespace SchrodingersCat.App.Services;
 /// The quality checks switched off (<c>QaIssueKind</c> names, so a check added later is on, and one removed is
 /// ignored); null or empty for all on.
 /// </param>
-public sealed record AppSettings(string? TranslationMemoryPath = null, IReadOnlyList<string>? DisabledQaChecks = null);
+/// <param name="TermbasePath">
+/// The termbase that was open when the app last changed it (decision 4 of <c>docs/design/termbase.md</c>: one at a
+/// time, remembered); settings saved before termbases existed simply lack it.
+/// </param>
+public sealed record AppSettings(string? TranslationMemoryPath = null, IReadOnlyList<string>? DisabledQaChecks = null, string? TermbasePath = null);
 
 /// <summary>Loads and saves <see cref="AppSettings"/>, so view models don't touch the file system for them and tests can keep them in memory.</summary>
 public interface ISettingsStore

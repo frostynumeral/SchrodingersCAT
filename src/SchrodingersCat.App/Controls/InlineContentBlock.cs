@@ -34,6 +34,10 @@ public sealed class InlineContentBlock : SelectableTextBlock
         new TextDecoration { Location = TextDecorationLocation.Underline, StrokeDashArray = new AvaloniaList<double>([1, 2]) },
     ];
 
+    // A termbase term (section 6 of docs/design/termbase.md): solid, unlike the dotted underline of the file's own term
+    // annotations.
+    private static readonly TextDecorationCollection TermbaseUnderline = [new TextDecoration { Location = TextDecorationLocation.Underline }];
+
     private static readonly TextDecorationCollection RemovedStrikethrough = [new TextDecoration { Location = TextDecorationLocation.Strikethrough }];
 
     private static readonly IBrush RemovedForeground = new ImmutableSolidColorBrush(Color.FromRgb(0xE5, 0x39, 0x35));
@@ -43,6 +47,9 @@ public sealed class InlineContentBlock : SelectableTextBlock
     private static readonly IBrush NoTranslateBackground = new ImmutableSolidColorBrush(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
 
     private bool _stale;
+
+    // Some run is a termbase term with a tooltip, so moving the pointer looks for the run under it.
+    private bool _hasTermTips;
 
     static InlineContentBlock()
     {
@@ -95,6 +102,29 @@ public sealed class InlineContentBlock : SelectableTextBlock
         base.OnKeyDown(e);
     }
 
+    // A Run can't have a tooltip of its own: the block's tooltip follows the termbase term under the pointer.
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        ArgumentNullException.ThrowIfNull(e);
+
+        base.OnPointerMoved(e);
+        if (!_hasTermTips)
+            return;
+
+        var point = e.GetPosition(this) - new Point(Padding.Left, Padding.Top);
+        var hit = TextLayout.HitTestPoint(point);
+        var tip = hit.IsInside ? ContentRuns.RunAt(Runs ?? [], hit.CharacterHit.FirstCharacterIndex)?.TermToolTip : null;
+        if (!Equals(ToolTip.GetTip(this), tip))
+            ToolTip.SetTip(this, tip);
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        if (_hasTermTips)
+            ToolTip.SetTip(this, null);
+    }
+
     // While hidden, the runs aren't shown: Avalonia still renders a hidden TextBlock whose inlines changed, measures
     // the new, never-measured chips during that render, and throws "Visual was invalidated during the render pass".
     // So a hidden block (the active row's read-only target) rebuilds when it is shown again.
@@ -104,6 +134,10 @@ public sealed class InlineContentBlock : SelectableTextBlock
         if (_stale)
             return;
 
+        var hadTermTips = _hasTermTips;
+        _hasTermTips = Runs?.Any(r => r is TextRun { TermToolTip: not null }) == true;
+        if (hadTermTips)
+            ToolTip.SetTip(this, null); // the runs changed: the pointer has to move again to find a term
         var inlines = new InlineCollection();
         foreach (var run in Runs ?? [])
         {
@@ -158,7 +192,10 @@ public sealed class InlineContentBlock : SelectableTextBlock
             return run;
         }
 
-        if (text.Annotations.HasFlag(AnnotationStyle.Term))
+        // A termbase term that is also a term annotation shows as the termbase's; its tooltip says what it is.
+        if (text.Annotations.HasFlag(AnnotationStyle.TermbaseTerm))
+            run.TextDecorations = TermbaseUnderline;
+        else if (text.Annotations.HasFlag(AnnotationStyle.Term))
             run.TextDecorations = TermUnderline;
         if (text.Annotations.HasFlag(AnnotationStyle.NoTranslate))
             run.Background = NoTranslateBackground;
