@@ -116,7 +116,7 @@ public sealed partial class MainWindowViewModel
         if (ReferenceEquals(index, terms.Index))
             return;
 
-        terms.Use(index, Termbase?.Name);
+        terms.Use(index, Termbase);
         foreach (var segment in Segments)
             segment.OnTermsChanged();
         ShowTerms(SelectedSegment);

@@ -1,6 +1,7 @@
 using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.Core.Checks;
+using SchrodingersCat.Core.Models;
 using SchrodingersCat.Core.Xliff;
 using SchrodingersCat.Memory;
 using static SchrodingersCat.App.Tests.TermbaseFiles;
@@ -284,6 +285,34 @@ public sealed class TermbaseViewModelTests : IAsyncDisposable
         }
     }
 
+    // Shutting down during a load cancels it and waits for it: a termbase that opened all the same is closed, and
+    // neither used nor remembered.
+    [Fact]
+    public async Task ShutDown_DuringALoad_WaitsForIt_AndClosesWhatItOpened()
+    {
+        var (vm, dialogs) = await OpenAsync(Document);
+        dialogs.TermbaseToOpen = _files.PathOf("client.sctb");
+        var gate = new TaskCompletionSource();
+        var opened = new Tracking("en", "hu", Client);
+        vm.OpenTermbaseFile = async (_, _) =>
+        {
+            await gate.Task; // ignores the token: it opens all the same
+            return new OpenTermbase(opened, "client");
+        };
+        var opening = vm.OpenTermbaseCommand.ExecuteAsync(null);
+
+        var shuttingDown = vm.ShutDownAsync();
+        Assert.False(shuttingDown.IsCompleted);
+        gate.SetResult();
+        await shuttingDown;
+        await opening;
+
+        Assert.Null(vm.Termbase);
+        Assert.Null(vm.LoadingTermbase);
+        Assert.True(opened.IsDisposed);
+        Assert.Null(_settings.Saved.TermbasePath);
+    }
+
     // ---------------------------------------------------------------- the checks
 
     [Fact]
@@ -336,38 +365,102 @@ public sealed class TermbaseViewModelTests : IAsyncDisposable
         Assert.Contains("doesn't serve", vm.TermbaseLabel, StringComparison.Ordinal);
     }
 
-    // An edit during the background re-check is newer than the re-check's result for its unit; a superseded re-check
-    // applies nothing.
+    // An edit during the background re-check is newer than the re-check's result for its unit, though the result
+    // comes back after the edit; a superseded re-check applies nothing, so it can't throw away the newer one's results.
     [Fact]
     public async Task TheBackgroundRecheck_KeepsNewerResults_AndASupersededOneAppliesNothing()
     {
         var (vm, _) = await OpenAsync(Document);
-        var gate = new TaskCompletionSource();
-        var calls = 0;
-        vm.RunOffUiThread = work => Interlocked.Increment(ref calls) == 1 ? gate.Task.ContinueWith(_ => work(), TaskScheduler.Default) : Task.Run(work);
+        var held = new Queue<HeldWork>();
+        vm.RunOffUiThread = work => held.Dequeue().RunAsync(work);
 
+        // Computed with u1's old target (only the forbidden "akta"), returned after u1 is edited.
+        var first = new HeldWork();
+        held.Enqueue(first);
         await vm.UseTermbaseAsync(CreateTermbase("client", Client));
         var check = vm.TermCheck;
-        Assert.False(check.IsCompleted);
+        await first.Computed;
         vm.Segments[0].TargetText = "Nyisd meg a fájlt."; // checked at once with the termbase
         Assert.Empty(TermIssues(vm, 0));
-        Assert.DoesNotContain(TermIssues(vm, 3), i => i.Message.Contains("termbase", StringComparison.Ordinal));
 
-        gate.SetResult();
+        first.Release();
         await check;
         Assert.Empty(TermIssues(vm, 0));
         Assert.Contains("termbase “client”", Assert.Single(TermIssues(vm, 3)).Message, StringComparison.Ordinal);
 
-        // Superseded: a re-check held back while the termbase closes and its own re-check runs.
-        gate = new TaskCompletionSource();
-        calls = 0;
+        // Superseded: the re-check for "other" comes back after the one for closing it has started, before it ends.
+        var stale = new HeldWork();
+        var newer = new HeldWork();
+        held.Enqueue(stale);
+        held.Enqueue(newer);
         await vm.UseTermbaseAsync(CreateTermbase("other", Client));
-        var held = vm.TermCheck;
+        var staleCheck = vm.TermCheck;
+        await stale.Computed;
         await vm.CloseTermbaseCommand.ExecuteAsync(null);
-        await vm.TermCheck;
-        gate.SetResult();
-        await held;
+        var newerCheck = vm.TermCheck;
+        await newer.Computed;
+        Assert.NotEmpty(TermbaseIssues(vm)); // client's, until the newer re-check applies
+
+        stale.Release();
+        await staleCheck;
+        Assert.DoesNotContain(TermbaseIssues(vm), i => i.Message.Contains("“other”", StringComparison.Ordinal));
+        newer.Release();
+        await newerCheck;
         Assert.Empty(TermbaseIssues(vm));
+    }
+
+    // Units not to be translated, by themselves or by their group, get no marks, no terms and nothing for Ctrl+T.
+    [Fact]
+    public async Task UnitsNotToBeTranslated_GetNoMarksAndNoTerms()
+    {
+        var (vm, _) = await OpenAsync("""
+            <xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="hu">
+              <file id="f1">
+                <unit id="u1" translate="no"><segment><source>Open the file.</source></segment></unit>
+                <group id="g1" translate="no">
+                  <unit id="u2"><segment><source>Close the file.</source></segment></unit>
+                </group>
+                <unit id="u3"><segment><source>Delete the file.</source></segment></unit>
+              </file>
+            </xliff>
+            """);
+        await UseTermbaseAsync(vm, "client", Client);
+
+        Assert.NotEmpty(vm.Segments[2].TermHits); // the termbase serves the document
+        foreach (var segment in vm.Segments.Take(2))
+        {
+            vm.SelectedSegment = segment;
+            Assert.Empty(segment.TermHits);
+            Assert.Empty(vm.Terms);
+            Assert.Empty(vm.TermPickerChoices());
+            Assert.DoesNotContain(segment.SourceRuns.OfType<TextRun>(), r => r.Annotations.HasFlag(AnnotationStyle.TermbaseTerm));
+        }
+    }
+
+    // The term source takes over the previous one's records only from a snapshot of the same open termbase, never from
+    // another with the same name (or the same file opened again), whose records it would never find.
+    [Fact]
+    public void ADocumentsTermSource_TakesOverRecords_OnlyFromTheSameOpenTermbase()
+    {
+        var text = QaText.Of(InlineContent.FromText("Open the file."));
+        var client = new OpenTermbase(new Tracking("en", "hu", Client), "client");
+        var terms = new DocumentTerms();
+        terms.Use(client.Index, client);
+        var record = Assert.Single(terms.Source!.Find(text));
+
+        client.Termbase.Add(Entry("disk"));
+        terms.Use(client.Index, client); // a write's new snapshot
+        Assert.Same(record, Assert.Single(terms.Source.Find(text)));
+
+        // Another termbase named "client", even one whose snapshot shares this one's entries.
+        var other = new OpenTermbase(new Fixed(client.Index.With(new TermEntryId(99), Entry("folder"))), "client");
+        terms.Use(other.Index, other);
+        Assert.NotSame(record, Assert.Single(terms.Source.Find(text)));
+        Assert.Equal("client", terms.Name);
+
+        terms.Use(null, null);
+        Assert.Null(terms.Source);
+        Assert.Null(terms.Name);
     }
 
     [Fact]
@@ -523,6 +616,48 @@ public sealed class TermbaseViewModelTests : IAsyncDisposable
         var termbase = OpenTermbase.Create(path, "en", target);
         termbase.Termbase.AddRange(entries);
         return termbase;
+    }
+
+    /// <summary>A re-check's work, held after it's computed until released, so its result comes back late.</summary>
+    private sealed class HeldWork
+    {
+        private readonly TaskCompletionSource _computed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Computed => _computed.Task;
+
+        public void Release() => _release.SetResult();
+
+        public async Task RunAsync(Action work)
+        {
+            await Task.Run(work);
+            _computed.SetResult();
+            await _release.Task;
+        }
+    }
+
+    /// <summary>A termbase whose entries are this snapshot.</summary>
+    private sealed class Fixed(TermIndex index) : ITermbase
+    {
+        public string SourceLanguage => "en";
+
+        public string TargetLanguage => "hu";
+
+        public TermIndex Index => index;
+
+        public TermEntryId Add(TermEntry entry) => throw new NotSupportedException();
+
+        public IReadOnlyList<TermEntryId> AddRange(IEnumerable<TermEntry> entries) => throw new NotSupportedException();
+
+        public bool Update(TermEntryId id, TermEntry entry) => throw new NotSupportedException();
+
+        public int Delete(IReadOnlyCollection<TermEntryId> ids) => throw new NotSupportedException();
+
+        public bool Compact() => false;
+
+        public void Dispose()
+        {
+        }
     }
 
     /// <summary>Settings kept in memory.</summary>

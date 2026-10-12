@@ -412,7 +412,8 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      - A regional variant of the termbase's languages is served fully (a termbase has no scores to lower); a document
        without `trgLang` is judged by its source language, and setting it later decides again.
      - Each document gets its own term source (`DocumentTerms`), made with `ToTermSource(name, previous)` after each
-       snapshot. Its units are first checked with the file's glossary only; when the termbase serves the document
+       snapshot; `previous` only for a new snapshot of the same open termbase, never for another (even one with the
+       same name, or the same file opened again), whose records the new index would never find. Its units are first checked with the file's glossary only; when the termbase serves the document
        (opened, loaded, or the languages now fit), every unit is checked again off the UI thread, in parallel, and a
        unit edited meanwhile keeps its own newer result. A QA report that has run is listed again, without switching
        tabs.
