@@ -215,6 +215,63 @@ public class TbxTests
         Assert.Equal(["Entry 1: the date \"14/03/2025\" can't be read; the entry is imported without one."], imported.Notices);
     }
 
+    private static string Transaction(string type, string? date, string? user) =>
+        $"<transacGrp><transac type=\"transactionType\">{type}</transac>"
+        + (date is null ? "" : $"<date>{date}</date>")
+        + (user is null ? "" : $"<transacNote type=\"responsibility\">{user}</transacNote>")
+        + "</transacGrp>";
+
+    // MultiTerm writes transactions at every level, the concept's first: the latest date counts, not the last group.
+    [Fact]
+    public async Task TheDate_IsTheLatestModification_AtAnyLevel_NotTheLastInTheFile()
+    {
+        var imported = await ReadAsync(Tbx2(
+            Transaction("origination", "2019-01-01", "anna") + Transaction("modification", "2025-06-01", "bela")
+            + "<langSet xml:lang=\"en\">" + Transaction("modification", "2020-01-01", "carl")
+            + "<tig><term>a</term>" + Transaction("modification", "2019-06-01", "dora") + "</tig></langSet>"));
+
+        Assert.Equal((new DateTimeOffset(2025, 6, 1, 0, 0, 0, TimeSpan.Zero), "bela"), (imported.Entries.Single().Changed, imported.Entries.Single().ChangedBy));
+        Assert.Empty(imported.Notices);
+    }
+
+    [Fact]
+    public async Task ALaterTermLevelModification_Counts()
+    {
+        var imported = await ReadAsync(Tbx2(
+            Transaction("modification", "2019-01-01", "old")
+            + "<langSet xml:lang=\"en\"><tig><term>a</term>" + Transaction("modification", "2024-05-01", "new") + "</tig></langSet>"));
+
+        Assert.Equal((new DateTimeOffset(2024, 5, 1, 0, 0, 0, TimeSpan.Zero), "new"), (imported.Entries.Single().Changed, imported.Entries.Single().ChangedBy));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("14/03/2025")]
+    public async Task AModificationWithoutAReadableDate_DoesntHideADatedOne(string? date)
+    {
+        var imported = await ReadAsync(Tbx2(
+            Transaction("modification", "2024-05-01", "new")
+            + "<langSet xml:lang=\"en\"><tig><term>a</term>" + Transaction("modification", date, "x") + "</tig></langSet>"));
+
+        Assert.Equal((new DateTimeOffset(2024, 5, 1, 0, 0, 0, TimeSpan.Zero), "new"), (imported.Entries.Single().Changed, imported.Entries.Single().ChangedBy));
+        Assert.Empty(imported.Notices);
+    }
+
+    [Fact]
+    public async Task WithoutAnyReadableModificationDate_TheLatestOriginationCounts_ElseTheUserAlone()
+    {
+        var originations = await ReadAsync(Tbx2(
+            Transaction("origination", "2024-05-01", "anna")
+            + "<langSet xml:lang=\"en\"><tig><term>a</term>" + Transaction("origination", "2019-01-01", "bela") + "</tig></langSet>"));
+        var undated = await ReadAsync(Tbx2(
+            Transaction("origination", null, "anna")
+            + "<langSet xml:lang=\"en\"><tig><term>a</term>" + Transaction("modification", null, "bela") + "</tig></langSet>"));
+
+        Assert.Equal((new DateTimeOffset(2024, 5, 1, 0, 0, 0, TimeSpan.Zero), "anna"), (originations.Entries.Single().Changed, originations.Entries.Single().ChangedBy));
+        Assert.Equal((default, "bela"), (undated.Entries.Single().Changed, undated.Entries.Single().ChangedBy));
+        Assert.Empty(undated.Notices);
+    }
+
     // ---------------------------------------------------------------- untrusted input
 
     // Most TBX 2 files name a DTD that isn't there; it's never fetched, from disk or the network.

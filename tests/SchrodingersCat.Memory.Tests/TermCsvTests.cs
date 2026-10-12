@@ -156,6 +156,29 @@ public class TermCsvTests
     public void Rows_FollowRfc4180_Leniently(string text, string[] rows) =>
         Assert.Equal(rows, TermCsv.Parse(Encoding.UTF8.GetBytes(text)).Rows.Select(r => string.Join('|', r)));
 
+    // The size limit alone would let a file of line breaks or separators take a hundred times its size.
+    [Theory]
+    [InlineData("\n")]
+    [InlineData(",")]
+    [InlineData("a\n")]
+    public void MoreCellsThanTheLimit_Fail(string piece)
+    {
+        var error = Assert.Throws<TermbaseFormatException>(() => TermCsv.Parse(Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat(piece, 11))), maxCells: 10));
+
+        Assert.Equal("The file has more than 10 cells.", error.Message);
+        var fits = piece == "," ? 9 : 10; // n separators make n + 1 cells
+        Assert.Equal(10, TermCsv.Parse(Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat(piece, fits))), maxCells: 10).Rows.Sum(r => r.Count));
+    }
+
+    [Fact]
+    public void AFileOfLineBreaks_FailsAtTheDefaultLimit()
+    {
+        var bytes = new byte[TermCsv.DefaultMaxCells + 1];
+        bytes.AsSpan().Fill((byte)'\n');
+
+        Assert.Throws<TermbaseFormatException>(() => TermCsv.Parse(bytes));
+    }
+
     [Fact]
     public void AQuotedFieldThatNeverCloses_Fails()
     {
@@ -173,6 +196,26 @@ public class TermCsvTests
     [InlineData(new[] { "en-US", "en-GB", "hu" }, "en-GB", "hu", 1, 2, null, null)]
     public void Columns_AreGuessedFromLanguageTags(string[] header, string source, string target, int s, int t, int? note, int? status) =>
         Assert.Equal(new CsvColumns(s, t, note, status), TermCsv.GuessColumns(header, source, target));
+
+    // Two regional variants of one language: the exact header wins, wherever the loose one stands.
+    [Theory]
+    [InlineData(new[] { "en", "en-GB" }, "en-GB", "en", 1, 0)]
+    [InlineData(new[] { "en-GB", "en" }, "en", "en-GB", 1, 0)]
+    [InlineData(new[] { "en", "en-GB" }, "en", "en-GB", 0, 1)]
+    [InlineData(new[] { "pt", "pt-PT", "pt-BR" }, "pt-BR", "pt-PT", 2, 1)]
+    public void Columns_PreferTheExactTag_ToARegionalVariant(string[] header, string source, string target, int s, int t) =>
+        Assert.Equal(new CsvColumns(s, t, null, null), TermCsv.GuessColumns(header, source, target));
+
+    [Fact]
+    public void Columns_PreferTheFullLanguageName_ToTheNameWithoutTheRegion()
+    {
+        if (!KnowsLanguageNames)
+            return; // invariant globalization: only tags
+
+        Assert.Equal(new CsvColumns(1, 0, null, null), TermCsv.GuessColumns(["Portuguese (Portugal)", "Portuguese (Brazil)"], "pt-BR", "pt-PT"));
+        Assert.Equal(new CsvColumns(1, 0, null, null), TermCsv.GuessColumns(["English (United Kingdom)", "English (United States)"], "en-US", "en-GB"));
+        Assert.Equal(new CsvColumns(0, 1, null, null), TermCsv.GuessColumns(["English", "English (United Kingdom)"], "en", "en-GB"));
+    }
 
     [Fact]
     public void Columns_AreGuessedFromLanguageNames_WhereTheSystemKnowsThem()

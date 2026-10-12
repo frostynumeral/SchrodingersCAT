@@ -103,8 +103,7 @@ public static partial class Tbx
     private sealed class EntryReader(Dialect dialect, string sourceLanguage, string targetLanguage, int number)
     {
         private readonly XNamespace _ns = dialect.Ns;
-        private (string? Date, string? User)? _modification;
-        private (string? Date, string? User)? _origination;
+        private readonly List<(string Type, string? Date, string? User)> _transactions = [];
 
         public List<string> Notices { get; } = [];
 
@@ -284,34 +283,50 @@ public static partial class Tbx
                 ?? group.Element(BasicNamespace + "transactionType")?.Value;
             var user = group.Elements(_ns + "transacNote").FirstOrDefault(e => (string?)e.Attribute("type") == "responsibility")?.Value
                 ?? group.Element(BasicNamespace + "responsibility")?.Value;
-            var transaction = (group.Element(_ns + "date")?.Value, user);
-            switch (type?.Trim())
-            {
-                case "modification":
-                    _modification = transaction;
-                    break;
-                case "origination":
-                    _origination = transaction;
-                    break;
-            }
+            if (type?.Trim() is { } kind and ("modification" or "origination"))
+                _transactions.Add((kind, group.Element(_ns + "date")?.Value, user));
         }
 
+        // The latest modification (concept, language and term levels alike; document order says nothing), else the
+        // latest origination; a transaction without a readable date only if none has one. A date that can't be read is
+        // reported if it could have been the entry's.
         private (DateTimeOffset Changed, string? ChangedBy) Transaction()
         {
-            if ((_modification ?? _origination) is not { } transaction)
-                return (default, null);
-
-            var (date, user) = transaction;
-            if (date is null)
-                return (default, user);
-            if (DateTimeOffset.TryParseExact(
-                date.Trim(), DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var changed))
+            foreach (var type in new[] { "modification", "origination" })
             {
-                return (changed, user);
+                (DateTimeOffset Date, string? User)? latest = null;
+                (string? Date, string? User)? undated = null;
+                foreach (var (kind, date, user) in _transactions)
+                {
+                    if (kind != type)
+                        continue;
+                    if (date is not null && DateTimeOffset.TryParseExact(
+                        date.Trim(), DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var changed))
+                    {
+                        if (latest is null || changed >= latest.Value.Date)
+                            latest = (changed, user);
+                    }
+                    else
+                    {
+                        undated = (date, user);
+                    }
+                }
+
+                if (latest is { } found)
+                    return found;
+                if (undated is { } last)
+                {
+                    foreach (var (kind, date, _) in _transactions)
+                    {
+                        if (kind == type && date is not null)
+                            Notices.Add($"Entry {number}: the date \"{date}\" can't be read; the entry is imported without one.");
+                    }
+
+                    return (default, last.User);
+                }
             }
 
-            Notices.Add($"Entry {number}: the date \"{date}\" can't be read; the entry is imported without one.");
-            return (default, user);
+            return (default, null);
         }
     }
 }

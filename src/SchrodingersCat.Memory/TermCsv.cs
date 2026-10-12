@@ -33,9 +33,18 @@ public static class TermCsv
     /// <summary>The default size limit for imports.</summary>
     public const long DefaultMaxInputBytes = 256L * 1024 * 1024;
 
+    /// <summary>
+    /// The default limit on cells (a blank row counts as one), e.g. a million rows of five columns. The size limit alone
+    /// doesn't bound memory: each cell and row costs tens of bytes however short it is, so a file of separators or
+    /// line breaks would take a hundred times its size.
+    /// </summary>
+    public const int DefaultMaxCells = 5_000_000;
+
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     private static readonly UTF8Encoding Utf8WithBom = new(encoderShouldEmitUTF8Identifier: true, throwOnInvalidBytes: true);
+
+    private static readonly IReadOnlyList<string> BlankRow = Array.AsReadOnly(new[] { "" });
 
     private static readonly string[] NoteHeaders = ["note", "notes", "comment", "comments", "definition"];
 
@@ -82,9 +91,14 @@ public static class TermCsv
     /// <paramref name="encoding"/>, or UTF-8. The separator is the one of tab, <c>;</c> and <c>,</c> the first row has
     /// most of outside quotes (on a tie, in that order); a comma if it has none.
     /// </summary>
-    /// <exception cref="TermbaseFormatException">The bytes aren't valid in the encoding, or a quoted field isn't closed.</exception>
-    public static CsvTable Parse(ReadOnlySpan<byte> bytes, Encoding? encoding = null)
+    /// <exception cref="TermbaseFormatException">
+    /// The bytes aren't valid in the encoding, a quoted field isn't closed, or the file has more than
+    /// <paramref name="maxCells"/> cells.
+    /// </exception>
+    public static CsvTable Parse(ReadOnlySpan<byte> bytes, Encoding? encoding = null, int maxCells = DefaultMaxCells)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxCells);
+
         Encoding used;
         if (Bom(bytes) is { } bom)
         {
@@ -114,7 +128,7 @@ public static class TermCsv
         }
 
         var separator = DetectSeparator(text);
-        return new CsvTable(separator, used, Split(text, separator));
+        return new CsvTable(separator, used, Split(text, separator, maxCells));
     }
 
     private static (Encoding Encoding, int Length)? Bom(ReadOnlySpan<byte> bytes) =>
@@ -149,13 +163,28 @@ public static class TermCsv
     }
 
     // Lenient where spreadsheets are sloppy: a quote inside an unquoted field, or after a closing quote, is text. Only
-    // a quoted field that never closes fails, as the rest of the file would be one cell.
-    private static List<IReadOnlyList<string>> Split(string text, char separator)
+    // a quoted field that never closes fails, as the rest of the file would be one cell. Blank rows share one array.
+    private static List<IReadOnlyList<string>> Split(string text, char separator, int maxCells)
     {
         var rows = new List<IReadOnlyList<string>>();
         var row = new List<string>();
         var cell = new StringBuilder();
+        var cells = 0;
         var i = 0;
+
+        void AddCell(string value)
+        {
+            if (++cells > maxCells)
+                throw new TermbaseFormatException($"The file has more than {maxCells.ToString("N0", CultureInfo.InvariantCulture)} cells.");
+            row.Add(value);
+        }
+
+        void EndRow()
+        {
+            rows.Add(row is [""] ? BlankRow : row.ToArray());
+            row.Clear();
+        }
+
         while (i < text.Length)
         {
             // At the start of a cell.
@@ -187,11 +216,11 @@ public static class TermCsv
             while (i < text.Length && text[i] != separator && text[i] is not ('\r' or '\n'))
                 cell.Append(text[i++]);
 
-            row.Add(cell.ToString());
+            AddCell(cell.ToString());
             cell.Clear();
             if (i == text.Length)
             {
-                rows.Add(row);
+                EndRow();
                 break;
             }
 
@@ -200,8 +229,8 @@ public static class TermCsv
                 i++;
                 if (i == text.Length)
                 {
-                    row.Add("");
-                    rows.Add(row);
+                    AddCell("");
+                    EndRow();
                 }
 
                 continue;
@@ -209,8 +238,7 @@ public static class TermCsv
 
             // A row's end: CRLF, LF or CR.
             i += text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n' ? 2 : 1;
-            rows.Add(row);
-            row = [];
+            EndRow();
         }
 
         return rows;
@@ -228,14 +256,12 @@ public static class TermCsv
         ArgumentNullException.ThrowIfNull(targetLanguage);
 
         var cells = header.Select(c => (c ?? "").Trim()).ToList();
-        var source = Find(cells, c => NamesLanguage(c, sourceLanguage));
-        var target = Find(cells, c => NamesLanguage(c, targetLanguage), source);
-        if (source is null || target is null)
+        if (LanguageColumns(cells, sourceLanguage, targetLanguage) is not var (source, target))
             return null;
 
         return new CsvColumns(
-            source.Value,
-            target.Value,
+            source,
+            target,
             Find(cells, c => NoteHeaders.Contains(c, StringComparer.OrdinalIgnoreCase), source, target),
             Find(cells, c => string.Equals(c, "status", StringComparison.OrdinalIgnoreCase), source, target));
     }
@@ -251,26 +277,62 @@ public static class TermCsv
         return null;
     }
 
-    private static bool NamesLanguage(string cell, string language)
+    // The source and target columns whose names fit best together: an exact name beats a loose one, so headers of two
+    // regional variants (en and en-GB, Portuguese (Portugal) and Portuguese (Brazil)) aren't swapped. The best pair is
+    // always among each language's two best columns; on a tie, the earlier source column, then target column.
+    private static (int Source, int Target)? LanguageColumns(List<string> cells, string sourceLanguage, string targetLanguage)
+    {
+        var sources = Best(cells, sourceLanguage);
+        var targets = Best(cells, targetLanguage);
+        (int Source, int Target, int Fit)? best = null;
+        foreach (var (s, sourceFit) in sources)
+        {
+            foreach (var (t, targetFit) in targets)
+            {
+                if (s == t)
+                    continue;
+                var fit = sourceFit + targetFit;
+                if (best is not { } b || fit > b.Fit || fit == b.Fit && (s < b.Source || s == b.Source && t < b.Target))
+                    best = (s, t, fit);
+            }
+        }
+
+        return best is { } found ? (found.Source, found.Target) : null;
+    }
+
+    // The two columns that name the language best (by fit, then position).
+    private static List<(int Column, int Fit)> Best(List<string> cells, string language) =>
+        [.. cells.Select((cell, i) => (Column: i, Fit: NamesLanguage(cell, language)))
+            .Where(c => c.Fit > 0)
+            .OrderByDescending(c => c.Fit).ThenBy(c => c.Column)
+            .Take(2)];
+
+    // 2: the language's own tag or full name; 1: its base language, a regional variant, or its name without the region
+    // ("Portuguese" for "Portuguese (Brazil)"); 0: not this language.
+    private static int NamesLanguage(string cell, string language)
     {
         if (cell.Length == 0)
-            return false;
-        if (TmLanguages.Serves(cell, language) || TmLanguages.Serves(language, cell))
-            return true;
+            return 0;
+        if (string.Equals(cell, language, StringComparison.OrdinalIgnoreCase))
+            return 2;
 
+        var fit = TmLanguages.Serves(cell, language) || TmLanguages.Serves(language, cell) ? 1 : 0;
         try
         {
             var culture = CultureInfo.GetCultureInfo(language);
+            var names = new[] { culture.EnglishName, culture.NativeName };
+            if (names.Any(name => string.Equals(cell, name, StringComparison.OrdinalIgnoreCase)))
+                return 2;
             var plain = BeforeParenthesis(cell);
-            return new[] { culture.EnglishName, culture.NativeName }.Any(name =>
-                string.Equals(cell, name, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(plain, BeforeParenthesis(name), StringComparison.OrdinalIgnoreCase));
+            if (names.Any(name => string.Equals(plain, BeforeParenthesis(name), StringComparison.OrdinalIgnoreCase)))
+                return 1;
         }
         catch (CultureNotFoundException)
         {
             // Without ICU (invariant globalization) only tags are recognised.
-            return false;
         }
+
+        return fit;
     }
 
     private static string BeforeParenthesis(string name) =>

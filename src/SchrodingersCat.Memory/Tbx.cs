@@ -21,8 +21,8 @@ public enum TbxVersion
 /// <c>term</c>) and TBX 3 (<c>conceptEntry</c> → <c>langSec</c> → <c>termSec</c> → <c>term</c>), in both of TBX 3's
 /// styles whatever the file says it is: DCA (<c>termNote type="administrativeStatus"</c>) and DCT (an element per data
 /// category, matched by namespace URI and local name, never by prefix). It keeps terms, their status and notes, the
-/// concept's notes and definitions (those of the two languages prefixed with the language), and the last
-/// modification's (or else the origination's) date and user. Everything else is dropped and counted.</para>
+/// concept's notes and definitions (those of the two languages prefixed with the language), and the latest
+/// modification's (or else origination's) date and user, at any level. Everything else is dropped and counted.</para>
 /// <para><b>Languages:</b> the termbase's two languages are taken, regional variants included by the TM's rule
 /// (<see cref="TmLanguages"/>): the exact tag if an entry has it, else the first variant. An entry without a source
 /// term, or with terms in other languages but none in the target language, is skipped and reported. An entry with only

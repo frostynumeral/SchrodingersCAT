@@ -410,9 +410,10 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
      - **Source-only entries:** an entry with terms in the source language only is imported with no translations
        (TBX can't hold an empty `langSet`, so this is how an entry without translations comes back); one with terms
        in other languages but none in the target language is skipped, as section 4 says.
-     - **Dates:** the last modification's `transacGrp`, or else the origination's, at concept, language or term
-       level; ISO 8601 with or without a time, fraction or offset (none means UTC). One that can't be read is
-       reported and the entry kept without a date. The export writes UTC, with the fraction only when there is one,
+     - **Dates:** the latest modification's `transacGrp` (by its date, not its place: tools write them at concept,
+       language and term level, the concept's first), or else the latest origination's; one without a readable date
+       counts only if none of its kind has one, and gives the user alone. ISO 8601 with or without a time, fraction or offset (none means UTC). One that can't be read is
+       reported, when the entry is left without a date because of it, and the entry kept. The export writes UTC, with the fraction only when there is one,
        so dates come back to the tick.
      - **Declared legacy encodings:** an XML declaration naming an encoding .NET doesn't have without registering
        code pages (`windows-1250`) fails as malformed; UTF-8, UTF-16 and ISO-8859-1 are read.
@@ -420,6 +421,12 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
        reads both styles anyway.
      - **CSV encoding:** a BOM decides even when the user chose another encoding; without one, the chosen encoding
        or strict UTF-8.
+     - **CSV columns:** an exact header (the language's own tag or full English or native name) beats a loose one
+       (its base language, a regional variant, the name without the region), so the columns of `en` and `en-GB`, or
+       of "Portuguese (Portugal)" and "Portuguese (Brazil)", aren't swapped; on a tie, the earlier columns.
+     - **CSV limits:** besides the size limit, at most `DefaultMaxCells` (5 million) cells, a blank row counting as
+       one: each cell costs tens of bytes however short, so a file of line breaks or separators would otherwise take
+       about a hundred times its size. Blank rows share one array.
      - **CSV separator:** the most frequent of tab, `;` and `,` outside quotes in the first row; on a tie, in that
        order; a comma if there is none. A stray quote inside an unquoted field or after a closing quote is text;
        only a quoted field that never closes fails.
