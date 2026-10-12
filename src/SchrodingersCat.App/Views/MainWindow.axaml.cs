@@ -31,9 +31,9 @@ public partial class MainWindow : Window
     }
 
     // The segment shortcuts (design section 4), Ctrl+1 … Ctrl+9 (insert a match), Ctrl+Shift+1 … Ctrl+Shift+9
-    // (delete a match's entry), Ctrl+K (concordance) and F8 (check the document) are seen before the editor:
-    // AvaloniaEdit would take Ctrl+Up/Down, Ctrl+Enter and Ctrl+Insert for itself, so they can't be window key
-    // bindings, which only get unhandled keys.
+    // (delete a match's entry), Ctrl+K (concordance), Ctrl+T (insert a term) and F8 (check the document) are seen
+    // before the editor: AvaloniaEdit would take Ctrl+Up/Down, Ctrl+Enter and Ctrl+Insert for itself, so they can't be
+    // window key bindings, which only get unhandled keys.
     private void OnShortcut(object? sender, KeyEventArgs e)
     {
         if (DataContext is not MainWindowViewModel viewModel)
@@ -46,12 +46,19 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Key == Key.T && e.KeyModifiers == KeyModifiers.Control)
+        {
+            e.Handled = true;
+            OpenTermPicker(viewModel);
+            return;
+        }
+
         if (e.Key == Key.F8 && e.KeyModifiers == KeyModifiers.None)
         {
             e.Handled = true;
             viewModel.Qa.RunCommand.Execute(null);
-            // Not while the code picker is open: it has the keyboard, and would stay open without its keys.
-            if (!this.GetVisualDescendants().OfType<TargetEditor>().Any(t => t.CodePicker.IsOpen))
+            // Not while a picker is open: it has the keyboard, and would stay open without its keys.
+            if (!this.GetVisualDescendants().OfType<TargetEditor>().Any(t => t.IsPickerOpen))
                 FocusReportSoon();
             return;
         }
@@ -74,6 +81,18 @@ public partial class MainWindow : Window
         e.Handled = true;
         if (command.CanExecute(parameter))
             command.Execute(parameter);
+    }
+
+    // Ctrl+T (section 6 of docs/design/termbase.md): the picker of the selected segment's terms, in its editor, from
+    // wherever the keyboard is (a source block, the QA list). With nothing to offer, the status line says why.
+    private void OpenTermPicker(MainWindowViewModel viewModel)
+    {
+        if (viewModel.TermPickerChoices() is not { Count: > 0 } choices
+            || this.GetVisualDescendants().OfType<TargetEditor>().FirstOrDefault(t => t.IsEffectivelyVisible) is not { } editor)
+            return;
+
+        editor.FocusEditor();
+        editor.OpenTermPicker(choices);
     }
 
     // Ctrl+K: the concordance for the selected text, the editor's (searching translations) or a source's (searching
@@ -161,13 +180,14 @@ public partial class MainWindow : Window
         this.GetVisualDescendants().OfType<TargetEditor>().FirstOrDefault(t => t.IsEffectivelyVisible)?.FocusEditor();
     }
 
-    // Closing is synchronous, but asking about unsaved changes and closing the TM are not: cancel this close, ask,
-    // let the TM finish its queued stores, and close again (for real this time) only if the view model allows it.
+    // Closing is synchronous, but asking about unsaved changes and closing the TM and the termbase are not: cancel this
+    // close, ask, let the TM finish its queued stores (and a termbase that is loading stop), and close again (for real
+    // this time) only if the view model allows it.
     protected override void OnClosing(WindowClosingEventArgs e)
     {
         base.OnClosing(e);
         if (_closeConfirmed || e.Cancel || DataContext is not MainWindowViewModel viewModel
-            || (!viewModel.IsDirty && viewModel.TranslationMemory is null))
+            || (!viewModel.IsDirty && viewModel.TranslationMemory is null && viewModel.Termbase is null && viewModel.LoadingTermbase is null))
             return;
 
         e.Cancel = true;

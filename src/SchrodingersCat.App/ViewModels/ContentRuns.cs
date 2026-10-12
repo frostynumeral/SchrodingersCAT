@@ -16,7 +16,18 @@ public abstract record ContentRun
 }
 
 /// <summary>Text, styled by the annotations (<c>&lt;mrk&gt;</c>) it lies inside.</summary>
-public sealed record TextRun(string Text, AnnotationStyle Annotations) : ContentRun;
+public sealed record TextRun(string Text, AnnotationStyle Annotations) : ContentRun
+{
+    /// <summary>For text in a termbase term (<see cref="AnnotationStyle.TermbaseTerm"/>): the term's translations, for the tooltip.</summary>
+    public string? TermToolTip { get; init; }
+}
+
+/// <summary>
+/// A termbase term found in the source, to be underlined (section 6 of <c>docs/design/termbase.md</c>): a range of one
+/// text element of the content (<see cref="QaText.SpansOf"/>), and what the tooltip says about the term.
+/// </summary>
+/// <param name="Element">The index of the content's element; marks on other than text elements are ignored.</param>
+public sealed record TermMark(int Element, int Start, int Length, string ToolTip);
 
 /// <summary>How annotated text is shown. Annotations aren't chips; they style the text they cover.</summary>
 [Flags]
@@ -32,6 +43,9 @@ public enum AnnotationStyle
 
     /// <summary>Text that must not be translated (<c>translate="no"</c>).</summary>
     NoTranslate = 4,
+
+    /// <summary>A term the open termbase has (section 6 of <c>docs/design/termbase.md</c>), not an annotation of the file.</summary>
+    TermbaseTerm = 8,
 }
 
 /// <summary>One code half, shown as a chip.</summary>
@@ -59,7 +73,12 @@ public sealed record ChipRun(string CodeId, InlineCodeKind Kind, string Label, s
 public static class ContentRuns
 {
     /// <param name="openAtStart">Annotations opened earlier in the unit and still open where this content starts.</param>
-    public static IReadOnlyList<ContentRun> Build(InlineContent content, TranslationUnit unit, InlineCodeHints hints, IEnumerable<InlineMarker> openAtStart)
+    /// <param name="terms">
+    /// The termbase's terms found in the content: the text they cover is <see cref="AnnotationStyle.TermbaseTerm"/>,
+    /// with their tooltips. Ranges outside their element are cut to it; marks on codes are ignored.
+    /// </param>
+    public static IReadOnlyList<ContentRun> Build(
+        InlineContent content, TranslationUnit unit, InlineCodeHints hints, IEnumerable<InlineMarker> openAtStart, IReadOnlyList<TermMark>? terms = null)
     {
         ArgumentNullException.ThrowIfNull(content);
         ArgumentNullException.ThrowIfNull(unit);
@@ -68,16 +87,14 @@ public static class ContentRuns
 
         var open = openAtStart.ToList();
         var runs = new List<ContentRun>();
-        foreach (var element in content)
+        for (var i = 0; i < content.Count; i++)
         {
-            switch (element)
+            switch (content[i])
             {
                 case InlineText { Text.Length: > 0 } text:
                     var style = StyleOf(open);
-                    if (runs.Count > 0 && runs[^1] is TextRun previous && previous.Annotations == style)
-                        runs[^1] = previous with { Text = previous.Text + text.Text };
-                    else
-                        runs.Add(new TextRun(text.Text, style));
+                    foreach (var (piece, tip) in TermPieces(text.Text, i, terms))
+                        AddText(runs, piece, tip is null ? style : style | AnnotationStyle.TermbaseTerm, tip);
                     break;
                 case InlineCode code:
                     runs.Add(Chip(code, unit, hints));
@@ -89,6 +106,59 @@ public static class ContentRuns
         }
 
         return runs;
+    }
+
+    // Text joins the run before it if it looks the same, so a term's marks split runs only where they start or end.
+    private static void AddText(List<ContentRun> runs, string text, AnnotationStyle style, string? termToolTip)
+    {
+        if (runs.Count > 0 && runs[^1] is TextRun previous && previous.Annotations == style && previous.TermToolTip == termToolTip)
+            runs[^1] = previous with { Text = previous.Text + text };
+        else
+            runs.Add(new TextRun(text, style) { TermToolTip = termToolTip });
+    }
+
+    // A text element cut at the boundaries of the marks on it: each piece with the tooltips of the marks covering it
+    // (overlapping terms, such as "file manager" and "file", give both), or null if none does.
+    private static IEnumerable<(string Text, string? ToolTip)> TermPieces(string text, int element, IReadOnlyList<TermMark>? terms)
+    {
+        var marks = (terms ?? [])
+            .Where(m => m is not null && m.Element == element)
+            .Select(m => (Start: Math.Clamp(m.Start, 0, text.Length), End: (int)Math.Clamp((long)m.Start + m.Length, 0, text.Length), m.ToolTip))
+            .Where(m => m.End > m.Start)
+            .ToList();
+        if (marks.Count == 0)
+        {
+            yield return (text, null);
+            yield break;
+        }
+
+        var cuts = marks.SelectMany(m => new[] { m.Start, m.End }).Append(0).Append(text.Length).Distinct().Order().ToList();
+        for (var c = 0; c + 1 < cuts.Count; c++)
+        {
+            var (from, to) = (cuts[c], cuts[c + 1]);
+            var tips = marks.Where(m => m.Start <= from && m.End >= to).Select(m => m.ToolTip).Distinct().ToList();
+            yield return (text[from..to], tips.Count == 0 ? null : string.Join("\n\n", tips));
+        }
+    }
+
+    /// <summary>
+    /// The text run at a position of the runs, counted as <see cref="Slice"/> counts them (a character of text is one
+    /// position, a chip too); null at a chip or past the end.
+    /// </summary>
+    public static TextRun? RunAt(IReadOnlyList<ContentRun> runs, int position)
+    {
+        ArgumentNullException.ThrowIfNull(runs);
+
+        var start = 0;
+        foreach (var run in runs)
+        {
+            var length = run is TextRun text ? text.Text.Length : 1;
+            if (position >= start && position < start + length)
+                return run as TextRun;
+            start += length;
+        }
+
+        return null;
     }
 
     /// <summary>

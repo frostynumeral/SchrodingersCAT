@@ -28,6 +28,7 @@ public partial class App : Application
             window.DataContext = viewModel;
             desktop.MainWindow = window;
             viewModel.RestoreTranslationMemory(); // the TM that was open last time (decision 1)
+            viewModel.RestoreTermbase(); // and the termbase, loaded in the background (termbase design, section 3)
         }
 
         base.OnFrameworkInitializationCompleted();

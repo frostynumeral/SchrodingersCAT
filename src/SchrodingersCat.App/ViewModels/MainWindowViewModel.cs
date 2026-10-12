@@ -10,7 +10,7 @@ using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.ViewModels;
 
-/// <param name="settings">Where the open TM is remembered between sessions; null remembers nothing.</param>
+/// <param name="settings">Where the open TM and termbase are remembered between sessions; null remembers nothing.</param>
 public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDialogService dialogs, ISettingsStore? settings = null) : ObservableObject
 {
     private TranslationDocument? _document;
@@ -43,6 +43,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         Notice = null;
         MatchLookup = LookUpMatchesAsync();
         Concordance.InsertCommand.NotifyCanExecuteChanged();
+        ShowTerms(newValue);
     }
 
     /// <summary>
@@ -157,12 +158,16 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         Segments.Clear();
         var toTranslate = document.UnitsToTranslate.ToHashSet();
         _checks.Clear();
+        // The termbase as this document sees it: its own term source, so the check's records go with the document.
+        // The checks ask for the source of this document's terms, never a later document's.
+        var terms = new DocumentTerms();
+        _terms = terms;
         foreach (var unit in document.Units)
         {
-            var check = new UnitCheck(unit, () => QaOptions, toTranslate.Contains(unit));
+            var check = new UnitCheck(unit, () => QaOptions, toTranslate.Contains(unit), () => terms.Source);
             _checks.Add(check);
             foreach (var segment in unit.TranslatableSegments)
-                Segments.Add(new SegmentViewModel(check, segment, () => IsDirty = true));
+                Segments.Add(new SegmentViewModel(check, segment, () => IsDirty = true, terms));
         }
 
         FilePath = path;
@@ -172,7 +177,11 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         OnPropertyChanged(nameof(TargetHeader));
         OnPropertyChanged(nameof(MemoryLabel));
         NewTranslationMemoryCommand.NotifyCanExecuteChanged();
+        NewTermbaseCommand.NotifyCanExecuteChanged();
         Qa.Clear();
+        // The units were checked with the file's glossary only; with a termbase that serves the document, they are
+        // checked again in the background.
+        OnTermsChanged();
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
@@ -208,6 +217,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         document.TargetLanguage = tag.Trim();
         OnPropertyChanged(nameof(TargetHeader));
         OnPropertyChanged(nameof(MemoryLabel));
+        OnTermsChanged(); // the termbase may serve the document now, or no longer
         return true;
     }
 
@@ -511,6 +521,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
             _document.TargetLanguage = memory.TargetLanguage;
             OnPropertyChanged(nameof(TargetHeader));
             OnPropertyChanged(nameof(MemoryLabel));
+            OnTermsChanged();
         }
 
         var (previous, next) = Neighbours(segment);
@@ -720,8 +731,16 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         }
     }
 
-    /// <summary>Called when the window closes: finishes the queued TM work and closes the TM, still remembering it.</summary>
-    public Task ShutDownAsync() => UseTranslationMemoryAsync(null, remember: false);
+    /// <summary>
+    /// Called when the window closes: stops a termbase that is still loading, finishes the queued work and closes the
+    /// termbase and the TM, still remembering them.
+    /// </summary>
+    public async Task ShutDownAsync()
+    {
+        await StopLoadingTermbaseAsync();
+        await UseTermbaseAsync(null, remember: false);
+        await UseTranslationMemoryAsync(null, remember: false);
+    }
 
     /// <summary>Creates a TM for the open document's languages, asking for the target language first if the file has none.</summary>
     [RelayCommand(CanExecute = nameof(HasDocument))]
@@ -885,10 +904,10 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         ? ""
         : $" Skipped {Count(skipped.Count, what, what + "s")}: {string.Join("; ", skipped.Take(3))}{(skipped.Count > 3 ? "; …" : "")}";
 
-    /// <summary>What a TM, a TMX file or the file system report for bad files or unavailable paths; anything else is a bug.</summary>
+    /// <summary>What a TM, a termbase, a TMX file or the file system report for bad files or unavailable paths; anything else is a bug.</summary>
     internal static bool IsMemoryReportable(Exception ex) =>
-        ex is TmFormatException or DbException or IOException or UnauthorizedAccessException or ArgumentException
-            or ObjectDisposedException;
+        ex is TmFormatException or TermbaseFormatException or DbException or IOException or UnauthorizedAccessException
+            or ArgumentException or ObjectDisposedException;
 
     private void ShowMatches(SegmentViewModel? segment, IReadOnlyList<TmMatch> fromMemory)
     {

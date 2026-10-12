@@ -63,6 +63,15 @@ public interface IDialogService
     /// </summary>
     Task<string?> PickTranslationMemoryToCreateAsync(string suggestedName);
 
+    /// <summary>The local path of the termbase (<c>*.sctb</c>) the user picked to open, or null if they cancelled.</summary>
+    Task<string?> PickTermbaseToOpenAsync();
+
+    /// <summary>
+    /// The local path for a new termbase, or null if they cancelled. It doesn't ask about replacing an existing file:
+    /// the caller refuses existing files rather than lose a termbase.
+    /// </summary>
+    Task<string?> PickTermbaseToCreateAsync(string suggestedName);
+
     /// <summary>The local path of the TMX file the user picked to import, or null if they cancelled.</summary>
     Task<string?> PickTmxToImportAsync();
 

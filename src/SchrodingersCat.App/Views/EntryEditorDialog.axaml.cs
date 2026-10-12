@@ -37,7 +37,7 @@ public partial class EntryEditorDialog : Window
             e.Handled = true;
             Save();
         }
-        else if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && !Editor.CodePicker.IsOpen)
+        else if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && !Editor.IsPickerOpen)
         {
             e.Handled = true;
             Close(null);

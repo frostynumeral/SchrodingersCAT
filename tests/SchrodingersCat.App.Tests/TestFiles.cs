@@ -123,6 +123,23 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
         return Task.FromResult(TmxToExport);
     }
 
+    /// <summary>The answers to the termbase pickers (null = cancelled).</summary>
+    public string? TermbaseToOpen { get; set; }
+
+    public string? TermbaseToCreate { get; set; }
+
+    public Task<string?> PickTermbaseToOpenAsync()
+    {
+        Asked.Add("open termbase");
+        return Task.FromResult(TermbaseToOpen);
+    }
+
+    public Task<string?> PickTermbaseToCreateAsync(string suggestedName)
+    {
+        Asked.Add($"new termbase (suggested {suggestedName})");
+        return Task.FromResult(TermbaseToCreate);
+    }
+
     /// <summary>Answers the QA settings: what the translator changes in them, and whether they confirm (null = cancel).</summary>
     public Func<QaSettingsViewModel, bool>? EditQaSettings { get; set; }
 

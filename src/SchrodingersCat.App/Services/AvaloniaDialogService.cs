@@ -11,6 +11,7 @@ public sealed class AvaloniaDialogService(Window owner) : IDialogService
 {
     private static readonly FilePickerFileType Xliff = new("XLIFF files") { Patterns = ["*.xlf", "*.xliff"] };
     private static readonly FilePickerFileType TranslationMemory = new("Translation memories") { Patterns = ["*.sctm"] };
+    private static readonly FilePickerFileType Termbase = new("Termbases") { Patterns = ["*.sctb"] };
     private static readonly FilePickerFileType Tmx = new("TMX files") { Patterns = ["*.tmx"] };
 
     public async Task<string?> PickFileToOpenAsync()
@@ -43,6 +44,11 @@ public sealed class AvaloniaDialogService(Window owner) : IDialogService
 
     public Task<string?> PickTranslationMemoryToCreateAsync(string suggestedName) =>
         PickToSaveAsync("New translation memory", suggestedName, "sctm", TranslationMemory, overwritePrompt: false);
+
+    public Task<string?> PickTermbaseToOpenAsync() => PickToOpenAsync("Open termbase", Termbase);
+
+    public Task<string?> PickTermbaseToCreateAsync(string suggestedName) =>
+        PickToSaveAsync("New termbase", suggestedName, "sctb", Termbase, overwritePrompt: false);
 
     public Task<string?> PickTmxToImportAsync() => PickToOpenAsync("Import TMX", Tmx);
 
