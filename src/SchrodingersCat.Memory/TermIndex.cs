@@ -138,6 +138,55 @@ public sealed class TermIndex
         return new TermSource(this, origin, previous is TermSource { Origin: var same } kept && same.Equals(origin) ? kept.Records : new(ReferenceEqualityComparer.Instance));
     }
 
+    /// <summary>
+    /// The entries with a source term that is the same term as <paramref name="term"/> (folded, whitespace collapsed:
+    /// <c>File  Manager</c> is <c>file manager</c>, <c>files</c> isn't <c>file</c>), in the order of their ids; none for
+    /// a blank term. What the termbase's editor lists when a term is added (section 6), so a translation can go into an
+    /// entry that has the term already.
+    /// </summary>
+    public IReadOnlyList<StoredTermEntry> WithSourceTerm(string term)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+
+        var key = Words.SameTermKey(term);
+        if (key.Length == 0)
+            return [];
+
+        // A term the rule finds in its own text, as a whole, is found there by every term that folds to the same (the
+        // property tests check it), so the index's candidates are all there are. Not so for a term with a literal
+        // U+FFFC, which the rule takes for a code (and keys keep), or one the rule doesn't find in its own text: those
+        // are looked for in every entry.
+        bool Same(Indexed indexed) => indexed.Entry.Source.Any(t => Words.SameTermKey(t.Text) == key);
+        var text = QaText.Of(InlineContent.FromText(term));
+        if (term.Contains(QaText.CodeMark, StringComparison.Ordinal)
+            || text.FindFirst(TermPattern.Of(term)) is not { } self || self.Start > Leading(term) || self.Start + self.Length < term.TrimEnd().Length)
+            return [.. _entries.Where(e => Same(e.Value)).Select(e => new StoredTermEntry(e.Key, e.Value.Entry))];
+
+        return [.. FindIndexed(text)
+            .Where(h => Same(h.Indexed))
+            .OrderBy(h => h.Id.Value)
+            .Select(h => new StoredTermEntry(h.Id, h.Indexed.Entry))];
+
+        static int Leading(string term) => term.Length - term.TrimStart().Length;
+    }
+
+    /// <summary>
+    /// What <see cref="Find"/> on a changed index finds in a text, from what it found before the change: the hits of
+    /// <paramref name="without"/> (the entries changed or deleted) left out, and <paramref name="with"/> (the changed
+    /// and new entries' hits in the same text, from <see cref="TermProbe.Find"/>) added, in <see cref="Find"/>'s order.
+    /// So a segment's cached hits follow a write without a lookup of every entry (step 3 of the design).
+    /// </summary>
+    public static IReadOnlyList<TermHit> Merge(IReadOnlyList<TermHit> hits, IReadOnlyCollection<TermEntryId> without, IEnumerable<TermHit> with)
+    {
+        ArgumentNullException.ThrowIfNull(hits);
+        ArgumentNullException.ThrowIfNull(without);
+        ArgumentNullException.ThrowIfNull(with);
+
+        var merged = hits.Where(h => !without.Contains(h.Id)).Concat(with).ToList();
+        merged.Sort((a, b) => ByFirstPlace(a.Id, a.Occurrences, b.Id, b.Occurrences));
+        return merged;
+    }
+
     /// <summary>What <see cref="Find"/> finds, by trying every term of every entry: what the index must agree with.</summary>
     internal IReadOnlyList<TermHit> Scan(QaText source)
     {
@@ -145,15 +194,28 @@ public sealed class TermIndex
 
         var found = new Dictionary<TermEntryId, Found>();
         foreach (var (id, indexed) in _entries)
-        {
-            for (var term = 0; term < indexed.Patterns.Length; term++)
-            {
-                foreach (var range in source.FindAll(indexed.Patterns[term]))
-                    Add(found, source, new Candidate(id, term, indexed), range);
-            }
-        }
+            ScanEntry(found, source, id, indexed);
 
         return [.. Hits(found).Select(h => h.ToHit())];
+    }
+
+    /// <summary>One entry's hit in a text, by trying each of its terms (<see cref="Scan"/> for one entry); null if none is there.</summary>
+    internal static TermHit? HitOf(QaText source, TermEntryId id, Indexed indexed)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        var found = new Dictionary<TermEntryId, Found>(1);
+        ScanEntry(found, source, id, indexed);
+        return found.Count == 0 ? null : Hits(found)[0].ToHit();
+    }
+
+    private static void ScanEntry(Dictionary<TermEntryId, Found> found, QaText source, TermEntryId id, Indexed indexed)
+    {
+        for (var term = 0; term < indexed.Patterns.Length; term++)
+        {
+            foreach (var range in source.FindAll(indexed.Patterns[term]))
+                Add(found, source, new Candidate(id, term, indexed), range);
+        }
     }
 
     // The hits, each with its entry as indexed, which keeps the entry's record for the check.
@@ -390,12 +452,15 @@ public sealed class TermIndex
             hits.Add(new IndexedHit(id, indexed, new EquatableList<int>(matched), new EquatableList<TermOccurrence>(occurrences)));
         }
 
-        hits.Sort((a, b) =>
-            a.Occurrences[0].Start != b.Occurrences[0].Start ? a.Occurrences[0].Start.CompareTo(b.Occurrences[0].Start)
-            : a.Occurrences[0].Length != b.Occurrences[0].Length ? b.Occurrences[0].Length.CompareTo(a.Occurrences[0].Length)
-            : a.Id.Value.CompareTo(b.Id.Value));
+        hits.Sort((a, b) => ByFirstPlace(a.Id, a.Occurrences, b.Id, b.Occurrences));
         return hits;
     }
+
+    // Hits in the order of their first place (by start, the longer first), then of their ids.
+    private static int ByFirstPlace(TermEntryId a, IReadOnlyList<TermOccurrence> aPlaces, TermEntryId b, IReadOnlyList<TermOccurrence> bPlaces) =>
+        aPlaces[0].Start != bPlaces[0].Start ? aPlaces[0].Start.CompareTo(bPlaces[0].Start)
+        : aPlaces[0].Length != bPlaces[0].Length ? bPlaces[0].Length.CompareTo(aPlaces[0].Length)
+        : a.Value.CompareTo(b.Value);
 
     // An entry found, and its occurrences so far.
     private sealed record Found(Indexed Indexed)
@@ -411,7 +476,7 @@ public sealed class TermIndex
     }
 
     // An entry, and its source terms classified once, in the entry's order.
-    private sealed class Indexed(TermEntry entry, ImmutableArray<TermPattern> patterns)
+    internal sealed class Indexed(TermEntry entry, ImmutableArray<TermPattern> patterns)
     {
         public TermEntry Entry { get; } = entry;
 

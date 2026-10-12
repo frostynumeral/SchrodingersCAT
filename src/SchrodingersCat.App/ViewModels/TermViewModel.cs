@@ -21,8 +21,12 @@ public sealed record TermTranslation(string Text, TermStatus Status, string? Not
 public sealed class TermViewModel
 {
     /// <param name="insert">Inserts the row's <see cref="FirstAllowed"/> translation; its parameter is the row.</param>
-    public TermViewModel(TermHit hit, ICommand insert)
+    /// <param name="edit">Edits the row's entry (the context menu, step 6); its parameter is the <see cref="Hit"/>.</param>
+    /// <param name="delete">Deletes the row's entry; its parameter is the <see cref="Hit"/>.</param>
+    public TermViewModel(TermHit hit, ICommand insert, ICommand? edit = null, ICommand? delete = null)
     {
+        EditCommand = edit;
+        DeleteCommand = delete;
         Hit = hit ?? throw new ArgumentNullException(nameof(hit));
         InsertCommand = insert ?? throw new ArgumentNullException(nameof(insert));
         SourceText = string.Join(", ", hit.MatchedTerms.Select(i => hit.Entry.Source[i].Text).Distinct(StringComparer.Ordinal));
@@ -46,6 +50,10 @@ public sealed class TermViewModel
     public string? Notes { get; }
 
     public ICommand InsertCommand { get; }
+
+    public ICommand? EditCommand { get; }
+
+    public ICommand? DeleteCommand { get; }
 }
 
 /// <summary>What the terms list, the marks' tooltips and the term picker say about an entry.</summary>

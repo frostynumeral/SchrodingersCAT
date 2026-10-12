@@ -1,6 +1,7 @@
 using SchrodingersCat.App.Services;
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.Core.Models;
+using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.Tests;
 
@@ -165,6 +166,49 @@ internal sealed class FakeDialogs(string? openPath) : IDialogService
     {
         Asked.Add($"edit entry: {editor.Entry.Source.ToPlainText()}");
         return Task.FromResult(EditEntry?.Invoke(editor));
+    }
+
+    /// <summary>Answers the term entry dialog: what the translator does in it, and what to store (null = cancelled).</summary>
+    public Func<TermEntryEditorViewModel, TermEntryEdit?>? EditTermEntry { get; set; }
+
+    /// <summary>The term entry dialogs shown, in order.</summary>
+    public List<TermEntryEditorViewModel> TermEditors { get; } = [];
+
+    public Task<TermEntryEdit?> EditTermEntryAsync(TermEntryEditorViewModel editor)
+    {
+        Asked.Add($"{editor.Title}: {editor.SourceTerms.FirstOrDefault()?.Text}");
+        TermEditors.Add(editor);
+        return Task.FromResult(EditTermEntry?.Invoke(editor));
+    }
+
+    /// <summary>The answers to the term import and export pickers (null = cancelled).</summary>
+    public string? TermsToImport { get; set; }
+
+    public TermExportTarget? TermsToExport { get; set; }
+
+    public Task<string?> PickTermsToImportAsync()
+    {
+        Asked.Add("import terms");
+        return Task.FromResult(TermsToImport);
+    }
+
+    public Task<TermExportTarget?> PickTermsToExportAsync(string suggestedName)
+    {
+        Asked.Add($"export terms (suggested {suggestedName})");
+        return Task.FromResult(TermsToExport);
+    }
+
+    /// <summary>Answers the CSV import dialog: what the translator chooses in it, and the import (null = cancelled). Defaults to the guess.</summary>
+    public Func<CsvImportViewModel, Task<TermImport?>>? ChooseCsvImport { get; set; }
+
+    public async Task<TermImport?> ChooseCsvImportAsync(CsvImportViewModel import)
+    {
+        Asked.Add("CSV import");
+        if (ChooseCsvImport is { } choose)
+            return await choose(import);
+
+        await import.Parsing;
+        return import.TryImport();
     }
 
     /// <summary>Whether the system's file manager manages to show a folder.</summary>

@@ -78,8 +78,8 @@
         </Style>
     </Window.Styles>
 
-    <!-- The segment shortcuts (Ctrl+Enter, Ctrl+Up/Down, Ctrl+Shift+Down, Ctrl+Insert), Ctrl+1 … Ctrl+9 (insert a match)
-         and Ctrl+T (insert a term) are in MainWindow.axaml.cs. -->
+    <!-- The segment shortcuts (Ctrl+Enter, Ctrl+Up/Down, Ctrl+Shift+Down, Ctrl+Insert), Ctrl+1 … Ctrl+9 (insert a match),
+         Ctrl+T (insert a term) and Ctrl+E (add a term) are in MainWindow.axaml.cs. -->
     <Window.KeyBindings>
         <KeyBinding Gesture="Ctrl+O" Command="{Binding OpenCommand}" />
         <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveCommand}" />
@@ -98,11 +98,16 @@
                 <MenuItem x:Name="ImportTmxItem" Header="_Import TMX…" Command="{Binding ImportTmxCommand}" />
                 <MenuItem x:Name="ExportTmxItem" Header="_Export TMX…" Command="{Binding ExportTmxCommand}" />
             </MenuItem>
-            <!-- Import and export (TBX, CSV) come with step 4 of docs/design/termbase.md. -->
+            <!-- Add term… runs what Ctrl+E does (MainWindow.axaml.cs), with the selections it finds. -->
             <MenuItem x:Name="TermbaseMenu" Header="Term_base">
                 <MenuItem x:Name="NewTermbaseItem" Header="_New…" Command="{Binding NewTermbaseCommand}" />
                 <MenuItem x:Name="OpenTermbaseItem" Header="_Open…" Command="{Binding OpenTermbaseCommand}" />
                 <MenuItem x:Name="CloseTermbaseItem" Header="_Close" Command="{Binding CloseTermbaseCommand}" />
+                <Separator />
+                <MenuItem x:Name="AddTermItem" Header="_Add term…" InputGesture="Ctrl+E" Click="OnAddTerm" IsEnabled="{Binding Termbase, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                <Separator />
+                <MenuItem x:Name="ImportTermsItem" Header="_Import TBX/CSV…" Command="{Binding ImportTermsCommand}" />
+                <MenuItem x:Name="ExportTermsItem" Header="_Export TBX/CSV…" Command="{Binding ExportTermsCommand}" />
             </MenuItem>
             <MenuItem x:Name="HelpMenu" Header="_Help">
                 <MenuItem x:Name="OpenLogFolderItem" Header="Open _log folder" Command="{Binding OpenLogFolderCommand}" />
@@ -163,6 +168,13 @@
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate x:DataType="vm:TermViewModel">
                                                     <Border Classes="term" ToolTip.Tip="{Binding Notes}">
+                                                        <!-- Editing and deleting the entry (step 6); the window's Ctrl+E adds one. -->
+                                                        <Border.ContextMenu>
+                                                            <ContextMenu>
+                                                                <MenuItem Classes="editTermEntry" Header="_Edit entry…" Command="{Binding EditCommand}" CommandParameter="{Binding Hit}" />
+                                                                <MenuItem Classes="deleteTermEntry" Header="_Delete entry…" Command="{Binding DeleteCommand}" CommandParameter="{Binding Hit}" />
+                                                            </ContextMenu>
+                                                        </Border.ContextMenu>
                                                         <DockPanel>
                                                             <!-- Not focusable: clicking it leaves the keyboard in the editor. -->
                                                             <Button DockPanel.Dock="Left" Classes="insertTerm" Content="Insert" Focusable="False" FontSize="11" Padding="6,1"

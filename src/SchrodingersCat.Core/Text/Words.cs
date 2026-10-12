@@ -117,6 +117,13 @@ internal static partial class Words
         return folded.ToString();
     }
 
+    /// <summary>
+    /// What makes two terms the same term: folded, with whitespace collapsed (the terminology check counts records of
+    /// the same term as one; the termbase's editor lists the entries that already have a term).
+    /// </summary>
+    internal static string SameTermKey(string term) =>
+        Fold(string.Join(' ', term.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)));
+
     /// <summary>One UTF-16 unit folded, as <see cref="Fold"/> folds it inside a text (which is the same thing).</summary>
     internal static string FoldOne(char c) => FoldedChars[c] ??= c < 0x80 ? char.ToLowerInvariant(c).ToString() : FoldChar(c);
 

@@ -32,6 +32,10 @@ public sealed partial class MainWindowViewModel
     [NotifyPropertyChangedFor(nameof(TermsStatus))]
     [NotifyPropertyChangedFor(nameof(ShowsTerms))]
     [NotifyCanExecuteChangedFor(nameof(CloseTermbaseCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ImportTermsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportTermsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(EditTermEntryCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteTermEntryCommand))]
     public partial OpenTermbase? Termbase { get; private set; }
 
     /// <summary>The file name of the termbase being loaded in the background (section 3); null when none is.</summary>
@@ -148,7 +152,7 @@ public sealed partial class MainWindowViewModel
     {
         Terms.Clear();
         foreach (var hit in segment?.TermHits ?? [])
-            Terms.Add(new TermViewModel(hit, InsertTermCommand));
+            Terms.Add(new TermViewModel(hit, InsertTermCommand, EditTermEntryCommand, DeleteTermEntryCommand));
         OnPropertyChanged(nameof(TermsStatus));
         InsertTermCommand.NotifyCanExecuteChanged();
     }

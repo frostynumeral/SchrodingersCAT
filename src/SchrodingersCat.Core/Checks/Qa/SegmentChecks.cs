@@ -358,7 +358,7 @@ internal sealed class TerminologyCheck : IQaCheck
                 var text = string.Concat(Enumerable.Range(marked.Start, marked.Length)
                     .Where(i => !segment.Source.IsInCode(i))
                     .Select(i => segment.Source.Text[i])).Trim();
-                found.Add(new Found(record, Key(text), text, marked));
+                found.Add(new Found(record, Words.SameTermKey(text), text, marked));
                 continue;
             }
 
@@ -426,7 +426,7 @@ internal sealed class TerminologyCheck : IQaCheck
 
         public static RecordTerms Of(TermRecord record)
         {
-            var forbidden = record.ForbiddenTranslations.Where(t => t is not null).Select(Key).ToHashSet(StringComparer.Ordinal);
+            var forbidden = record.ForbiddenTranslations.Where(t => t is not null).Select(Words.SameTermKey).ToHashSet(StringComparer.Ordinal);
             return new RecordTerms(
                 [.. record.Terms.Where(t => !string.IsNullOrWhiteSpace(t)).Select(Term.Of)],
                 [.. record.Translations.Where(t => !string.IsNullOrWhiteSpace(t)).Select(Term.Of).Where(t => !forbidden.Contains(t.Key))]);
@@ -435,7 +435,7 @@ internal sealed class TerminologyCheck : IQaCheck
 
     internal sealed record Term(string Text, string Key, TermPattern Pattern)
     {
-        public static Term Of(string term) => new(term.Trim(), TerminologyCheck.Key(term), TermPattern.Of(term.Trim()));
+        public static Term Of(string term) => new(term.Trim(), Words.SameTermKey(term), TermPattern.Of(term.Trim()));
     }
 
     // "The file's glossary", "The termbase “client”", "The file's glossary and the termbase “client”".
@@ -445,8 +445,4 @@ internal sealed class TerminologyCheck : IQaCheck
         var text = names.Count == 1 ? names[0] : $"{string.Join(", ", names[..^1])} and {names[^1]}";
         return char.ToUpperInvariant(text[0]) + text[1..];
     }
-
-    // What makes two terms the same: folded, with whitespace collapsed.
-    private static string Key(string term) =>
-        Words.Fold(string.Join(' ', term.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)));
 }

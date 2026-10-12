@@ -1,5 +1,6 @@
 using SchrodingersCat.App.ViewModels;
 using SchrodingersCat.Core.Models;
+using SchrodingersCat.Memory;
 
 namespace SchrodingersCat.App.Services;
 
@@ -14,6 +15,20 @@ public enum UnsavedChangesChoice
     Save,
     DontSave,
 }
+
+/// <summary>The format a termbase export writes.</summary>
+public enum TermExportFormat
+{
+    /// <summary>TBX 2 with TBX-Basic's data categories: what most tools import.</summary>
+    Tbx2,
+    Tbx3,
+
+    /// <summary>CSV, UTF-8 with a BOM: what CSV can't hold is left out and reported.</summary>
+    Csv,
+}
+
+/// <summary>Where a termbase export goes, and in which format (the file type chosen in the picker).</summary>
+public sealed record TermExportTarget(string Path, TermExportFormat Format);
 
 /// <summary>
 /// Asks the user things (files to open or save, what to do with unsaved changes, confirmations), so view models don't depend on
@@ -71,6 +86,27 @@ public interface IDialogService
     /// the caller refuses existing files rather than lose a termbase.
     /// </summary>
     Task<string?> PickTermbaseToCreateAsync(string suggestedName);
+
+    /// <summary>
+    /// Lets the user add a term or edit a term entry (section 6 of <c>docs/design/termbase.md</c>). What to store (one
+    /// <see cref="TermEntryEditorViewModel.TrySave"/> accepted), or null if they cancelled.
+    /// </summary>
+    Task<TermEntryEdit?> EditTermEntryAsync(TermEntryEditorViewModel editor);
+
+    /// <summary>The local path of the TBX or CSV file the user picked to import into the termbase, or null if they cancelled.</summary>
+    Task<string?> PickTermsToImportAsync();
+
+    /// <summary>
+    /// Where to export the termbase, and in which format (TBX 2, TBX 3 or CSV, by the file type chosen; the user
+    /// confirmed overwriting the file), or null if they cancelled.
+    /// </summary>
+    Task<TermExportTarget?> PickTermsToExportAsync(string suggestedName);
+
+    /// <summary>
+    /// Asks how to read a CSV file (its encoding, which columns hold what), showing its first rows. The import (one
+    /// <see cref="CsvImportViewModel.TryImport"/> made), or null if they cancelled.
+    /// </summary>
+    Task<TermImport?> ChooseCsvImportAsync(CsvImportViewModel import);
 
     /// <summary>The local path of the TMX file the user picked to import, or null if they cancelled.</summary>
     Task<string?> PickTmxToImportAsync();

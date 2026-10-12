@@ -824,7 +824,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
             return;
         }
 
-        Notice = $"Imported {Count(import.Entries.Count, "entry", "entries")} from {name} into {memory.Name}.{Skipped(import.Skipped, "unit")}";
+        Notice = $"Imported {Count(import.Entries.Count, "entry", "entries")} from {name} into {memory.Name}.{Skipped(import.Skipped, "unit", "units")}";
         MatchLookup = LookUpMatchesAsync();
     }
 
@@ -841,7 +841,7 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         try
         {
             var entries = await memory.EntriesAsync();
-            export = await Task.Run(() => WriteTmxAsync(path, entries, memory.SourceLanguage, memory.TargetLanguage));
+            export = await Task.Run(() => WriteAtomicallyAsync(path, stream => Tmx.WriteAsync(stream, entries, memory.SourceLanguage, memory.TargetLanguage)));
         }
         catch (Exception ex) when (IsMemoryReportable(ex))
         {
@@ -849,22 +849,23 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
             return;
         }
 
-        Notice = $"Exported {Count(export.Written, "entry", "entries")} from {memory.Name} to {name}.{Skipped(export.Skipped, "entry")}";
+        Notice = $"Exported {Count(export.Written, "entry", "entries")} from {memory.Name} to {name}.{Skipped(export.Skipped, "entry", "entries")}";
     }
 
-    // Like XliffSerializerExtensions.WriteFileAsync: a failed export leaves an existing file as it was.
-    private static async Task<TmxExport> WriteTmxAsync(string path, IReadOnlyList<TmEntry> entries, string sourceLanguage, string targetLanguage)
+    // Like XliffSerializerExtensions.WriteFileAsync: writes <path>.tmp and moves it over the file, so a failed export
+    // leaves an existing file as it was. For TMX and termbase exports alike.
+    private static async Task<T> WriteAtomicallyAsync<T>(string path, Func<Stream, Task<T>> write)
     {
         var fullPath = Path.GetFullPath(path);
         var tempPath = fullPath + ".tmp";
         try
         {
-            TmxExport export;
+            T result;
             await using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true))
-                export = await Tmx.WriteAsync(stream, entries, sourceLanguage, targetLanguage);
+                result = await write(stream);
 
             File.Move(tempPath, fullPath, overwrite: true);
-            return export;
+            return result;
         }
         catch
         {
@@ -900,9 +901,9 @@ public sealed partial class MainWindowViewModel(IXliffSerializer serializer, IDi
         $"{count.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)} {(count == 1 ? one : many)}";
 
     // " Skipped 2 units: a; b." with the first three reasons.
-    private static string Skipped(IReadOnlyList<string> skipped, string what) => skipped.Count == 0
+    private static string Skipped(IReadOnlyList<string> skipped, string one, string many) => skipped.Count == 0
         ? ""
-        : $" Skipped {Count(skipped.Count, what, what + "s")}: {string.Join("; ", skipped.Take(3))}{(skipped.Count > 3 ? "; …" : "")}";
+        : $" Skipped {Count(skipped.Count, one, many)}: {string.Join("; ", skipped.Take(3))}{(skipped.Count > 3 ? "; …" : "")}";
 
     /// <summary>What a TM, a termbase, a TMX file or the file system report for bad files or unavailable paths; anything else is a bug.</summary>
     internal static bool IsMemoryReportable(Exception ex) =>

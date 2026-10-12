@@ -1,5 +1,6 @@
 using SchrodingersCat.Core.Checks;
 using SchrodingersCat.Core.Models;
+using SchrodingersCat.Core.Text;
 
 namespace SchrodingersCat.Memory;
 
@@ -61,6 +62,17 @@ public sealed record TermEntry(IReadOnlyList<Term> Source, IReadOnlyList<Term> T
         {
             ForbiddenTranslations = [.. Target.Where(t => t.Status == TermStatus.Forbidden).Select(t => t.Text)],
         };
+    }
+
+    /// <summary>
+    /// Whether two terms are the same term, as the terminology check counts them: folded (case and accents ignored),
+    /// whitespace collapsed. Blank terms are the same as each other.
+    /// </summary>
+    public static bool SameTerm(string a, string b)
+    {
+        ArgumentNullException.ThrowIfNull(a);
+        ArgumentNullException.ThrowIfNull(b);
+        return Words.SameTermKey(a) == Words.SameTermKey(b);
     }
 
     private static EquatableList<Term> Checked(IReadOnlyList<Term> terms, bool allowEmpty)
