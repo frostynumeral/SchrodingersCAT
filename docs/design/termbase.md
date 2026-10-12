@@ -1,7 +1,9 @@
 # Proposal: termbase
 
-**Status:** accepted (2026-10-10). All [open questions](#open-questions) are decided as proposed; implementation
-follows the [steps](#implementation-steps), starting with step 1.
+**Status:** implemented (2026-10-12). All [open questions](#open-questions) were decided as proposed, and all
+[implementation steps](#implementation-steps) are done; where the implementation departs from the proposal, the steps
+say so and why. Still open for a person: step 4's hand check of the export in another CAT tool, and the editor's manual
+checks of the termbase UI ([editor-manual-checks.md](../testing/editor-manual-checks.md)).
 
 ## Problem
 
@@ -514,7 +516,7 @@ Each step ends with passing tests, zero warnings and green CI, and can be merged
        CSV); where a desktop doesn't report it, the extension does (`.csv` CSV, else TBX 2).
      - The new UI's manual checks (shortcut layouts, IME and screen readers in the dialog, RTL terms, a real Excel CSV,
        the export picker per desktop) are in `docs/testing/editor-manual-checks.md`, for a person.
-7. **Documentation:** CLAUDE.md, and mark this proposal implemented.
+7. **Documentation:** *(Done 2026-10-12.)* CLAUDE.md, and mark this proposal implemented.
 
 ## Open questions
 
