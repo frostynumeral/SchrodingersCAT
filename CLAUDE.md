@@ -20,6 +20,15 @@ dotnet run --project src/SchrodingersCat.App                                    
 
 Projects target `net10.0`. `global.json` pins the SDK (10.0.1xx band, latest patch), locally and in both workflows, so `dotnet format` gives the same result everywhere; bump it deliberately, and run `dotnet format` after a bump because a newer formatter may want changes. Text files are LF (`.editorconfig`, `.gitattributes`). CI (`.github/workflows/ci.yml`) checks formatting with `dotnet format --verify-no-changes`, then builds and tests the whole solution in Release, on every push to `main` and on PRs; run `dotnet format` before pushing. Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`: it checks the tag against `VersionPrefix` in `Directory.Build.props` (bump that first), tests, publishes the app self-contained for `win-x64`, `linux-x64`, `osx-x64` and `osx-arm64` (without SkiaSharp's native `.pdb`s), and creates a GitHub release with the zips; 0.x and `-suffix` tags are pre-releases. Tests use xUnit, and `Xunit` is a global using. `SchrodingersCat.Core.Tests` is on xunit v2. `SchrodingersCat.App.Tests` is on xunit v3, because `Avalonia.Headless.XUnit` 12 requires it; xunit v3 test projects are executables (`OutputType` `Exe`), and its analyzers want `TestContext.Current.CancellationToken` passed to async APIs.
 
+### Python tools
+
+`tools/` is a Python package (stdlib only, Python 3.10+), run from the repository root; CI doesn't run it. `tools/util/logging.py` reads the app's log (the current file and its rotated ones, oldest first, filtered by level, date, category, process or regex) and gives Python scripts a logger in the app's line format (`setup(name)`, level from `SCHRODINGERSCAT_LOG_LEVEL`). Scripts should log to their own file: `setup` doesn't take the app's lock or rotate. It lives in a package so it never shadows the standard `logging`; don't run it by file path.
+
+```bash
+python3 -m tools.util.logging --level WRN --tail 20     # the last 20 warnings or worse
+python3 -m unittest discover -s tools -t .              # the tools' tests
+```
+
 ### Property-based tests
 
 `Xliff20PropertyTests` uses [CsCheck](https://github.com/AnthonyLloyd/CsCheck) to generate random documents (generators in `tests/SchrodingersCat.TestSupport`). Each property runs 100 iterations in a normal `dotnet test`. What each property checks is in [docs/architecture.md](docs/architecture.md#property-based-tests).
