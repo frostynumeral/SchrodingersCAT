@@ -2,7 +2,9 @@
 
 A computer-assisted translation (CAT) tool written in C#/.NET.
 
-> **Status:** early development. There is a core library (a translation document model and an XLIFF 2.x reader/writer) and a first version of the desktop editor (Avalonia).
+Website: <https://languageengineer.hu/schrodingerscat/>
+
+> **Status:** early development. There is a core library (a translation document model, an XLIFF 2.x reader/writer and QA checks), a translation memory and termbase library, and a desktop editor (Avalonia).
 
 ## What works so far
 
@@ -19,20 +21,43 @@ A computer-assisted translation (CAT) tool written in C#/.NET.
 
 ### Editor
 
-- Opens an XLIFF file and lists its segments with source and target side by side.
+- Opens an XLIFF file (`Ctrl+O`) and lists its segments with source and target side by side.
 - Inline codes are shown as chips. Targets with codes are edited with the codes kept as chips: protected codes can't be deleted, and copies follow XLIFF's editing hints.
 - A code check runs as you type: each segment shows a badge for missing, unknown, unpaired or reordered codes, and the chips involved are outlined. Saving with code errors asks first.
-- Keyboard workflow (close to memoQ's): `F9` inserts the next missing code, `Ctrl+Shift+F9` picks one, `Ctrl+Insert` copies the source, `Ctrl+Enter` confirms and moves on, `Ctrl+Up`/`Ctrl+Down` move between segments, `Ctrl+Shift+Down` goes to the next segment with code problems. Copy and paste keep codes inside the app.
+- Keyboard workflow (close to memoQ's): `F9` inserts the next missing code, `Ctrl+Shift+F9` picks one, `Ctrl+Insert` copies the source, `Ctrl+Enter` confirms and moves on, `Ctrl+Up`/`Ctrl+Down` move between segments, `Ctrl+Shift+Down` goes to the next segment with code or QA problems. Copy and paste keep codes inside the app.
 - Translation memory: create or open a TM (`*.sctm`, SQLite) from the Translation memory menu, import and export TMX; the open TM is remembered between sessions. `Ctrl+Enter` stores the confirmed segment, so repetitions further down get it straight away.
 - Concordance: `Ctrl+K` searches the TM for the selected word or phrase (or opens the search box), in sources or translations, matching word beginnings so inflected forms are found; Insert puts a translation at the caret.
 - A matches pane under the segment list shows the selected segment's matches from the TM and from the XLIFF file, with what differs from the current source marked; `Ctrl+1` … `Ctrl+9` insert one, with the current segment's codes. Exact TM matches go into empty targets automatically, unconfirmed.
+- Matches and concordance hits from the TM can be edited (the translation) or deleted, with their buttons or context menu; `Ctrl+Shift+1` … `Ctrl+Shift+9` delete a match.
 - Per-segment undo, Save (`Ctrl+S`) and Save as (`Ctrl+Shift+S`), and a prompt before unsaved changes would be lost. A file without a target language asks for it on the first save.
+
+### QA checks
+
+- Quality checks run as you type, next to the code check, and show in the segment's badge: numbers, target same as source, `translate="no"` text changed, repeated words, terminology (warnings); spaces, end punctuation, unpaired brackets and quotes (info).
+- Terminology is checked against the file's own glossary and the open termbase: a term in the source needs one of its allowed translations in the target (a forbidden one doesn't count).
+- `F8` opens the QA tab with a report for the whole document, grouped by check, adding untranslated segments and inconsistent translations or sources. Clicking an entry or pressing Enter goes to the segment; fixed issues are marked.
+- Quality issues can be dismissed per segment (from the badge or the report); a change to the target brings them back. Settings… switches individual checks off, and the choice is remembered.
+
+### TM entry maintenance
+
+- Translation memory → Manage entries… opens a window listing the TM's entries, newest first, filtered by words in the sources or translations, document, user, date range, or sources with several translations.
+- Edit the translation of an entry (in the same editor, with codes as chips) or delete it; Delete all matching… removes every entry the filter shows. Deleting always asks first.
+
+### Termbase
+
+- Create or open a termbase (`*.sctb`, SQLite) from the Termbase menu; the open termbase is remembered between sessions. It serves documents in its language pair (regional variants included).
+- Terms found in the source are underlined, with their translations in the tooltip, and listed under the matches with an Insert button. Matching uses word beginnings, so inflected forms are found.
+- `Ctrl+T` picks a term translation to insert at the caret.
+- `Ctrl+E` (Termbase → Add term…) adds a term, prefilled from the selection in the source and the target; it can start a new entry or add to an existing one. Entries are edited or deleted from the terms list's context menu.
+- Import TBX (2 and 3) and CSV/TSV (with a dialog for the encoding and columns); export TBX 2, TBX 3 or CSV.
 
 ### Not supported yet
 
 - XLIFF 1.2.
-- Editing TM entries.
-- Terminology, search, and review workflows.
+- Search and replace in the document or the TM, and filtering the segment list.
+- A review workflow: the editor only moves segments from `initial` to `translated`; it doesn't set `reviewed` or `final`.
+- Several termbases or TMs at once, and shared (server) TMs and termbases.
+- Spelling and grammar checks, and exporting the QA report.
 
 ## Download
 
@@ -40,7 +65,7 @@ Pre-release builds for Windows, Linux and macOS (Intel and Apple silicon) are on
 
 ## Building
 
-Requires the .NET 10 SDK.
+Requires the .NET 10 SDK (`global.json` pins the version band).
 
 ```bash
 dotnet build
@@ -50,19 +75,23 @@ dotnet run --project src/SchrodingersCat.App   # start the editor
 
 `samples/demo.en-hu.xlf` is a small file to try the editor with.
 
-The build runs the .NET recommended code analyzers and treats every warning as an error, so a build with warnings fails. CI builds and tests every push to `main` and every pull request.
+The build runs the .NET recommended code analyzers and treats every warning as an error, so a build with warnings fails. CI checks formatting (`dotnet format --verify-no-changes`), then builds and tests every push to `main` and every pull request; run `dotnet format` before pushing.
 
 ## Project layout
 
 ```
-src/SchrodingersCat.Core/           Domain model (Models/), inline code checks (Checks/) and XLIFF serializer (Xliff/)
-src/SchrodingersCat.Memory/         Translation memory (in progress)
+src/SchrodingersCat.Core/           Domain model (Models/), inline code and QA checks (Checks/), XLIFF serializer (Xliff/)
+src/SchrodingersCat.Memory/         Translation memory (SQLite, TMX, concordance) and termbase (SQLite, TBX, CSV)
 src/SchrodingersCat.App/            Avalonia desktop editor
-tests/SchrodingersCat.Core.Tests/   xUnit tests, including property-based tests (CsCheck)
-tests/SchrodingersCat.Memory.Tests/ Translation memory tests
-tests/SchrodingersCat.App.Tests/    View model and headless UI tests
+tests/SchrodingersCat.Core.Tests/   Core tests (xUnit v2), including property-based tests (CsCheck)
+tests/SchrodingersCat.Memory.Tests/ Translation memory and termbase tests (xUnit v2)
+tests/SchrodingersCat.App.Tests/    View model and headless UI tests (xUnit v3)
 tests/SchrodingersCat.TestSupport/  Random document generators shared by the test projects
-docs/design/                        Design notes (inline codes, inline code editing, translation memory)
+docs/architecture.md                A map of the code
+docs/design/                        Design notes (inline codes, inline code editing, QA checks, translation memory, TM maintenance, termbase)
+docs/testing/                       Manual test checklists
+samples/                            Demo XLIFF files, and sample TBX/CSV files (termbase/)
+tools/                              Python tools (stdlib only), e.g. a reader for the app's log: python3 -m tools.util.logging
 Directory.Build.props               Shared build settings (analyzers, warnings as errors)
 .editorconfig                       Code style and analyzer rule overrides
 ```
