@@ -26,10 +26,11 @@ Website: <https://languageengineer.hu/schrodingerscat/>
 - A code check runs as you type: each segment shows a badge for missing, unknown, unpaired or reordered codes, and the chips involved are outlined. Saving with code errors asks first.
 - Keyboard workflow (close to memoQ's): `F9` inserts the next missing code, `Ctrl+Shift+F9` picks one, `Ctrl+Insert` copies the source, `Ctrl+Enter` confirms and moves on, `Ctrl+Up`/`Ctrl+Down` move between segments, `Ctrl+Shift+Down` goes to the next segment with code or QA problems. Copy and paste keep codes inside the app.
 - Translation memory: create or open a TM (`*.sctm`, SQLite) from the Translation memory menu, import and export TMX; the open TM is remembered between sessions. `Ctrl+Enter` stores the confirmed segment, so repetitions further down get it straight away.
-- Concordance: `Ctrl+K` searches the TM for the selected word or phrase (or opens the search box), in sources or translations, matching word beginnings so inflected forms are found; Insert puts a translation at the caret.
+- Concordance: `Ctrl+K` searches the TM for the selected word or phrase (or opens the search box), in sources or translations, matching word beginnings so suffixed forms are found too; Insert puts a translation at the caret.
 - A matches pane under the segment list shows the selected segment's matches from the TM and from the XLIFF file, with what differs from the current source marked; `Ctrl+1` … `Ctrl+9` insert one, with the current segment's codes. Exact TM matches go into empty targets automatically, unconfirmed.
 - Matches and concordance hits from the TM can be edited (the translation) or deleted, with their buttons or context menu; `Ctrl+Shift+1` … `Ctrl+Shift+9` delete a match.
 - Per-segment undo, Save (`Ctrl+S`) and Save as (`Ctrl+Shift+S`), and a prompt before unsaved changes would be lost. A file without a target language asks for it on the first save.
+- The app writes a rotating log file, crashes included; Help → Open log folder finds it for a bug report.
 
 ### QA checks
 
@@ -46,7 +47,7 @@ Website: <https://languageengineer.hu/schrodingerscat/>
 ### Termbase
 
 - Create or open a termbase (`*.sctb`, SQLite) from the Termbase menu; the open termbase is remembered between sessions. It serves documents in its language pair (regional variants included).
-- Terms found in the source are underlined, with their translations in the tooltip, and listed under the matches with an Insert button. Matching uses word beginnings, so inflected forms are found.
+- Terms found in the source are underlined, with their translations in the tooltip, and listed under the matches with an Insert button. Matching uses word beginnings, so suffixed forms are found too (no stemming).
 - `Ctrl+T` picks a term translation to insert at the caret.
 - `Ctrl+E` (Termbase → Add term…) adds a term, prefilled from the selection in the source and the target; it can start a new entry or add to an existing one. Entries are edited or deleted from the terms list's context menu.
 - Import TBX (2 and 3) and CSV/TSV (with a dialog for the encoding and columns); export TBX 2, TBX 3 or CSV.
